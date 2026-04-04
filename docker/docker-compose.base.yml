@@ -1,0 +1,33 @@
+version: "3"
+services:
+    api:
+        build:
+            context: ..
+            dockerfile: Dockerfile
+            target: api
+        restart: always
+        environment:
+            PORT: 3120
+            DATA_DIR: /app/data
+        volumes:
+            - ./data:/app/data
+        networks:
+            - network
+
+    web:
+        build:
+            context: ..
+            dockerfile: Dockerfile
+            target: web
+        restart: always
+        environment:
+            DOCUMINE_API_HTTP_ORIGIN: http://api:3120
+            DOCUMINE_API_WS_ORIGIN: ws://api:3120
+        depends_on:
+            - api
+        networks:
+            - network
+
+networks:
+    network:
+        driver: bridge

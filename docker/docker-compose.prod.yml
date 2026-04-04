@@ -1,0 +1,12 @@
+version: "3"
+services:
+    web:
+        labels:
+            caddy: ${DOCUMINE_HOST:-documine.localhost}
+            caddy.reverse_proxy: "{{upstreams 5173}}"
+        networks:
+            - reverse_proxy
+networks:
+    reverse_proxy:
+        external:
+            name: caddy-network

@@ -1,0 +1,40 @@
+{
+  "name": "documine",
+  "version": "0.1.2",
+  "bin": {
+    "documine": "cli/documine.mjs"
+  },
+  "files": [
+    "dist",
+    "apps/web/dist",
+    "cli"
+  ],
+  "description": "Self-hosted collaborative markdown editor with inline comment threads",
+  "scripts": {
+    "dev": "concurrently \"pnpm dev:api\" \"pnpm dev:web\"",
+    "dev:api": "tsx watch src/server.ts",
+    "dev:web": "pnpm --dir apps/web dev",
+    "build": "pnpm build:web && pnpm build:api",
+    "build:api": "tsc",
+    "build:web": "pnpm --dir apps/web build",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.12",
+    "articulated": "^1.3.1",
+    "concurrently": "^9.2.1",
+    "highlight.js": "^11.11.1",
+    "hono": "^4.12.10",
+    "marked": "^16.4.1",
+    "mermaid": "^11.14.0",
+    "sanitize-html": "^2.17.0",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "@types/sanitize-html": "^2.16.1",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

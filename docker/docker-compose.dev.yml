@@ -1,0 +1,8 @@
+version: "3"
+services:
+    api:
+        ports:
+            - 3120:3120
+    web:
+        ports:
+            - 5173:5173

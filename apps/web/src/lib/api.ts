@@ -1,0 +1,164 @@
+export type ShareAccess = "none" | "view" | "comment" | "edit";
+
+export type ViewerInfo = {
+  isOwner: boolean;
+  commenterName: string | null;
+  hasCommenterIdentity: boolean;
+};
+
+export type ViewerPayload = {
+  ok: true;
+  authConfigured: boolean;
+  ownerAuthenticated: boolean;
+  ownerLocalStorageTokenKey: string;
+  viewer: ViewerInfo;
+};
+
+export type ThreadMessage = {
+  id: string;
+  parentId: string | null;
+  authorName: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  canEdit: boolean;
+  canDelete: boolean;
+};
+
+export type ThreadAnchor = {
+  quote: string;
+  prefix: string;
+  suffix: string;
+  start: number;
+  end: number;
+};
+
+export type Thread = {
+  id: string;
+  resolved: boolean;
+  createdAt: string;
+  updatedAt: string;
+  anchor: ThreadAnchor;
+  canReply: boolean;
+  canResolve: boolean;
+  canDeleteThread: boolean;
+  messages: ThreadMessage[];
+};
+
+export type NoteSummary = {
+  id: string;
+  title: string;
+  updatedAt: string;
+  shareId: string;
+  snippet: string;
+};
+
+export type NoteDetails = {
+  id: string;
+  title: string;
+  markdown: string;
+  renderedHtml: string;
+  shareId: string;
+  shareAccess: ShareAccess;
+  shareUrl: string;
+  updatedAt: string;
+  createdAt: string;
+};
+
+export type NotePayload = {
+  ok: true;
+  note: NoteDetails;
+  viewer: ViewerInfo;
+  threads: Thread[];
+};
+
+export type SharedNotePayload = {
+  ok: true;
+  note: {
+    id: string;
+    title: string;
+    markdown: string;
+    shareAccess: ShareAccess;
+    updatedAt: string;
+  };
+  threads: Thread[];
+};
+
+export type ApiKey = {
+  id: string;
+  label: string;
+  createdAt: string;
+};
+
+export class ApiError extends Error {
+  status: number;
+  details?: string[];
+
+  constructor(message: string, status: number, details?: string[]) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.details = details;
+  }
+}
+
+function trimTrailingSlash(value: string) {
+  return value.replace(/\/$/, "");
+}
+
+export function getApiHttpOrigin() {
+  const envOrigin = (import.meta.env.VITE_DOCUMINE_API_HTTP_ORIGIN as string | undefined)?.trim();
+  if (envOrigin) {
+    return trimTrailingSlash(envOrigin);
+  }
+
+  const { protocol, hostname, port, origin } = window.location;
+  if (port === "5173") {
+    return `${protocol}//${hostname}:3120`;
+  }
+
+  return trimTrailingSlash(origin);
+}
+
+function buildApiUrl(path: string) {
+  if (/^https?:\/\//.test(path)) {
+    return path;
+  }
+  return `${getApiHttpOrigin()}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+export async function apiRequest<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+  const response = await fetch(buildApiUrl(path), {
+    method: init.method ?? "GET",
+    credentials: "include",
+    headers: init.body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+  });
+
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) : null;
+
+  if (!response.ok) {
+    throw new ApiError(payload?.error || payload?.errors?.join(", ") || "Request failed.", response.status, payload?.errors);
+  }
+
+  return payload as T;
+}
+
+export function formatDate(iso: string) {
+  return new Date(iso).toLocaleString();
+}
+
+export function buildWsUrl(pathAndQuery: string) {
+  const envOrigin = (import.meta.env.VITE_DOCUMINE_API_WS_ORIGIN as string | undefined)?.trim();
+  if (envOrigin) {
+    return `${trimTrailingSlash(envOrigin)}${pathAndQuery}`;
+  }
+
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  if (window.location.port === "5173") {
+    return `${protocol}//${window.location.hostname}:3120${pathAndQuery}`;
+  }
+
+  return `${protocol}//${window.location.host}${pathAndQuery}`;
+}
