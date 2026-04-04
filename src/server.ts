@@ -485,20 +485,34 @@ app.post('/api/notes/:id/threads', async (c) => {
   }
 
   const body = await readJsonBody(c);
-  const quote = String(body.quote || '');
   const commentBody = normalizeCommentBody(String(body.body || ''));
-  if (!quote || !commentBody) {
+  let anchor = sanitizeAnchor(body.anchor);
+
+  if (!anchor) {
+    const quote = String(body.quote || '');
+    if (!quote || !commentBody) {
+      return c.json({ ok: false, error: 'quote and body are required.' }, 400);
+    }
+
+    const start = note.markdown.indexOf(quote);
+    if (start === -1) {
+      return c.json({ ok: false, error: 'Quoted text not found in note.' }, 400);
+    }
+
+    const end = start + quote.length;
+    anchor = {
+      quote,
+      prefix: note.markdown.slice(Math.max(0, start - 32), start),
+      suffix: note.markdown.slice(end, end + 32),
+      start,
+      end,
+    };
+  }
+
+  if (!commentBody) {
     return c.json({ ok: false, error: 'quote and body are required.' }, 400);
   }
 
-  const start = note.markdown.indexOf(quote);
-  if (start === -1) {
-    return c.json({ ok: false, error: 'Quoted text not found in note.' }, 400);
-  }
-
-  const prefix = note.markdown.slice(Math.max(0, start - 32), start);
-  const end = start + quote.length;
-  const suffix = note.markdown.slice(end, end + 32);
   const bearer = getBearerToken(c);
   const apiKeyLabel = bearer ? getApiKeyLabel(bearer) : null;
   const authorName = apiKeyLabel || 'Owner';
@@ -509,7 +523,7 @@ app.post('/api/notes/:id/threads', async (c) => {
     resolved: false,
     createdAt: timestamp,
     updatedAt: timestamp,
-    anchor: { quote, prefix, suffix, start, end },
+    anchor,
     messages: [
       {
         id: createId(10),
@@ -527,7 +541,7 @@ app.post('/api/notes/:id/threads', async (c) => {
   note.updatedAt = timestamp;
   persistNote(note);
   broadcastThreadsUpdated(note);
-  return c.json({ ok: true, thread: { id: thread.id } });
+  return c.json({ ok: true, threads: serializeThreads(note, c) });
 });
 
 app.post('/api/notes/:id/threads/:threadId/replies', async (c) => {
@@ -573,7 +587,7 @@ app.post('/api/notes/:id/threads/:threadId/replies', async (c) => {
   note.updatedAt = timestamp;
   persistNote(note);
   broadcastThreadsUpdated(note);
-  return c.json({ ok: true });
+  return c.json({ ok: true, threads: serializeThreads(note, c) });
 });
 
 app.patch('/api/notes/:id/threads/:threadId', async (c) => {
@@ -597,7 +611,7 @@ app.patch('/api/notes/:id/threads/:threadId', async (c) => {
   note.updatedAt = thread.updatedAt;
   persistNote(note);
   broadcastThreadsUpdated(note);
-  return c.json({ ok: true });
+  return c.json({ ok: true, threads: serializeThreads(note, c) });
 });
 
 app.delete('/api/notes/:id/threads/:threadId', (c) => {
@@ -614,7 +628,7 @@ app.delete('/api/notes/:id/threads/:threadId', (c) => {
   note.updatedAt = nowIso();
   persistNote(note);
   broadcastThreadsUpdated(note);
-  return c.json({ ok: true });
+  return c.json({ ok: true, threads: serializeThreads(note, c) });
 });
 
 app.patch('/api/notes/:id/messages/:messageId', async (c) => {
@@ -644,7 +658,7 @@ app.patch('/api/notes/:id/messages/:messageId', async (c) => {
   note.updatedAt = located.message.updatedAt;
   persistNote(note);
   broadcastThreadsUpdated(note);
-  return c.json({ ok: true });
+  return c.json({ ok: true, threads: serializeThreads(note, c) });
 });
 
 app.delete('/api/notes/:id/messages/:messageId', (c) => {
@@ -671,7 +685,7 @@ app.delete('/api/notes/:id/messages/:messageId', (c) => {
   note.updatedAt = nowIso();
   persistNote(note);
   broadcastThreadsUpdated(note);
-  return c.json({ ok: true });
+  return c.json({ ok: true, threads: serializeThreads(note, c) });
 });
 
 app.get('/api/notes/:id/collab', (c) => {

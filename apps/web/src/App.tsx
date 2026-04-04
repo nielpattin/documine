@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import {
   apiRequest,
   buildWsUrl,
@@ -9,6 +9,7 @@ import {
   type NoteSummary,
   type ShareAccess,
   type Thread,
+  type ThreadAnchor,
   type ThreadMessage,
   type ViewerPayload,
 } from './lib/api';
@@ -630,10 +631,15 @@ function OwnerNotePage({
   const [showShare, setShowShare] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showAgentModal, setShowAgentModal] = useState(false);
+  const [showComments, setShowComments] = useState(true);
+  const [showResolved, setShowResolved] = useState(false);
+  const [pendingThreadAnchor, setPendingThreadAnchor] = useState<ThreadAnchor | null>(null);
 
-  const loadNote = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  const loadNote = useCallback(async (options?: { background?: boolean }) => {
+    if (!options?.background) {
+      setLoading(true);
+      setError('');
+    }
     try {
       const nextPayload = await apiRequest<NotePayload>(`/api/notes/${noteId}`);
       setPayload(nextPayload);
@@ -645,7 +651,9 @@ function OwnerNotePage({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Failed to load note.');
     } finally {
-      setLoading(false);
+      if (!options?.background) {
+        setLoading(false);
+      }
     }
   }, [noteId]);
 
@@ -709,46 +717,47 @@ function OwnerNotePage({
     }
   }
 
-  async function createThread(quote: string, body: string) {
-    await apiRequest(`/api/notes/${noteId}/threads`, {
+  async function createThread(anchor: ThreadAnchor, body: string) {
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/threads`, {
       method: 'POST',
-      body: { quote, body },
+      body: { anchor, quote: anchor.quote, body },
     });
-    await loadNote();
+    setPendingThreadAnchor(null);
+    setPayload((current) => current ? { ...current, threads: response.threads } : current);
   }
 
   async function replyToThread(threadId: string, parentMessageId: string, body: string) {
-    await apiRequest(`/api/notes/${noteId}/threads/${threadId}/replies`, {
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/threads/${threadId}/replies`, {
       method: 'POST',
       body: { parentMessageId, body },
     });
-    await loadNote();
+    setPayload((current) => current ? { ...current, threads: response.threads } : current);
   }
 
   async function setThreadResolved(threadId: string, resolved: boolean) {
-    await apiRequest(`/api/notes/${noteId}/threads/${threadId}`, {
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/threads/${threadId}`, {
       method: 'PATCH',
       body: { resolved },
     });
-    await loadNote();
+    setPayload((current) => current ? { ...current, threads: response.threads } : current);
   }
 
   async function deleteThread(threadId: string) {
-    await apiRequest(`/api/notes/${noteId}/threads/${threadId}`, { method: 'DELETE' });
-    await loadNote();
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/threads/${threadId}`, { method: 'DELETE' });
+    setPayload((current) => current ? { ...current, threads: response.threads } : current);
   }
 
   async function editMessage(messageId: string, body: string) {
-    await apiRequest(`/api/notes/${noteId}/messages/${messageId}`, {
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/messages/${messageId}`, {
       method: 'PATCH',
       body: { body },
     });
-    await loadNote();
+    setPayload((current) => current ? { ...current, threads: response.threads } : current);
   }
 
   async function deleteMessage(messageId: string) {
-    await apiRequest(`/api/notes/${noteId}/messages/${messageId}`, { method: 'DELETE' });
-    await loadNote();
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/messages/${messageId}`, { method: 'DELETE' });
+    setPayload((current) => current ? { ...current, threads: response.threads } : current);
   }
 
   const shareUrl = payload ? `${window.location.origin}/s/${payload.note.shareId}` : '';
@@ -759,6 +768,10 @@ function OwnerNotePage({
     }
 
     await navigator.clipboard.writeText(shareUrl);
+  }
+
+  function requestCreateThread(anchor: ThreadAnchor) {
+    setPendingThreadAnchor(anchor);
   }
 
   if (loading) {
@@ -827,6 +840,12 @@ function OwnerNotePage({
               </div>
             ) : null}
           </div>
+          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowComments((current) => !current)}>
+            {showComments ? 'Hide comments' : 'Show comments'}
+          </button>
+          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowResolved((current) => !current)} disabled={!showComments}>
+            {showResolved ? 'Hide resolved' : 'Show resolved'}
+          </button>
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowAgentModal(true)}>
             Agent
           </button>
@@ -856,7 +875,7 @@ function OwnerNotePage({
               setSaveStatus('Live');
             }}
             onConnectionChange={setConnected}
-            onThreadsUpdated={() => void loadNote()}
+            onThreadsUpdated={() => void loadNote({ background: true })}
           />
         </div>
 
@@ -866,25 +885,29 @@ function OwnerNotePage({
               Close
             </button>
           </div>
-          <div className="preview-scroll">
-            <div className="preview-canvas">
-              <div className="preview-content">
-                <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
-                <ThreadPanel
-                  threads={payload.threads}
-                  canCreateThread
-                  onCreateThread={createThread}
-                  onReply={replyToThread}
-                  onResolve={setThreadResolved}
-                  onDeleteThread={deleteThread}
-                  onEditMessage={editMessage}
-                  onDeleteMessage={deleteMessage}
-                />
-              </div>
-            </div>
-          </div>
+          <AnchoredCommentCanvas
+            renderedHtml={renderedHtml}
+            threads={payload.threads}
+            canCreateThread={showComments}
+            commentsVisible={showComments}
+            showResolved={showResolved}
+            emptyMessage="No comment threads yet. Select text in the preview to add one."
+            onRequestCreateThread={requestCreateThread}
+            onReply={replyToThread}
+            onResolve={setThreadResolved}
+            onDeleteThread={deleteThread}
+            onEditMessage={editMessage}
+            onDeleteMessage={deleteMessage}
+          />
         </section>
       </div>
+      {pendingThreadAnchor ? (
+        <NewCommentThreadModal
+          anchor={pendingThreadAnchor}
+          onSubmit={createThread}
+          onClose={() => setPendingThreadAnchor(null)}
+        />
+      ) : null}
       {showAgentModal ? <AgentSetupModal config={agentModalConfig} onClose={() => setShowAgentModal(false)} /> : null}
     </div>
   );
@@ -900,10 +923,16 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
   const [connected, setConnected] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showAgentModal, setShowAgentModal] = useState(false);
+  const [showComments, setShowComments] = useState(true);
+  const [showResolved, setShowResolved] = useState(false);
+  const [showIdentityModal, setShowIdentityModal] = useState(false);
+  const [pendingThreadAnchor, setPendingThreadAnchor] = useState<ThreadAnchor | null>(null);
 
-  const loadSharedNote = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  const loadSharedNote = useCallback(async (options?: { background?: boolean }) => {
+    if (!options?.background) {
+      setLoading(true);
+      setError('');
+    }
     try {
       const nextPayload = await apiRequest<NotePayload>(`/api/share/${shareId}`);
       setPayload(nextPayload);
@@ -913,7 +942,9 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Failed to load shared note.');
     } finally {
-      setLoading(false);
+      if (!options?.background) {
+        setLoading(false);
+      }
     }
   }, [shareId]);
 
@@ -931,7 +962,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
       try {
         const message = JSON.parse(String(event.data)) as { type?: string };
         if (message.type === 'updated' || message.type === 'threads-updated') {
-          void loadSharedNote();
+          void loadSharedNote({ background: true });
         }
       } catch {
         // ignore
@@ -966,57 +997,67 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
   }, [markdown, payload, shareId]);
 
   async function setIdentity() {
-    await apiRequest(`/api/share/${shareId}/identity`, {
+    const response = await apiRequest<{ ok: true; viewer: NotePayload['viewer'] }>(`/api/share/${shareId}/identity`, {
       method: 'POST',
       body: { name: identityName },
     });
-    await loadSharedNote();
+    setPayload((current) => current ? { ...current, viewer: response.viewer } : current);
+    setIdentityName(response.viewer.commenterName || '');
+    setShowIdentityModal(false);
   }
 
-  async function createThread(quote: string, body: string) {
-    await apiRequest(`/api/share/${shareId}/threads`, {
+  async function createThread(anchor: ThreadAnchor, body: string) {
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/share/${shareId}/threads`, {
       method: 'POST',
       body: {
-        anchor: { quote, prefix: '', suffix: '', start: 0, end: 0 },
+        anchor,
         body,
         name: identityName,
       },
     });
-    await loadSharedNote();
+    setPendingThreadAnchor(null);
+    setPayload((current) => current ? { ...current, threads: response.threads } : current);
   }
 
   async function replyToThread(threadId: string, parentMessageId: string, body: string) {
-    await apiRequest(`/api/share/${shareId}/threads/${threadId}/replies`, {
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/share/${shareId}/threads/${threadId}/replies`, {
       method: 'POST',
       body: { parentMessageId, body, name: identityName },
     });
-    await loadSharedNote();
+    setPayload((current) => current ? { ...current, threads: response.threads } : current);
   }
 
   async function setThreadResolved(threadId: string, resolved: boolean) {
-    await apiRequest(`/api/share/${shareId}/threads/${threadId}`, {
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/share/${shareId}/threads/${threadId}`, {
       method: 'PATCH',
       body: { resolved },
     });
-    await loadSharedNote();
+    setPayload((current) => current ? { ...current, threads: response.threads } : current);
   }
 
   async function deleteThread(threadId: string) {
-    await apiRequest(`/api/share/${shareId}/threads/${threadId}`, { method: 'DELETE' });
-    await loadSharedNote();
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/share/${shareId}/threads/${threadId}`, { method: 'DELETE' });
+    setPayload((current) => current ? { ...current, threads: response.threads } : current);
   }
 
   async function editMessage(messageId: string, body: string) {
-    await apiRequest(`/api/share/${shareId}/messages/${messageId}`, {
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/share/${shareId}/messages/${messageId}`, {
       method: 'PATCH',
       body: { body },
     });
-    await loadSharedNote();
+    setPayload((current) => current ? { ...current, threads: response.threads } : current);
   }
 
   async function deleteMessage(messageId: string) {
-    await apiRequest(`/api/share/${shareId}/messages/${messageId}`, { method: 'DELETE' });
-    await loadSharedNote();
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/share/${shareId}/messages/${messageId}`, { method: 'DELETE' });
+    setPayload((current) => current ? { ...current, threads: response.threads } : current);
+  }
+
+  function requestCreateThread(anchor: ThreadAnchor) {
+    setPendingThreadAnchor(anchor);
+    if (!payload?.viewer.hasCommenterIdentity) {
+      setShowIdentityModal(true);
+    }
   }
 
   if (loading) {
@@ -1045,6 +1086,12 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
           <span className="status-text">Updated {formatDate(payload.note.updatedAt)}</span>
         </div>
         <div className="topbar-right">
+          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowComments((current) => !current)}>
+            {showComments ? 'Hide comments' : 'Show comments'}
+          </button>
+          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowResolved((current) => !current)} disabled={!showComments}>
+            {showResolved ? 'Hide resolved' : 'Show resolved'}
+          </button>
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowAgentModal(true)}>
             Agent
           </button>
@@ -1073,7 +1120,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
                 setMarkdown(nextMarkdown);
               }}
               onConnectionChange={setConnected}
-              onThreadsUpdated={() => void loadSharedNote()}
+              onThreadsUpdated={() => void loadSharedNote({ background: true })}
             />
           </div>
 
@@ -1083,74 +1130,58 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
                 Close
               </button>
             </div>
-            <div className="preview-scroll">
-              <div className="preview-canvas">
-                <div className="preview-content">
-                  {canComment ? (
-                    <div className="modal compact" style={{ marginBottom: '1rem' }}>
-                      <h2>Comment identity</h2>
-                      <p>Set a name to reply, edit, and resolve comment threads.</p>
-                      <div className="field">
-                        <input value={identityName} onChange={(event) => setIdentityName(event.target.value)} placeholder="Your name" />
-                      </div>
-                      <div className="modal-actions">
-                        <button type="button" className="primary" onClick={() => void setIdentity()} disabled={!identityName.trim()}>
-                          Save name
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
-                  <ThreadPanel
-                    threads={payload.threads}
-                    canCreateThread={canComment && payload.viewer.hasCommenterIdentity}
-                    onCreateThread={createThread}
-                    onReply={replyToThread}
-                    onResolve={setThreadResolved}
-                    onDeleteThread={deleteThread}
-                    onEditMessage={editMessage}
-                    onDeleteMessage={deleteMessage}
-                  />
-                </div>
-              </div>
-            </div>
+            <AnchoredCommentCanvas
+              renderedHtml={renderedHtml}
+              threads={payload.threads}
+              canCreateThread={showComments && canComment}
+              commentsVisible={showComments}
+              showResolved={showResolved}
+              emptyMessage={canComment ? 'No comment threads yet. Select text in the preview to add one.' : 'No comment threads yet.'}
+              onRequestCreateThread={requestCreateThread}
+              onReply={replyToThread}
+              onResolve={setThreadResolved}
+              onDeleteThread={deleteThread}
+              onEditMessage={editMessage}
+              onDeleteMessage={deleteMessage}
+            />
           </section>
         </div>
       ) : (
         <section className="preview-stage public">
-          <div className="preview-scroll">
-            <div className="preview-canvas">
-              <div className="preview-content">
-                {canComment ? (
-                  <div className="modal compact" style={{ marginBottom: '1rem' }}>
-                    <h2>Comment identity</h2>
-                    <p>Set a name to reply, edit, and resolve comment threads.</p>
-                    <div className="field">
-                      <input value={identityName} onChange={(event) => setIdentityName(event.target.value)} placeholder="Your name" />
-                    </div>
-                    <div className="modal-actions">
-                      <button type="button" className="primary" onClick={() => void setIdentity()} disabled={!identityName.trim()}>
-                        Save name
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-                <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
-                <ThreadPanel
-                  threads={payload.threads}
-                  canCreateThread={canComment && payload.viewer.hasCommenterIdentity}
-                  onCreateThread={createThread}
-                  onReply={replyToThread}
-                  onResolve={setThreadResolved}
-                  onDeleteThread={deleteThread}
-                  onEditMessage={editMessage}
-                  onDeleteMessage={deleteMessage}
-                />
-              </div>
-            </div>
-          </div>
+          <AnchoredCommentCanvas
+            renderedHtml={renderedHtml}
+            threads={payload.threads}
+            canCreateThread={showComments && canComment}
+            commentsVisible={showComments}
+            showResolved={showResolved}
+            emptyMessage={canComment ? 'No comment threads yet. Select text in the preview to add one.' : 'No comment threads yet.'}
+            onRequestCreateThread={requestCreateThread}
+            onReply={replyToThread}
+            onResolve={setThreadResolved}
+            onDeleteThread={deleteThread}
+            onEditMessage={editMessage}
+            onDeleteMessage={deleteMessage}
+          />
         </section>
       )}
+      {showIdentityModal ? (
+        <CommentIdentityModal
+          name={identityName}
+          onNameChange={setIdentityName}
+          onSave={setIdentity}
+          onClose={() => {
+            setShowIdentityModal(false);
+            setPendingThreadAnchor(null);
+          }}
+        />
+      ) : null}
+      {pendingThreadAnchor && !showIdentityModal ? (
+        <NewCommentThreadModal
+          anchor={pendingThreadAnchor}
+          onSubmit={createThread}
+          onClose={() => setPendingThreadAnchor(null)}
+        />
+      ) : null}
       {showAgentModal ? <AgentSetupModal config={agentModalConfig} onClose={() => setShowAgentModal(false)} /> : null}
     </div>
   );
@@ -1209,89 +1240,669 @@ function CollabTextarea({
   return <textarea ref={textareaRef} className="editor-textarea" spellCheck={false} />;
 }
 
-function ThreadPanel({
-  threads,
-  canCreateThread,
-  onCreateThread,
-  onReply,
-  onResolve,
-  onDeleteThread,
-  onEditMessage,
-  onDeleteMessage,
+function CommentIdentityModal({
+  name,
+  onNameChange,
+  onSave,
+  onClose,
 }: {
-  threads: Thread[];
-  canCreateThread: boolean;
-  onCreateThread: (quote: string, body: string) => Promise<void>;
-  onReply: (threadId: string, parentMessageId: string, body: string) => Promise<void>;
-  onResolve: (threadId: string, resolved: boolean) => Promise<void>;
-  onDeleteThread: (threadId: string) => Promise<void>;
-  onEditMessage: (messageId: string, body: string) => Promise<void>;
-  onDeleteMessage: (messageId: string) => Promise<void>;
+  name: string;
+  onNameChange: (name: string) => void;
+  onSave: () => Promise<void>;
+  onClose: () => void;
 }) {
-  const [quote, setQuote] = useState('');
-  const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
-  if (!canCreateThread && threads.length === 0) {
-    return null;
-  }
-
-  async function handleCreate() {
-    if (!quote.trim() || !body.trim()) {
+  async function handleSave() {
+    if (!name.trim()) {
       return;
     }
 
     setBusy(true);
+    setError('');
     try {
-      await onCreateThread(quote, body);
-      setQuote('');
-      setBody('');
+      await onSave();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to save your name.');
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div style={{ marginTop: '2rem' }}>
-      {canCreateThread ? (
-        <div className="modal compact" style={{ marginBottom: '1rem' }}>
-          <h2>New comment thread</h2>
-          <p>Paste the quoted text and add your comment.</p>
-          <div className="field">
-            <input value={quote} onChange={(event) => setQuote(event.target.value)} placeholder="Quoted text" />
-          </div>
-          <div className="field">
-            <textarea value={body} onChange={(event) => setBody(event.target.value)} placeholder="Comment" />
-          </div>
-          <div className="modal-actions">
-            <button type="button" className="primary" onClick={() => void handleCreate()} disabled={busy || !quote.trim() || !body.trim()}>
-              {busy ? 'Saving...' : 'Add comment'}
-            </button>
-          </div>
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal compact" onClick={(event) => event.stopPropagation()}>
+        <h2>Comment identity</h2>
+        <p>Set a name before creating comments on this shared note.</p>
+        <div className="field">
+          <input value={name} onChange={(event) => onNameChange(event.target.value)} placeholder="Your name" />
         </div>
-      ) : null}
-
-      {threads.length === 0 ? <p className="empty-state">No comment threads yet.</p> : null}
-
-      <div className="thread-tree">
-        {threads.map((thread) => (
-          <ThreadCard
-            key={thread.id}
-            thread={thread}
-            onReply={onReply}
-            onResolve={onResolve}
-            onDeleteThread={onDeleteThread}
-            onEditMessage={onEditMessage}
-            onDeleteMessage={onDeleteMessage}
-          />
-        ))}
+        {error ? <div className="inline-error">{error}</div> : null}
+        <div className="modal-actions">
+          <button type="button" className="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button type="button" className="primary" onClick={() => void handleSave()} disabled={busy || !name.trim()}>
+            {busy ? 'Saving...' : 'Save name'}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
+function NewCommentThreadModal({
+  anchor,
+  onSubmit,
+  onClose,
+}: {
+  anchor: ThreadAnchor;
+  onSubmit: (anchor: ThreadAnchor, body: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [body, setBody] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSubmit() {
+    if (!body.trim()) {
+      return;
+    }
+
+    setBusy(true);
+    setError('');
+    try {
+      await onSubmit(anchor, body);
+      onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to add comment.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal compact" onClick={(event) => event.stopPropagation()}>
+        <h2>New comment thread</h2>
+        <p>Comment on the selected text.</p>
+        <pre className="agent-instructions"><code>{anchor.quote}</code></pre>
+        <div className="field">
+          <textarea value={body} onChange={(event) => setBody(event.target.value)} placeholder="Comment" />
+        </div>
+        {error ? <div className="inline-error">{error}</div> : null}
+        <div className="modal-actions">
+          <button type="button" className="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button type="button" className="primary" onClick={() => void handleSubmit()} disabled={busy || !body.trim()}>
+            {busy ? 'Saving...' : 'Add comment'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function usePreviewCommentSelection({
+  rootRef,
+  bubbleRef,
+  fabRef,
+  enabled,
+}: {
+  rootRef: RefObject<HTMLElement | null>;
+  bubbleRef: RefObject<HTMLButtonElement | null>;
+  fabRef: RefObject<HTMLButtonElement | null>;
+  enabled: boolean;
+}) {
+  const anchorRef = useRef<ThreadAnchor | null>(null);
+  const rafIdRef = useRef<number | null>(null);
+  const pendingRef = useRef(false);
+  const pointerDownRef = useRef(false);
+
+  useEffect(() => {
+    function hideControls() {
+      anchorRef.current = null;
+      if (bubbleRef.current) {
+        bubbleRef.current.style.display = 'none';
+      }
+      if (fabRef.current) {
+        fabRef.current.style.display = 'none';
+      }
+    }
+
+    if (!enabled) {
+      hideControls();
+      return;
+    }
+
+    function updateSelection() {
+      pendingRef.current = false;
+      if (pointerDownRef.current) {
+        return;
+      }
+
+      const root = rootRef.current;
+      const currentSelection = window.getSelection();
+      if (!root || !currentSelection || currentSelection.rangeCount === 0 || currentSelection.isCollapsed) {
+        hideControls();
+        return;
+      }
+
+      const range = currentSelection.getRangeAt(0);
+      if (!root.contains(range.commonAncestorContainer)) {
+        hideControls();
+        return;
+      }
+
+      const anchor = buildAnchorFromSelection(root, range);
+      if (!anchor) {
+        hideControls();
+        return;
+      }
+
+      const rect = range.getBoundingClientRect();
+      const useFab = window.matchMedia('(hover: none), (pointer: coarse)').matches;
+      anchorRef.current = anchor;
+
+      if (bubbleRef.current) {
+        if (useFab) {
+          bubbleRef.current.style.display = 'none';
+        } else {
+          bubbleRef.current.style.left = `${Math.max(16, rect.left)}px`;
+          bubbleRef.current.style.top = `${rect.bottom + 6}px`;
+          bubbleRef.current.style.display = 'inline-flex';
+        }
+      }
+
+      if (fabRef.current) {
+        fabRef.current.style.display = useFab ? 'inline-flex' : 'none';
+      }
+    }
+
+    function scheduleUpdate() {
+      if (pendingRef.current) {
+        return;
+      }
+      pendingRef.current = true;
+      rafIdRef.current = requestAnimationFrame(updateSelection);
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const root = rootRef.current;
+      if (!root || !root.contains(event.target as Node)) {
+        return;
+      }
+      pointerDownRef.current = true;
+      hideControls();
+    }
+
+    function handlePointerUp() {
+      if (!pointerDownRef.current) {
+        return;
+      }
+      pointerDownRef.current = false;
+      scheduleUpdate();
+    }
+
+    document.addEventListener('selectionchange', scheduleUpdate);
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('pointerup', handlePointerUp, true);
+    window.addEventListener('resize', scheduleUpdate);
+    window.addEventListener('keyup', scheduleUpdate);
+
+    return () => {
+      hideControls();
+      document.removeEventListener('selectionchange', scheduleUpdate);
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('pointerup', handlePointerUp, true);
+      window.removeEventListener('resize', scheduleUpdate);
+      window.removeEventListener('keyup', scheduleUpdate);
+      if (rafIdRef.current) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+    };
+  }, [enabled, rootRef, bubbleRef, fabRef]);
+
+  function getAnchor() {
+    return anchorRef.current;
+  }
+
+  function clearSelection() {
+    anchorRef.current = null;
+    if (bubbleRef.current) {
+      bubbleRef.current.style.display = 'none';
+    }
+    if (fabRef.current) {
+      fabRef.current.style.display = 'none';
+    }
+    window.getSelection()?.removeAllRanges();
+  }
+
+  return { getAnchor, clearSelection };
+}
+
+function buildAnchorFromSelection(root: HTMLElement, range: Range): ThreadAnchor | null {
+  const mapping = collectTextNodes(root);
+  const start = resolveOffset(root, mapping, range.startContainer, range.startOffset);
+  const end = resolveOffset(root, mapping, range.endContainer, range.endOffset);
+  if (start === null || end === null || end <= start) {
+    return null;
+  }
+
+  const quote = mapping.fullText.slice(start, end);
+  if (!quote.trim()) {
+    return null;
+  }
+
+  return {
+    quote,
+    prefix: mapping.fullText.slice(Math.max(0, start - 40), start),
+    suffix: mapping.fullText.slice(end, Math.min(mapping.fullText.length, end + 40)),
+    start,
+    end,
+  };
+}
+
+function collectTextNodes(root: HTMLElement) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const segments: Array<{ node: Text; start: number; end: number }> = [];
+  let fullText = '';
+  let offset = 0;
+  let node = walker.nextNode();
+  while (node) {
+    const textNode = node as Text;
+    const value = textNode.nodeValue || '';
+    segments.push({ node: textNode, start: offset, end: offset + value.length });
+    fullText += value;
+    offset += value.length;
+    node = walker.nextNode();
+  }
+
+  return { fullText, segments };
+}
+
+function resolveOffset(
+  root: HTMLElement,
+  mapping: ReturnType<typeof collectTextNodes>,
+  container: Node,
+  localOffset: number,
+) {
+  if (container.nodeType === Node.TEXT_NODE) {
+    const segment = mapping.segments.find((item) => item.node === container);
+    return segment ? segment.start + localOffset : null;
+  }
+
+  const range = document.createRange();
+  range.selectNodeContents(root);
+  range.setEnd(container, localOffset);
+  return range.toString().length;
+}
+
+type HighlightRect = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+type PositionedThread = {
+  thread: Thread;
+  highlightRects: HighlightRect[];
+};
+
+function offsetsToRange(mapping: ReturnType<typeof collectTextNodes>, start: number, end: number) {
+  const startSegment = mapping.segments.find((segment) => start >= segment.start && start <= segment.end);
+  const endSegment = mapping.segments.find((segment) => end >= segment.start && end <= segment.end);
+  if (!startSegment || !endSegment) {
+    return null;
+  }
+
+  const range = document.createRange();
+  range.setStart(startSegment.node, start - startSegment.start);
+  range.setEnd(endSegment.node, end - endSegment.start);
+  return range;
+}
+
+function locateAnchor(anchor: ThreadAnchor, root: HTMLElement) {
+  const mapping = collectTextNodes(root);
+  if (!mapping.fullText || !anchor.quote) {
+    return null;
+  }
+
+  const candidates: number[] = [];
+  const exactSlice = mapping.fullText.slice(anchor.start, anchor.end);
+  if (exactSlice === anchor.quote) {
+    candidates.push(anchor.start);
+  }
+
+  let index = mapping.fullText.indexOf(anchor.quote);
+  while (index !== -1) {
+    if (!candidates.includes(index)) {
+      candidates.push(index);
+    }
+    index = mapping.fullText.indexOf(anchor.quote, index + Math.max(1, anchor.quote.length));
+  }
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  let best: number | null = null;
+  let bestScore = -Infinity;
+  for (const candidate of candidates) {
+    let score = 0;
+    if (mapping.fullText.slice(Math.max(0, candidate - anchor.prefix.length), candidate) === anchor.prefix) {
+      score += 12;
+    }
+    const suffix = mapping.fullText.slice(candidate + anchor.quote.length, candidate + anchor.quote.length + anchor.suffix.length);
+    if (suffix === anchor.suffix) {
+      score += 12;
+    }
+    score -= Math.abs(candidate - anchor.start) / 8;
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
+  }
+
+  if (best === null) {
+    return null;
+  }
+
+  const range = offsetsToRange(mapping, best, best + anchor.quote.length);
+  if (!range) {
+    return null;
+  }
+
+  return { range, start: best, end: best + anchor.quote.length };
+}
+
+function mergeRects(rects: DOMRect[], canvasRect: DOMRect): HighlightRect[] {
+  const items = rects
+    .filter((rect) => rect.width > 0 && rect.height > 0)
+    .map((rect) => ({
+      left: rect.left - canvasRect.left,
+      top: rect.top - canvasRect.top,
+      width: rect.width,
+      height: rect.height,
+    }))
+    .sort((a, b) => a.top - b.top || a.left - b.left);
+
+  if (!items.length) {
+    return [];
+  }
+
+  const merged = [items[0]];
+  for (let index = 1; index < items.length; index += 1) {
+    const previous = merged[merged.length - 1];
+    const current = items[index];
+    const verticalOverlap = Math.abs(previous.top - current.top) < previous.height * 0.5;
+    if (verticalOverlap) {
+      const newLeft = Math.min(previous.left, current.left);
+      const newRight = Math.max(previous.left + previous.width, current.left + current.width);
+      const newTop = Math.min(previous.top, current.top);
+      const newBottom = Math.max(previous.top + previous.height, current.top + current.height);
+      previous.left = newLeft;
+      previous.top = newTop;
+      previous.width = newRight - newLeft;
+      previous.height = newBottom - newTop;
+    } else {
+      merged.push(current);
+    }
+  }
+
+  return merged;
+}
+
+function findAnchorAtPoint(x: number, y: number, layer: HTMLElement | null) {
+  if (!layer) {
+    return null;
+  }
+
+  const anchors = layer.querySelectorAll<HTMLElement>('[data-thread-id]');
+  for (const anchor of anchors) {
+    const rect = anchor.getBoundingClientRect();
+    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      return anchor.dataset.threadId || null;
+    }
+  }
+
+  return null;
+}
+
+function AnchoredCommentCanvas({
+  renderedHtml,
+  threads,
+  canCreateThread,
+  commentsVisible,
+  showResolved,
+  emptyMessage,
+  onRequestCreateThread,
+  onReply,
+  onResolve,
+  onDeleteThread,
+  onEditMessage,
+  onDeleteMessage,
+}: {
+  renderedHtml: string;
+  threads: Thread[];
+  canCreateThread: boolean;
+  commentsVisible: boolean;
+  showResolved: boolean;
+  emptyMessage: string;
+  onRequestCreateThread: (anchor: ThreadAnchor) => void;
+  onReply: (threadId: string, parentMessageId: string, body: string) => Promise<void>;
+  onResolve: (threadId: string, resolved: boolean) => Promise<void>;
+  onDeleteThread: (threadId: string) => Promise<void>;
+  onEditMessage: (messageId: string, body: string) => Promise<void>;
+  onDeleteMessage: (messageId: string) => Promise<void>;
+}) {
+  const previewCanvasRef = useRef<HTMLDivElement | null>(null);
+  const previewMarkdownRef = useRef<HTMLDivElement | null>(null);
+  const selectionBubbleRef = useRef<HTMLButtonElement | null>(null);
+  const commentFabRef = useRef<HTMLButtonElement | null>(null);
+  const highlightLayerRef = useRef<HTMLDivElement | null>(null);
+  const [positionedThreads, setPositionedThreads] = useState<PositionedThread[]>([]);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [dialogThreadId, setDialogThreadId] = useState<string | null>(null);
+
+  const { getAnchor, clearSelection } = usePreviewCommentSelection({
+    rootRef: previewMarkdownRef,
+    bubbleRef: selectionBubbleRef,
+    fabRef: commentFabRef,
+    enabled: commentsVisible && canCreateThread,
+  });
+
+  const computeLayout = useCallback(() => {
+    if (!commentsVisible) {
+      setPositionedThreads([]);
+      return;
+    }
+
+    const root = previewMarkdownRef.current;
+    const canvas = previewCanvasRef.current;
+    if (!root || !canvas) {
+      setPositionedThreads([]);
+      return;
+    }
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const visibleThreads = [...threads]
+      .filter((thread) => showResolved || !thread.resolved)
+      .sort((a, b) => {
+        const startDelta = a.anchor.start - b.anchor.start;
+        if (startDelta !== 0) {
+          return startDelta;
+        }
+        return a.createdAt.localeCompare(b.createdAt);
+      })
+      .map((thread) => {
+        const match = locateAnchor(thread.anchor, root);
+        if (!match) {
+          return null;
+        }
+        const rects = mergeRects(Array.from(match.range.getClientRects()), canvasRect);
+        if (!rects.length) {
+          return null;
+        }
+        return {
+          thread,
+          highlightRects: rects,
+        } satisfies PositionedThread;
+      })
+      .filter((item): item is PositionedThread => Boolean(item));
+
+    setPositionedThreads(visibleThreads);
+  }, [commentsVisible, showResolved, threads]);
+
+  useEffect(() => {
+    let frame = requestAnimationFrame(computeLayout);
+    const handleResize = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(computeLayout);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [computeLayout, renderedHtml]);
+
+  useEffect(() => {
+    if (!commentsVisible) {
+      setActiveThreadId(null);
+      setDialogThreadId(null);
+      clearSelection();
+    }
+  }, [clearSelection, commentsVisible]);
+
+  useEffect(() => {
+    if (activeThreadId && !threads.some((thread) => thread.id === activeThreadId)) {
+      setActiveThreadId(null);
+    }
+    if (dialogThreadId && !threads.some((thread) => thread.id === dialogThreadId)) {
+      setDialogThreadId(null);
+    }
+  }, [activeThreadId, dialogThreadId, threads]);
+
+  const visibleThreads = useMemo(
+    () => positionedThreads.map((item) => item.thread),
+    [positionedThreads],
+  );
+
+  function openThread(threadId: string) {
+    setActiveThreadId(threadId);
+    setDialogThreadId(threadId);
+  }
+
+  function handleCanvasClick(event: React.MouseEvent<HTMLDivElement>) {
+    if (!commentsVisible) {
+      return;
+    }
+
+    const target = event.target as HTMLElement;
+    if (target.closest('.selection-bubble, .comment-fab')) {
+      return;
+    }
+
+    const threadId = findAnchorAtPoint(event.clientX, event.clientY, highlightLayerRef.current);
+    if (!threadId) {
+      setActiveThreadId(null);
+      setDialogThreadId(null);
+      return;
+    }
+
+    openThread(threadId);
+  }
+
+  function handleStartThread() {
+    const anchor = getAnchor();
+    if (!anchor) {
+      return;
+    }
+
+    onRequestCreateThread(anchor);
+    clearSelection();
+  }
+
+  const dialogThread = dialogThreadId ? visibleThreads.find((thread) => thread.id === dialogThreadId) ?? null : null;
+
+  return (
+    <>
+      <div className="preview-scroll">
+        <div className="preview-canvas" ref={previewCanvasRef} onClick={handleCanvasClick}>
+          <button
+            ref={selectionBubbleRef}
+            type="button"
+            className="selection-bubble"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={handleStartThread}
+          >
+            Add comment
+          </button>
+          <button
+            ref={commentFabRef}
+            type="button"
+            className="comment-fab"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={handleStartThread}
+          >
+            Add comment
+          </button>
+          <div ref={highlightLayerRef} className="highlight-layer">
+            {commentsVisible ? positionedThreads.flatMap((item) => item.highlightRects.map((rect, index) => (
+              <div
+                key={`${item.thread.id}-${index}`}
+                className={`anchor-highlight ${item.thread.id === activeThreadId ? 'active' : ''}`}
+                data-thread-id={item.thread.id}
+                style={{
+                  left: rect.left,
+                  top: rect.top,
+                  width: rect.width,
+                  height: rect.height,
+                }}
+              />
+            ))) : null}
+          </div>
+          <div className="preview-content">
+            <div ref={previewMarkdownRef} className="markdown-body" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
+            {commentsVisible && visibleThreads.length === 0 ? <p className="empty-state">{emptyMessage}</p> : null}
+          </div>
+        </div>
+      </div>
+      {dialogThread ? (
+        <div className="modal-backdrop" onClick={() => setDialogThreadId(null)}>
+          <div className="modal thread-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="thread-modal-close-wrap">
+              <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => setDialogThreadId(null)}>
+                Close
+              </button>
+            </div>
+            <ThreadCard
+              thread={dialogThread}
+              active
+              className="thread-card--stack"
+              onReply={onReply}
+              onResolve={onResolve}
+              onDeleteThread={onDeleteThread}
+              onEditMessage={onEditMessage}
+              onDeleteMessage={onDeleteMessage}
+            />
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function ThreadCard({
   thread,
+  active = false,
+  className = '',
+  style,
   onReply,
   onResolve,
   onDeleteThread,
@@ -1299,6 +1910,9 @@ function ThreadCard({
   onDeleteMessage,
 }: {
   thread: Thread;
+  active?: boolean;
+  className?: string;
+  style?: CSSProperties;
   onReply: (threadId: string, parentMessageId: string, body: string) => Promise<void>;
   onResolve: (threadId: string, resolved: boolean) => Promise<void>;
   onDeleteThread: (threadId: string) => Promise<void>;
@@ -1325,7 +1939,7 @@ function ThreadCard({
   }
 
   return (
-    <div className={`thread-card active ${thread.resolved ? 'resolved' : ''}`} style={{ position: 'relative', right: 'auto', width: '100%' }}>
+    <div className={`thread-card ${active ? 'active' : ''} ${thread.resolved ? 'resolved' : ''} ${className}`.trim()} style={style}>
       <div className="thread-message-head">
         <strong className="thread-author">“{thread.anchor.quote}”</strong>
         <span className="thread-meta">{formatDate(thread.updatedAt)}</span>
@@ -1336,6 +1950,8 @@ function ThreadCard({
           <ThreadMessageNode
             key={node.message.id}
             node={node}
+            canReply={thread.canReply}
+            activeReplyTargetId={replyParentId}
             onReplyTarget={(messageId) => setReplyParentId(messageId)}
             onEditMessage={onEditMessage}
             onDeleteMessage={onDeleteMessage}
@@ -1356,6 +1972,7 @@ function ThreadCard({
       </div>
       {thread.canReply ? (
         <div className="compact" style={{ marginTop: '0.75rem' }}>
+          {replyParentId ? <div className="reply-target-note">Replying to selected comment</div> : null}
           <div className="field">
             <textarea value={replyBody} onChange={(event) => setReplyBody(event.target.value)} placeholder="Reply" />
           </div>
@@ -1401,12 +2018,16 @@ function buildMessageTree(messages: ThreadMessage[]) {
 
 function ThreadMessageNode({
   node,
+  canReply,
+  activeReplyTargetId,
   onReplyTarget,
   onEditMessage,
   onDeleteMessage,
   depth = 0,
 }: {
   node: MessageTreeNode;
+  canReply: boolean;
+  activeReplyTargetId: string;
   onReplyTarget: (messageId: string) => void;
   onEditMessage: (messageId: string, body: string) => Promise<void>;
   onDeleteMessage: (messageId: string) => Promise<void>;
@@ -1422,7 +2043,7 @@ function ThreadMessageNode({
 
   return (
     <div className="thread-node" style={{ ['--depth' as string]: depth }}>
-      <div className={`thread-message ${depth === 0 ? 'thread-message-root' : 'thread-message-reply'}`}>
+      <div className={`thread-message ${depth === 0 ? 'thread-message-root' : 'thread-message-reply'} ${activeReplyTargetId === node.message.id ? 'thread-message-targeted' : ''}`}>
         <div className="thread-message-head">
           <strong className="thread-author thread-author-small">{node.message.authorName}</strong>
           <span className="thread-meta">{formatDate(node.message.updatedAt)}</span>
@@ -1443,9 +2064,11 @@ function ThreadMessageNode({
           <div className="thread-body thread-body-small">{node.message.body}</div>
         )}
         <div className="thread-message-actions">
-          <button type="button" className="documine-btn documine-btn--link" onClick={() => onReplyTarget(node.message.id)}>
-            Reply here
-          </button>
+          {canReply ? (
+            <button type="button" className="documine-btn documine-btn--link" onClick={() => onReplyTarget(node.message.id)}>
+              {activeReplyTargetId === node.message.id ? 'Replying here' : 'Reply here'}
+            </button>
+          ) : null}
           {node.message.canEdit ? (
             <button type="button" className="documine-btn documine-btn--link" onClick={() => setEditing((current) => !current)}>
               Edit
@@ -1464,6 +2087,8 @@ function ThreadMessageNode({
             <ThreadMessageNode
               key={child.message.id}
               node={child}
+              canReply={canReply}
+              activeReplyTargetId={activeReplyTargetId}
               depth={depth + 1}
               onReplyTarget={onReplyTarget}
               onEditMessage={onEditMessage}
