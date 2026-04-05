@@ -16,6 +16,7 @@ RUN pnpm build
 FROM base AS api
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apk add --no-cache pandoc py3-weasyprint cairo pango gdk-pixbuf fontconfig ca-certificates ttf-freefont
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/package.json ./package.json
 COPY --from=build /app/dist ./dist

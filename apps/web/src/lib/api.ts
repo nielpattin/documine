@@ -107,6 +107,60 @@ export type NoteAsset = {
   updatedAt: string;
 };
 
+export type PdfExportStylePreset = 'report' | 'academic' | 'clean' | 'compact';
+export type PdfExportPageSize = 'A4' | 'Letter' | 'Legal';
+export type PdfExportOrientation = 'portrait' | 'landscape';
+export type PdfExportEngine = 'auto' | 'wkhtmltopdf' | 'weasyprint';
+export type PdfExportFontFamily = 'Times New Roman' | 'Georgia' | 'Arial' | 'Inter' | 'system-ui';
+export type PdfExportHeaderMode = 'none' | 'title' | 'date' | 'title-date';
+export type PdfExportCodeWrapMode = 'wrap' | 'scroll';
+export type PdfExportImageAlignment = 'left' | 'center' | 'right';
+
+export type PdfExportSettings = {
+  stylePreset: PdfExportStylePreset;
+  pageSize: PdfExportPageSize;
+  orientation: PdfExportOrientation;
+  engine: PdfExportEngine;
+  toc: boolean;
+  includeTitle: boolean;
+  includeDate: boolean;
+  fontFamily: PdfExportFontFamily;
+  fontSizePt: number;
+  lineHeight: number;
+  marginsCm: {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+  };
+  headerMode: PdfExportHeaderMode;
+  justifyText: boolean;
+  imageMaxWidthPercent: number;
+  imageAlign: PdfExportImageAlignment;
+  codeWrap: PdfExportCodeWrapMode;
+};
+
+export type PdfExportCapabilities = {
+  pandoc: boolean;
+  browser: boolean;
+  wkhtmltopdf: boolean;
+  weasyprint: boolean;
+  availableEngines: PdfExportEngine[];
+  styles: PdfExportStylePreset[];
+  pageSizes: PdfExportPageSize[];
+  fontFamilies: PdfExportFontFamily[];
+  headerModes: PdfExportHeaderMode[];
+  codeWrapModes: PdfExportCodeWrapMode[];
+  imageAlignments: PdfExportImageAlignment[];
+};
+
+export type PdfExportSettingsPayload = {
+  ok: true;
+  settings: PdfExportSettings;
+  defaults: PdfExportSettings;
+  capabilities: PdfExportCapabilities;
+};
+
 export class ApiError extends Error {
   status: number;
   details?: string[];
@@ -191,6 +245,33 @@ export async function uploadImage(file: File, options: { noteId?: string; shareI
 
 export function formatDate(iso: string) {
   return new Date(iso).toLocaleString();
+}
+
+export async function downloadNotePdf(noteId: string, settings: PdfExportSettings): Promise<void> {
+  const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/export/pdf`), {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings }),
+  });
+
+  if (!response.ok) {
+    await parseApiResponse(response);
+    return;
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  const fileName = match?.[1] || 'note.pdf';
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 export function buildWsUrl(pathAndQuery: string) {

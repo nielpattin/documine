@@ -2,12 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import {
   apiRequest,
   buildWsUrl,
+  downloadNotePdf,
   formatDate,
   getApiHttpOrigin,
   type ApiKey,
   type NoteAsset,
   type NotePayload,
   type NoteSummary,
+  type PdfExportCodeWrapMode,
+  type PdfExportHeaderMode,
+  type PdfExportImageAlignment,
+  type PdfExportSettings,
+  type PdfExportSettingsPayload,
   type ShareAccess,
   type Thread,
   type ThreadAnchor,
@@ -629,6 +635,7 @@ function OwnerNotePage({
   const [showShare, setShowShare] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showAgentModal, setShowAgentModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
   const [showAssetsModal, setShowAssetsModal] = useState(false);
   const [assets, setAssets] = useState<NoteAsset[]>([]);
   const [assetsLoading, setAssetsLoading] = useState(false);
@@ -873,6 +880,9 @@ function OwnerNotePage({
               </div>
             ) : null}
           </div>
+          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowExportModal(true)}>
+            Print
+          </button>
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowAssetsModal(true)}>
             Images
           </button>
@@ -954,6 +964,7 @@ function OwnerNotePage({
           onClose={() => setPendingThreadAnchor(null)}
         />
       ) : null}
+      {showExportModal ? <PdfExportModal noteId={noteId} onClose={() => setShowExportModal(false)} /> : null}
       {showAssetsModal ? (
         <ImageAssetsModal
           assets={assets}
@@ -1365,6 +1376,250 @@ function ImageAssetsModal({
               </div>
             </div>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => void }) {
+  const [payload, setPayload] = useState<PdfExportSettingsPayload | null>(null);
+  const [settings, setSettings] = useState<PdfExportSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError('');
+      try {
+        const nextPayload = await apiRequest<PdfExportSettingsPayload>('/api/export/settings');
+        if (cancelled) {
+          return;
+        }
+        setPayload(nextPayload);
+        setSettings(nextPayload.settings);
+      } catch (cause) {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : 'Failed to load PDF export settings.');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function updateSettings(patch: Partial<PdfExportSettings>) {
+    setSettings((current) => current ? { ...current, ...patch } : current);
+  }
+
+  function updateMargins(side: 'top' | 'right' | 'bottom' | 'left', value: number) {
+    setSettings((current) => current ? {
+      ...current,
+      marginsCm: { ...current.marginsCm, [side]: value },
+    } : current);
+  }
+
+  async function handleSaveDefaults() {
+    if (!settings) {
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const nextPayload = await apiRequest<PdfExportSettingsPayload>('/api/export/settings', {
+        method: 'PUT',
+        body: { settings },
+      });
+      setPayload(nextPayload);
+      setSettings(nextPayload.settings);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to save defaults.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleExport() {
+    if (!settings) {
+      return;
+    }
+    setExporting(true);
+    setError('');
+    try {
+      await downloadNotePdf(noteId, settings);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to export PDF.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="modal-backdrop" onClick={onClose}>
+        <div className="modal settings-modal pdf-export-modal" onClick={(event) => event.stopPropagation()}>
+          <div className="settings-header">
+            <h2 className="settings-title">Print to PDF</h2>
+            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>Close</button>
+          </div>
+          <p className="api-keys-empty">Loading export settings...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!payload || !settings) {
+    return (
+      <div className="modal-backdrop" onClick={onClose}>
+        <div className="modal settings-modal pdf-export-modal" onClick={(event) => event.stopPropagation()}>
+          <div className="settings-header">
+            <h2 className="settings-title">Print to PDF</h2>
+            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>Close</button>
+          </div>
+          <p className="api-keys-empty">{error || 'Export settings unavailable.'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const engineUnavailable = !payload.capabilities.pandoc;
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal settings-modal pdf-export-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="settings-header">
+          <div>
+            <h2 className="settings-title">Print to PDF</h2>
+            <p className="pdf-export-hint">Export with Pandoc. Defaults are stored in the instance data directory.</p>
+          </div>
+          <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>Close</button>
+        </div>
+
+        {!payload.capabilities.pandoc ? (
+          <div className="inline-error">Pandoc is not available on this server. Install it locally or in Docker to enable PDF export.</div>
+        ) : null}
+        {error ? <div className="inline-error">{error}</div> : null}
+
+        <div className="pdf-export-grid">
+          <label className="field pdf-export-field">
+            <span>Style</span>
+            <select value={settings.stylePreset} onChange={(event) => updateSettings({ stylePreset: event.target.value as PdfExportSettings['stylePreset'] })}>
+              {payload.capabilities.styles.map((style) => <option key={style} value={style}>{style}</option>)}
+            </select>
+          </label>
+
+          <label className="field pdf-export-field">
+            <span>Paper size</span>
+            <select value={settings.pageSize} onChange={(event) => updateSettings({ pageSize: event.target.value as PdfExportSettings['pageSize'] })}>
+              {payload.capabilities.pageSizes.map((size) => <option key={size} value={size}>{size}</option>)}
+            </select>
+          </label>
+
+          <label className="field pdf-export-field">
+            <span>Orientation</span>
+            <select value={settings.orientation} onChange={(event) => updateSettings({ orientation: event.target.value as PdfExportSettings['orientation'] })}>
+              <option value="portrait">portrait</option>
+              <option value="landscape">landscape</option>
+            </select>
+          </label>
+
+          <label className="field pdf-export-field">
+            <span>Engine</span>
+            <select value={settings.engine} onChange={(event) => updateSettings({ engine: event.target.value as PdfExportSettings['engine'] })}>
+              <option value="auto">auto</option>
+              {payload.capabilities.availableEngines.filter((engine) => engine !== 'auto').map((engine) => (
+                <option key={engine} value={engine}>{engine}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field pdf-export-field">
+            <span>Font family</span>
+            <select value={settings.fontFamily} onChange={(event) => updateSettings({ fontFamily: event.target.value as PdfExportSettings['fontFamily'] })}>
+              {payload.capabilities.fontFamilies.map((family) => <option key={family} value={family}>{family}</option>)}
+            </select>
+          </label>
+
+          <label className="field pdf-export-field">
+            <span>Header</span>
+            <select value={settings.headerMode} onChange={(event) => updateSettings({ headerMode: event.target.value as PdfExportHeaderMode })}>
+              {payload.capabilities.headerModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+            </select>
+          </label>
+
+          <label className="field pdf-export-field">
+            <span>Font size</span>
+            <input type="number" min={9} max={18} step={0.5} value={settings.fontSizePt} onChange={(event) => updateSettings({ fontSizePt: Number(event.target.value) || settings.fontSizePt })} />
+          </label>
+
+          <label className="field pdf-export-field">
+            <span>Line height</span>
+            <input type="number" min={1.1} max={2} step={0.05} value={settings.lineHeight} onChange={(event) => updateSettings({ lineHeight: Number(event.target.value) || settings.lineHeight })} />
+          </label>
+
+          <label className="field pdf-export-field">
+            <span>Image max width %</span>
+            <input type="number" min={30} max={100} step={5} value={settings.imageMaxWidthPercent} onChange={(event) => updateSettings({ imageMaxWidthPercent: Number(event.target.value) || settings.imageMaxWidthPercent })} />
+          </label>
+
+          <label className="field pdf-export-field">
+            <span>Image alignment</span>
+            <select value={settings.imageAlign} onChange={(event) => updateSettings({ imageAlign: event.target.value as PdfExportImageAlignment })}>
+              {payload.capabilities.imageAlignments.map((alignment) => <option key={alignment} value={alignment}>{alignment}</option>)}
+            </select>
+          </label>
+
+          <label className="field pdf-export-field">
+            <span>Code blocks</span>
+            <select value={settings.codeWrap} onChange={(event) => updateSettings({ codeWrap: event.target.value as PdfExportCodeWrapMode })}>
+              {payload.capabilities.codeWrapModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+            </select>
+          </label>
+        </div>
+
+        <div className="pdf-export-margins">
+          <h3 className="settings-section-title">Margins (cm)</h3>
+          <div className="pdf-export-grid pdf-export-grid--margins">
+            <label className="field pdf-export-field"><span>Top</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.top} onChange={(event) => updateMargins('top', Number(event.target.value) || settings.marginsCm.top)} /></label>
+            <label className="field pdf-export-field"><span>Right</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.right} onChange={(event) => updateMargins('right', Number(event.target.value) || settings.marginsCm.right)} /></label>
+            <label className="field pdf-export-field"><span>Bottom</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.bottom} onChange={(event) => updateMargins('bottom', Number(event.target.value) || settings.marginsCm.bottom)} /></label>
+            <label className="field pdf-export-field"><span>Left</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.left} onChange={(event) => updateMargins('left', Number(event.target.value) || settings.marginsCm.left)} /></label>
+          </div>
+        </div>
+
+        <div className="pdf-export-toggles">
+          <label><input type="checkbox" checked={settings.toc} onChange={(event) => updateSettings({ toc: event.target.checked })} /> Include table of contents</label>
+          <label><input type="checkbox" checked={settings.includeTitle} onChange={(event) => updateSettings({ includeTitle: event.target.checked })} /> Include note title</label>
+          <label><input type="checkbox" checked={settings.includeDate} onChange={(event) => updateSettings({ includeDate: event.target.checked })} /> Include export date</label>
+          <label><input type="checkbox" checked={settings.justifyText} onChange={(event) => updateSettings({ justifyText: event.target.checked })} /> Justify paragraphs</label>
+        </div>
+
+        <div className="pdf-export-capabilities api-key-meta">
+          Engines available: {payload.capabilities.availableEngines.join(', ')}
+          <br />
+          Per-image Pandoc overrides are supported with attribute blocks like <code>{'![alt](image.png){width="4in" height="2in"}'}</code>. Those override the global image size for that image.
+        </div>
+
+        <div className="modal-actions">
+          <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => setSettings(payload.settings)} disabled={saving || exporting}>
+            Reset
+          </button>
+          <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => void handleSaveDefaults()} disabled={saving || exporting}>
+            {saving ? 'Saving...' : 'Save defaults'}
+          </button>
+          <button type="button" className="primary" onClick={() => void handleExport()} disabled={engineUnavailable || exporting || saving}>
+            {exporting ? 'Exporting...' : 'Export PDF'}
+          </button>
         </div>
       </div>
     </div>

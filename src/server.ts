@@ -13,6 +13,13 @@ import sanitizeHtml from 'sanitize-html';
 import { WebSocketServer, type WebSocket } from 'ws';
 
 import {
+  defaultPdfExportSettings,
+  detectPdfExportCapabilities,
+  exportMarkdownToPdf,
+  loadPdfExportSettings,
+  savePdfExportSettings,
+} from './pdf-export.js';
+import {
   type CollabState,
   type ClientMutation,
   type ClientMutationMessage,
@@ -162,6 +169,7 @@ const dataDir = cliArg('data') || process.env.DATA_DIR || path.join(process.cwd(
 const notesDir = path.join(dataDir, 'notes');
 const noteAssetsDir = path.join(dataDir, 'assets');
 const authFilePath = path.join(dataDir, 'auth.json');
+const exportSettingsFilePath = path.join(dataDir, 'export-settings.json');
 const ownerSessionCookieName = 'documine_owner_session';
 const ownerLocalStorageTokenKey = 'documine_owner_token';
 const commenterIdCookieName = 'documine_commenter_id';
@@ -331,6 +339,30 @@ app.get('/api/keys', (c) => {
   return c.json({ ok: true, keys: listApiKeys() });
 });
 
+app.get('/api/export/settings', async (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const [settings, capabilities] = await Promise.all([
+    loadPdfExportSettings(exportSettingsFilePath),
+    detectPdfExportCapabilities(),
+  ]);
+
+  return c.json({ ok: true, settings, defaults: defaultPdfExportSettings, capabilities });
+});
+
+app.put('/api/export/settings', async (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const body = await readJsonBody(c);
+  const settings = await savePdfExportSettings(exportSettingsFilePath, body.settings);
+  const capabilities = await detectPdfExportCapabilities();
+  return c.json({ ok: true, settings, defaults: defaultPdfExportSettings, capabilities });
+});
+
 app.post('/api/keys', async (c) => {
   if (!isOwnerAuthenticated(c)) {
     return c.json({ ok: false, error: 'Unauthorized.' }, 401);
@@ -411,6 +443,37 @@ app.get('/api/notes/:id', (c) => {
   }
 
   return c.json({ ok: true, ...serializeNoteForClient(note, c) });
+});
+
+app.post('/api/notes/:id/export/pdf', async (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const note = notes.get(c.req.param('id'));
+  if (!note) {
+    return c.json({ ok: false, error: 'Note not found.' }, 404);
+  }
+
+  const body = await readJsonBody(c) as { settings?: unknown };
+  const savedSettings = await loadPdfExportSettings(exportSettingsFilePath);
+
+  try {
+    const result = await exportMarkdownToPdf({
+      noteId: note.id,
+      noteTitle: note.title,
+      markdown: note.markdown,
+      settings: body.settings === undefined ? savedSettings : body.settings,
+      assetDirectory: noteAssetDirectory(note.id),
+    });
+    return c.body(new Uint8Array(result.pdf), 200, {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${result.fileName}"`,
+      'Cache-Control': 'no-store',
+    });
+  } catch (error) {
+    return c.json({ ok: false, error: error instanceof Error ? error.message : 'PDF export failed.' }, 500);
+  }
 });
 
 app.put('/api/notes/:id', async (c) => {
