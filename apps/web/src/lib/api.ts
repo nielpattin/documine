@@ -90,6 +90,23 @@ export type ApiKey = {
   createdAt: string;
 };
 
+export type UploadedImagePayload = {
+  ok: true;
+  asset: {
+    url: string;
+    markdown: string;
+  };
+};
+
+export type NoteAsset = {
+  fileName: string;
+  url: string;
+  markdown: string;
+  inUse: boolean;
+  size: number;
+  updatedAt: string;
+};
+
 export class ApiError extends Error {
   status: number;
   details?: string[];
@@ -127,14 +144,7 @@ function buildApiUrl(path: string) {
   return `${getApiHttpOrigin()}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-export async function apiRequest<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
-  const response = await fetch(buildApiUrl(path), {
-    method: init.method ?? "GET",
-    credentials: "include",
-    headers: init.body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
-  });
-
+async function parseApiResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
   const payload = text ? JSON.parse(text) : null;
 
@@ -143,6 +153,40 @@ export async function apiRequest<T>(path: string, init: { method?: string; body?
   }
 
   return payload as T;
+}
+
+export async function apiRequest<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+  const response = await fetch(buildApiUrl(path), {
+    method: init.method ?? "GET",
+    credentials: "include",
+    headers: init.body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+  });
+
+  return parseApiResponse<T>(response);
+}
+
+export async function uploadImage(file: File, options: { noteId?: string; shareId?: string }): Promise<UploadedImagePayload> {
+  const endpoint = options.noteId
+    ? `/api/notes/${encodeURIComponent(options.noteId)}/images`
+    : options.shareId
+      ? `/api/share/${encodeURIComponent(options.shareId)}/images`
+      : null;
+
+  if (!endpoint) {
+    throw new Error("Missing note identifier for image upload.");
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(buildApiUrl(endpoint), {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+
+  return parseApiResponse<UploadedImagePayload>(response);
 }
 
 export function formatDate(iso: string) {

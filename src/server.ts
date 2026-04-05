@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { getRequestListener } from '@hono/node-server';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
+import { bodyLimit } from 'hono/body-limit';
 import { Hono, type Context } from 'hono';
 import hljs from 'highlight.js';
 import { marked, type Tokens } from 'marked';
@@ -93,6 +94,15 @@ type NoteSummary = {
   snippet: string;
 };
 
+type NoteAssetSummary = {
+  fileName: string;
+  url: string;
+  markdown: string;
+  inUse: boolean;
+  size: number;
+  updatedAt: string;
+};
+
 type DeviceToken = {
   id: string;
   salt: string;
@@ -150,6 +160,7 @@ function cliArg(name: string) {
 const port = Number(cliArg('port') || process.env.PORT || 3120);
 const dataDir = cliArg('data') || process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const notesDir = path.join(dataDir, 'notes');
+const noteAssetsDir = path.join(dataDir, 'assets');
 const authFilePath = path.join(dataDir, 'auth.json');
 const ownerSessionCookieName = 'documine_owner_session';
 const ownerLocalStorageTokenKey = 'documine_owner_token';
@@ -158,6 +169,14 @@ const commenterNameCookieName = 'documine_commenter_name';
 const ownerCookieMaxAgeSeconds = 60 * 60 * 24 * 30;
 const commenterCookieMaxAgeSeconds = 60 * 60 * 24 * 365;
 const shareAccessLevels: Record<ShareAccess, number> = { none: 0, view: 1, comment: 2, edit: 3 };
+const maxImageUploadBytes = 10 * 1024 * 1024;
+const imageMimeExtensions: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'image/avif': '.avif',
+};
 const notes = new Map<string, NoteRecord>();
 const clients: ClientConn[] = [];
 const CURSOR_COLORS = ['#4285f4', '#ea4335', '#34a853', '#fbbc04', '#9c27b0', '#ff6d00', '#00bcd4', '#e91e63'];
@@ -209,6 +228,33 @@ app.use('/api/*', async (c, next) => {
 app.get('/', (c) => c.json({ ok: true, service: 'documine-api' }));
 
 app.get('/health', (c) => c.text('ok'));
+
+app.get('/assets/:noteId/:fileName', (c) => {
+  const note = notes.get(c.req.param('noteId'));
+  if (!note) {
+    return c.text('Not found.', 404);
+  }
+  if (!isOwnerAuthenticated(c) && shareAccessLevels[note.shareAccess] < shareAccessLevels.view) {
+    return c.text('Forbidden.', 403);
+  }
+
+  const fileName = path.basename(c.req.param('fileName'));
+  const filePath = path.join(noteAssetDirectory(note.id), fileName);
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    return c.text('Not found.', 404);
+  }
+
+  const extension = path.extname(fileName).toLowerCase();
+  const contentType = imageContentTypeFromExtension(extension);
+  if (!contentType) {
+    return c.text('Unsupported media type.', 415);
+  }
+
+  return c.body(fs.readFileSync(filePath), 200, {
+    'Content-Type': contentType,
+    'Cache-Control': 'private, max-age=31536000, immutable',
+  });
+});
 
 app.get('/api/viewer', (c) => {
   return c.json({
@@ -426,6 +472,7 @@ app.delete('/api/notes/:id', (c) => {
   closeConnectionsForNote(note.id);
   try { fs.unlinkSync(noteMarkdownPath(noteId)); } catch {}
   try { fs.unlinkSync(noteMetaPath(noteId)); } catch {}
+  try { fs.rmSync(noteAssetDirectory(noteId), { recursive: true, force: true }); } catch {}
   return c.json({ ok: true });
 });
 
@@ -473,6 +520,67 @@ app.post('/api/notes/:id/edit', async (c) => {
   broadcastNoteUpdate(note);
   return c.json({ ok: true, savedAt: note.updatedAt });
 });
+
+app.get('/api/notes/:id/assets', (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const note = notes.get(c.req.param('id'));
+  if (!note) {
+    return c.json({ ok: false, error: 'Note not found.' }, 404);
+  }
+
+  return c.json({ ok: true, assets: listNoteAssets(note, c) });
+});
+
+app.delete('/api/notes/:id/assets/:fileName', (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const note = notes.get(c.req.param('id'));
+  if (!note) {
+    return c.json({ ok: false, error: 'Note not found.' }, 404);
+  }
+
+  const fileName = path.basename(c.req.param('fileName'));
+  const asset = listNoteAssets(note, c).find((item) => item.fileName === fileName);
+  if (!asset) {
+    return c.json({ ok: false, error: 'Asset not found.' }, 404);
+  }
+  if (asset.inUse) {
+    return c.json({ ok: false, error: 'Remove this image from the note before deleting it.' }, 400);
+  }
+
+  try {
+    fs.unlinkSync(noteAssetPath(note.id, fileName));
+  } catch {
+    return c.json({ ok: false, error: 'Failed to delete asset.' }, 500);
+  }
+
+  return c.json({ ok: true, assets: listNoteAssets(note, c) });
+});
+
+app.post(
+  '/api/notes/:id/images',
+  bodyLimit({
+    maxSize: maxImageUploadBytes,
+    onError: (c) => c.json({ ok: false, error: 'Image exceeds the 10 MB upload limit.' }, 413),
+  }),
+  async (c) => {
+    if (!isOwnerAuthenticated(c)) {
+      return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+    }
+
+    const note = notes.get(c.req.param('id'));
+    if (!note) {
+      return c.json({ ok: false, error: 'Note not found.' }, 404);
+    }
+
+    return handleImageUpload(c, note);
+  },
+);
 
 app.post('/api/notes/:id/threads', async (c) => {
   if (!isOwnerAuthenticated(c)) {
@@ -826,6 +934,22 @@ app.post('/api/share/:shareId/identity', async (c) => {
     viewer: buildViewerInfo(c, { commenterNameOverride: name, hasCommenterIdentityOverride: true }),
   });
 });
+
+app.post(
+  '/api/share/:shareId/images',
+  bodyLimit({
+    maxSize: maxImageUploadBytes,
+    onError: (c) => c.json({ ok: false, error: 'Image exceeds the 10 MB upload limit.' }, 413),
+  }),
+  async (c) => {
+    const note = requireShareAccess(c, 'edit');
+    if (!note) {
+      return c.json({ ok: false, error: 'Shared note not found.' }, 404);
+    }
+
+    return handleImageUpload(c, note);
+  },
+);
 
 app.post('/api/share/:shareId/threads', async (c) => {
   const note = requireShareAccess(c, 'comment');
@@ -1398,6 +1522,15 @@ function closeConnectionsForNote(noteId: string) {
 function ensureDirectories() {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(notesDir, { recursive: true });
+  fs.mkdirSync(noteAssetsDir, { recursive: true });
+}
+
+function noteAssetDirectory(noteId: string) {
+  return path.join(noteAssetsDir, noteId);
+}
+
+function noteAssetPath(noteId: string, fileName: string) {
+  return path.join(noteAssetDirectory(noteId), fileName);
 }
 
 function loadNotesIntoMemory() {
@@ -1669,6 +1802,39 @@ function normalizeCommenterName(input: string) {
   return input.trim().slice(0, 80);
 }
 
+function listNoteAssets(note: NoteRecord, c: Context): NoteAssetSummary[] {
+  const directory = noteAssetDirectory(note.id);
+  if (!fs.existsSync(directory)) {
+    return [];
+  }
+
+  return fs.readdirSync(directory)
+    .map((fileName) => {
+      const safeFileName = path.basename(fileName);
+      const filePath = noteAssetPath(note.id, safeFileName);
+      if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+        return null;
+      }
+
+      const stat = fs.statSync(filePath);
+      const url = makeAssetUrl(c, note.id, safeFileName);
+      return {
+        fileName: safeFileName,
+        url,
+        markdown: `![${escapeMarkdownImageAlt(safeFileName)}](${url})`,
+        inUse: note.markdown.includes(assetMarkdownReferencePath(note.id, safeFileName)),
+        size: stat.size,
+        updatedAt: stat.mtime.toISOString(),
+      } satisfies NoteAssetSummary;
+    })
+    .filter((item): item is NoteAssetSummary => Boolean(item))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+function assetMarkdownReferencePath(noteId: string, fileName: string) {
+  return `/assets/${encodeURIComponent(noteId)}/${encodeURIComponent(fileName)}`;
+}
+
 function sanitizeAnchor(input: unknown) {
   if (!input || typeof input !== 'object') {
     return null;
@@ -1686,6 +1852,52 @@ function sanitizeAnchor(input: unknown) {
   }
 
   return { quote, prefix, suffix, start, end } satisfies CommentAnchor;
+}
+
+async function handleImageUpload(c: Context, note: NoteRecord) {
+  const body = await c.req.parseBody();
+  const file = body.file;
+  if (!(file instanceof File)) {
+    return c.json({ ok: false, error: 'Image file is required.' }, 400);
+  }
+
+  const extension = imageMimeExtensions[file.type];
+  if (!extension) {
+    return c.json({ ok: false, error: 'Only PNG, JPEG, GIF, WebP, and AVIF images are supported.' }, 400);
+  }
+  if (file.size <= 0) {
+    return c.json({ ok: false, error: 'Image file is empty.' }, 400);
+  }
+  if (file.size > maxImageUploadBytes) {
+    return c.json({ ok: false, error: 'Image exceeds the 10 MB upload limit.' }, 413);
+  }
+
+  fs.mkdirSync(noteAssetDirectory(note.id), { recursive: true });
+  const fileName = `${createId(18)}${extension}`;
+  fs.writeFileSync(noteAssetPath(note.id, fileName), Buffer.from(await file.arrayBuffer()));
+
+  const url = makeAssetUrl(c, note.id, fileName);
+  return c.json({
+    ok: true,
+    asset: {
+      url,
+      markdown: `![${escapeMarkdownImageAlt(file.name)}](${url})`,
+    },
+  });
+}
+
+function escapeMarkdownImageAlt(input: string) {
+  const base = input.trim().replace(/\.[A-Za-z0-9]+$/, '').replace(/[\[\]\\]/g, '').trim();
+  return base || 'image';
+}
+
+function imageContentTypeFromExtension(extension: string) {
+  return Object.entries(imageMimeExtensions).find(([, value]) => value === extension)?.[0] || null;
+}
+
+function makeAssetUrl(c: Context, noteId: string, fileName: string) {
+  const url = new URL(c.req.url);
+  return `${url.protocol}//${url.host}${assetMarkdownReferencePath(noteId, fileName)}`;
 }
 
 function renderMarkdown(markdown: string) {

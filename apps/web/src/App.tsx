@@ -5,6 +5,7 @@ import {
   formatDate,
   getApiHttpOrigin,
   type ApiKey,
+  type NoteAsset,
   type NotePayload,
   type NoteSummary,
   type ShareAccess,
@@ -12,9 +13,9 @@ import {
   type ThreadAnchor,
   type ThreadMessage,
   type ViewerPayload,
+  uploadImage,
 } from './lib/api';
-// @ts-expect-error js module
-import { createCollabEditor } from './lib/collab-editor.js';
+import { createCollabEditor, type CollabEditorHandle } from './lib/collab-editor';
 
 const FALLBACK_OWNER_TOKEN_KEY = 'documine_owner_token';
 
@@ -24,11 +25,6 @@ type Route =
   | { kind: 'note'; noteId: string }
   | { kind: 'share'; shareId: string };
 
-type CollabEditorHandle = {
-  destroy: () => void;
-  getText: () => string;
-};
-
 type CollabTextareaProps = {
   noteId?: string;
   shareId?: string;
@@ -37,6 +33,8 @@ type CollabTextareaProps = {
   onTextChange: (markdown: string) => void;
   onConnectionChange: (connected: boolean) => void;
   onThreadsUpdated?: () => void;
+  onUploadImage?: (file: File) => Promise<{ ok: true; asset: { url: string; markdown: string } }>;
+  onEditorMount?: (handle: CollabEditorHandle | null) => void;
 };
 
 type AgentModalConfig = {
@@ -631,9 +629,23 @@ function OwnerNotePage({
   const [showShare, setShowShare] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showAgentModal, setShowAgentModal] = useState(false);
+  const [showAssetsModal, setShowAssetsModal] = useState(false);
+  const [assets, setAssets] = useState<NoteAsset[]>([]);
+  const [assetsLoading, setAssetsLoading] = useState(false);
   const [showComments, setShowComments] = useState(true);
   const [showResolved, setShowResolved] = useState(false);
   const [pendingThreadAnchor, setPendingThreadAnchor] = useState<ThreadAnchor | null>(null);
+  const editorHandleRef = useRef<CollabEditorHandle | null>(null);
+
+  const loadAssets = useCallback(async () => {
+    setAssetsLoading(true);
+    try {
+      const response = await apiRequest<{ ok: true; assets: NoteAsset[] }>(`/api/notes/${noteId}/assets`);
+      setAssets(response.assets);
+    } finally {
+      setAssetsLoading(false);
+    }
+  }, [noteId]);
 
   const loadNote = useCallback(async (options?: { background?: boolean }) => {
     if (!options?.background) {
@@ -660,6 +672,12 @@ function OwnerNotePage({
   useEffect(() => {
     void loadNote();
   }, [loadNote]);
+
+  useEffect(() => {
+    if (showAssetsModal) {
+      void loadAssets();
+    }
+  }, [loadAssets, showAssetsModal]);
 
   useEffect(() => {
     if (!payload) {
@@ -774,6 +792,21 @@ function OwnerNotePage({
     setPendingThreadAnchor(anchor);
   }
 
+  async function handleDeleteAsset(fileName: string) {
+    if (!window.confirm('Delete this unused image?')) {
+      return;
+    }
+
+    const response = await apiRequest<{ ok: true; assets: NoteAsset[] }>(`/api/notes/${noteId}/assets/${encodeURIComponent(fileName)}`, {
+      method: 'DELETE',
+    });
+    setAssets(response.assets);
+  }
+
+  function handleInsertAsset(markdownSnippet: string) {
+    editorHandleRef.current?.insertText(markdownSnippet);
+  }
+
   if (loading) {
     return <LoadingPage message="Loading note" />;
   }
@@ -840,6 +873,9 @@ function OwnerNotePage({
               </div>
             ) : null}
           </div>
+          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowAssetsModal(true)}>
+            Images
+          </button>
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowComments((current) => !current)}>
             {showComments ? 'Hide comments' : 'Show comments'}
           </button>
@@ -867,6 +903,16 @@ function OwnerNotePage({
           <CollabTextarea
             noteId={noteId}
             initialValue={markdown}
+            onUploadImage={async (file) => {
+              const response = await uploadImage(file, { noteId });
+              if (showAssetsModal) {
+                void loadAssets();
+              }
+              return response;
+            }}
+            onEditorMount={(handle) => {
+              editorHandleRef.current = handle;
+            }}
             onReady={(next) => {
               setMarkdown(next.markdown);
             }}
@@ -906,6 +952,16 @@ function OwnerNotePage({
           anchor={pendingThreadAnchor}
           onSubmit={createThread}
           onClose={() => setPendingThreadAnchor(null)}
+        />
+      ) : null}
+      {showAssetsModal ? (
+        <ImageAssetsModal
+          assets={assets}
+          loading={assetsLoading}
+          onInsert={handleInsertAsset}
+          onDelete={handleDeleteAsset}
+          onRefresh={loadAssets}
+          onClose={() => setShowAssetsModal(false)}
         />
       ) : null}
       {showAgentModal ? <AgentSetupModal config={agentModalConfig} onClose={() => setShowAgentModal(false)} /> : null}
@@ -1113,6 +1169,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
             <CollabTextarea
               shareId={shareId}
               initialValue={markdown}
+              onUploadImage={(file) => uploadImage(file, { shareId })}
               onReady={(next) => {
                 setMarkdown(next.markdown);
               }}
@@ -1195,14 +1252,22 @@ function CollabTextarea({
   onTextChange,
   onConnectionChange,
   onThreadsUpdated,
+  onUploadImage,
+  onEditorMount,
 }: CollabTextareaProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const editorRef = useRef<CollabEditorHandle | null>(null);
-  const callbacksRef = useRef({ onReady, onTextChange, onConnectionChange, onThreadsUpdated });
+  const callbacksRef = useRef({ onReady, onTextChange, onConnectionChange, onThreadsUpdated, onUploadImage });
+  const onEditorMountRef = useRef(onEditorMount);
 
   useEffect(() => {
-    callbacksRef.current = { onReady, onTextChange, onConnectionChange, onThreadsUpdated };
-  }, [onConnectionChange, onReady, onTextChange, onThreadsUpdated]);
+    callbacksRef.current = { onReady, onTextChange, onConnectionChange, onThreadsUpdated, onUploadImage };
+  }, [onConnectionChange, onReady, onTextChange, onThreadsUpdated, onUploadImage]);
+
+  useEffect(() => {
+    onEditorMountRef.current = onEditorMount;
+    onEditorMount?.(editorRef.current);
+  }, [onEditorMount]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -1229,15 +1294,81 @@ function CollabTextarea({
       onTextChange: (nextMarkdown: string) => callbacksRef.current.onTextChange(nextMarkdown),
       onConnectionChange: (connected: boolean) => callbacksRef.current.onConnectionChange(connected),
       onThreadsUpdated: () => callbacksRef.current.onThreadsUpdated?.(),
+      onUploadImage: callbacksRef.current.onUploadImage
+        ? (file: File) => callbacksRef.current.onUploadImage!(file)
+        : undefined,
     });
+    onEditorMountRef.current?.(editorRef.current);
 
     return () => {
       editorRef.current?.destroy();
       editorRef.current = null;
+      onEditorMountRef.current?.(null);
     };
   }, [noteId, shareId]);
 
   return <textarea ref={textareaRef} className="editor-textarea" spellCheck={false} />;
+}
+
+function ImageAssetsModal({
+  assets,
+  loading,
+  onInsert,
+  onDelete,
+  onRefresh,
+  onClose,
+}: {
+  assets: NoteAsset[];
+  loading: boolean;
+  onInsert: (markdown: string) => void;
+  onDelete: (fileName: string) => Promise<void>;
+  onRefresh: () => Promise<void>;
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal settings-modal image-assets-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="settings-header">
+          <h2 className="settings-title">Images</h2>
+          <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="settings-section-header">
+          <h3 className="settings-section-title">Current note assets</h3>
+          <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => void onRefresh()}>
+            Refresh
+          </button>
+        </div>
+        <p className="api-keys-empty">Used images are currently referenced in the note. Remove them from the markdown before deleting them.</p>
+        {loading ? <p className="api-keys-empty">Loading...</p> : null}
+        {!loading && assets.length === 0 ? <p className="api-keys-empty">No uploaded images yet.</p> : null}
+        <div className="image-asset-list">
+          {assets.map((asset) => (
+            <div key={asset.fileName} className="image-asset-row">
+              <img src={asset.url} alt={asset.fileName} className="image-asset-preview" />
+              <div className="image-asset-info">
+                <div className="image-asset-title-row">
+                  <strong className="api-key-label">{asset.fileName}</strong>
+                  <span className={`image-asset-badge ${asset.inUse ? 'used' : 'unused'}`}>{asset.inUse ? 'In use' : 'Unused'}</span>
+                </div>
+                <div className="api-key-meta">{Math.max(1, Math.round(asset.size / 1024))} KB • {formatDate(asset.updatedAt)}</div>
+                <code className="image-asset-markdown">{asset.markdown}</code>
+                <div className="modal-actions">
+                  <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => onInsert(asset.markdown)}>
+                    Insert into note
+                  </button>
+                  <button type="button" className="documine-btn documine-btn--sm documine-btn--danger" onClick={() => void onDelete(asset.fileName)} disabled={asset.inUse}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function CommentIdentityModal({
