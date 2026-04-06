@@ -800,10 +800,6 @@ function OwnerNotePage({
   }
 
   async function handleDeleteAsset(fileName: string) {
-    if (!window.confirm('Delete this unused image?')) {
-      return;
-    }
-
     const response = await apiRequest<{ ok: true; assets: NoteAsset[] }>(`/api/notes/${noteId}/assets/${encodeURIComponent(fileName)}`, {
       method: 'DELETE',
     });
@@ -1336,6 +1332,19 @@ function ImageAssetsModal({
   onRefresh: () => Promise<void>;
   onClose: () => void;
 }) {
+  const [confirmDeleteFile, setConfirmDeleteFile] = useState<string | null>(null);
+  const [deletingFile, setDeletingFile] = useState<string | null>(null);
+
+  async function handleConfirmDelete(fileName: string) {
+    setDeletingFile(fileName);
+    try {
+      await onDelete(fileName);
+      setConfirmDeleteFile((current) => (current === fileName ? null : current));
+    } finally {
+      setDeletingFile((current) => (current === fileName ? null : current));
+    }
+  }
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal settings-modal image-assets-modal" onClick={(event) => event.stopPropagation()}>
@@ -1369,9 +1378,35 @@ function ImageAssetsModal({
                   <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => onInsert(asset.markdown)}>
                     Insert into note
                   </button>
-                  <button type="button" className="documine-btn documine-btn--sm documine-btn--danger" onClick={() => void onDelete(asset.fileName)} disabled={asset.inUse}>
-                    Delete
-                  </button>
+                  {confirmDeleteFile === asset.fileName ? (
+                    <div className="image-asset-confirm-delete">
+                      <button
+                        type="button"
+                        className="documine-btn documine-btn--sm documine-btn--ghost"
+                        onClick={() => setConfirmDeleteFile(null)}
+                        disabled={deletingFile === asset.fileName}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="documine-btn documine-btn--sm documine-btn--danger"
+                        onClick={() => void handleConfirmDelete(asset.fileName)}
+                        disabled={deletingFile === asset.fileName}
+                      >
+                        {deletingFile === asset.fileName ? 'Deleting...' : 'Delete'}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="documine-btn documine-btn--sm documine-btn--danger"
+                      onClick={() => setConfirmDeleteFile(asset.fileName)}
+                      disabled={asset.inUse}
+                    >
+                      Delete
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1467,12 +1502,16 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
   if (loading) {
     return (
       <div className="modal-backdrop" onClick={onClose}>
-        <div className="modal settings-modal pdf-export-modal" onClick={(event) => event.stopPropagation()}>
-          <div className="settings-header">
-            <h2 className="settings-title">Print to PDF</h2>
+        <div className="modal pdf-export-modal" onClick={(event) => event.stopPropagation()}>
+          <div className="pdf-export-header">
+            <div className="pdf-export-header-left">
+              <h2 className="pdf-export-title">Print to PDF</h2>
+            </div>
             <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>Close</button>
           </div>
-          <p className="api-keys-empty">Loading export settings...</p>
+          <div className="pdf-export-content">
+            <p className="pdf-export-loading">Loading export settings...</p>
+          </div>
         </div>
       </div>
     );
@@ -1481,12 +1520,16 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
   if (!payload || !settings) {
     return (
       <div className="modal-backdrop" onClick={onClose}>
-        <div className="modal settings-modal pdf-export-modal" onClick={(event) => event.stopPropagation()}>
-          <div className="settings-header">
-            <h2 className="settings-title">Print to PDF</h2>
+        <div className="modal pdf-export-modal" onClick={(event) => event.stopPropagation()}>
+          <div className="pdf-export-header">
+            <div className="pdf-export-header-left">
+              <h2 className="pdf-export-title">Print to PDF</h2>
+            </div>
             <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>Close</button>
           </div>
-          <p className="api-keys-empty">{error || 'Export settings unavailable.'}</p>
+          <div className="pdf-export-content">
+            <div className="inline-error">{error || 'Export settings unavailable.'}</div>
+          </div>
         </div>
       </div>
     );
@@ -1496,130 +1539,154 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal settings-modal pdf-export-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="settings-header">
-          <div>
-            <h2 className="settings-title">Print to PDF</h2>
-            <p className="pdf-export-hint">Export with Pandoc. Defaults are stored in the instance data directory.</p>
+      <div className="modal pdf-export-modal" onClick={(event) => event.stopPropagation()}>
+        {/* Sticky Header */}
+        <div className="pdf-export-header">
+          <div className="pdf-export-header-left">
+            <h2 className="pdf-export-title">Print to PDF</h2>
+            <p className="pdf-export-subtitle">Export with Pandoc</p>
           </div>
-          <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>Close</button>
-        </div>
-
-        {!payload.capabilities.pandoc ? (
-          <div className="inline-error">Pandoc is not available on this server. Install it locally or in Docker to enable PDF export.</div>
-        ) : null}
-        {error ? <div className="inline-error">{error}</div> : null}
-
-        <div className="pdf-export-grid">
-          <label className="field pdf-export-field">
-            <span>Style</span>
-            <select value={settings.stylePreset} onChange={(event) => updateSettings({ stylePreset: event.target.value as PdfExportSettings['stylePreset'] })}>
-              {payload.capabilities.styles.map((style) => <option key={style} value={style}>{style}</option>)}
-            </select>
-          </label>
-
-          <label className="field pdf-export-field">
-            <span>Paper size</span>
-            <select value={settings.pageSize} onChange={(event) => updateSettings({ pageSize: event.target.value as PdfExportSettings['pageSize'] })}>
-              {payload.capabilities.pageSizes.map((size) => <option key={size} value={size}>{size}</option>)}
-            </select>
-          </label>
-
-          <label className="field pdf-export-field">
-            <span>Orientation</span>
-            <select value={settings.orientation} onChange={(event) => updateSettings({ orientation: event.target.value as PdfExportSettings['orientation'] })}>
-              <option value="portrait">portrait</option>
-              <option value="landscape">landscape</option>
-            </select>
-          </label>
-
-          <label className="field pdf-export-field">
-            <span>Engine</span>
-            <select value={settings.engine} onChange={(event) => updateSettings({ engine: event.target.value as PdfExportSettings['engine'] })}>
-              <option value="auto">auto</option>
-              {payload.capabilities.availableEngines.filter((engine) => engine !== 'auto').map((engine) => (
-                <option key={engine} value={engine}>{engine}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="field pdf-export-field">
-            <span>Font family</span>
-            <select value={settings.fontFamily} onChange={(event) => updateSettings({ fontFamily: event.target.value as PdfExportSettings['fontFamily'] })}>
-              {payload.capabilities.fontFamilies.map((family) => <option key={family} value={family}>{family}</option>)}
-            </select>
-          </label>
-
-          <label className="field pdf-export-field">
-            <span>Header</span>
-            <select value={settings.headerMode} onChange={(event) => updateSettings({ headerMode: event.target.value as PdfExportHeaderMode })}>
-              {payload.capabilities.headerModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
-            </select>
-          </label>
-
-          <label className="field pdf-export-field">
-            <span>Font size</span>
-            <input type="number" min={9} max={18} step={0.5} value={settings.fontSizePt} onChange={(event) => updateSettings({ fontSizePt: Number(event.target.value) || settings.fontSizePt })} />
-          </label>
-
-          <label className="field pdf-export-field">
-            <span>Line height</span>
-            <input type="number" min={1.1} max={2} step={0.05} value={settings.lineHeight} onChange={(event) => updateSettings({ lineHeight: Number(event.target.value) || settings.lineHeight })} />
-          </label>
-
-          <label className="field pdf-export-field">
-            <span>Image max width %</span>
-            <input type="number" min={30} max={100} step={5} value={settings.imageMaxWidthPercent} onChange={(event) => updateSettings({ imageMaxWidthPercent: Number(event.target.value) || settings.imageMaxWidthPercent })} />
-          </label>
-
-          <label className="field pdf-export-field">
-            <span>Image alignment</span>
-            <select value={settings.imageAlign} onChange={(event) => updateSettings({ imageAlign: event.target.value as PdfExportImageAlignment })}>
-              {payload.capabilities.imageAlignments.map((alignment) => <option key={alignment} value={alignment}>{alignment}</option>)}
-            </select>
-          </label>
-
-          <label className="field pdf-export-field">
-            <span>Code blocks</span>
-            <select value={settings.codeWrap} onChange={(event) => updateSettings({ codeWrap: event.target.value as PdfExportCodeWrapMode })}>
-              {payload.capabilities.codeWrapModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
-            </select>
-          </label>
-        </div>
-
-        <div className="pdf-export-margins">
-          <h3 className="settings-section-title">Margins (cm)</h3>
-          <div className="pdf-export-grid pdf-export-grid--margins">
-            <label className="field pdf-export-field"><span>Top</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.top} onChange={(event) => updateMargins('top', Number(event.target.value) || settings.marginsCm.top)} /></label>
-            <label className="field pdf-export-field"><span>Right</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.right} onChange={(event) => updateMargins('right', Number(event.target.value) || settings.marginsCm.right)} /></label>
-            <label className="field pdf-export-field"><span>Bottom</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.bottom} onChange={(event) => updateMargins('bottom', Number(event.target.value) || settings.marginsCm.bottom)} /></label>
-            <label className="field pdf-export-field"><span>Left</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.left} onChange={(event) => updateMargins('left', Number(event.target.value) || settings.marginsCm.left)} /></label>
+          <div className="pdf-export-actions">
+            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => setSettings(payload.settings)} disabled={saving || exporting}>
+              Reset
+            </button>
+            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => void handleSaveDefaults()} disabled={saving || exporting}>
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+            <button type="button" className="documine-btn documine-btn--sm documine-btn--primary" onClick={() => void handleExport()} disabled={engineUnavailable || exporting || saving}>
+              {exporting ? 'Exporting...' : 'Export'}
+            </button>
+            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>Close</button>
           </div>
         </div>
 
-        <div className="pdf-export-toggles">
-          <label><input type="checkbox" checked={settings.toc} onChange={(event) => updateSettings({ toc: event.target.checked })} /> Include table of contents</label>
-          <label><input type="checkbox" checked={settings.includeTitle} onChange={(event) => updateSettings({ includeTitle: event.target.checked })} /> Include note title</label>
-          <label><input type="checkbox" checked={settings.includeDate} onChange={(event) => updateSettings({ includeDate: event.target.checked })} /> Include export date</label>
-          <label><input type="checkbox" checked={settings.justifyText} onChange={(event) => updateSettings({ justifyText: event.target.checked })} /> Justify paragraphs</label>
-        </div>
+        {/* Scrollable Content */}
+        <div className="pdf-export-content">
+          {!payload.capabilities.pandoc ? (
+            <div className="inline-error">Pandoc is not available on this server. Install it locally or in Docker to enable PDF export.</div>
+          ) : null}
+          {error ? <div className="inline-error">{error}</div> : null}
 
-        <div className="pdf-export-capabilities api-key-meta">
-          Engines available: {payload.capabilities.availableEngines.join(', ')}
-          <br />
-          Per-image Pandoc overrides are supported with attribute blocks like <code>{'![alt](image.png){width="4in" height="2in"}'}</code>. Those override the global image size for that image.
-        </div>
+          {/* Page Setup Section */}
+          <section className="pdf-export-section">
+            <h3 className="pdf-export-section-title">Page setup</h3>
+            <div className="pdf-export-grid">
+              <label className="pdf-export-field">
+                <span>Paper size</span>
+                <select value={settings.pageSize} onChange={(event) => updateSettings({ pageSize: event.target.value as PdfExportSettings['pageSize'] })}>
+                  {payload.capabilities.pageSizes.map((size) => <option key={size} value={size}>{size}</option>)}
+                </select>
+              </label>
+              <label className="pdf-export-field">
+                <span>Orientation</span>
+                <select value={settings.orientation} onChange={(event) => updateSettings({ orientation: event.target.value as PdfExportSettings['orientation'] })}>
+                  <option value="portrait">Portrait</option>
+                  <option value="landscape">Landscape</option>
+                </select>
+              </label>
+            </div>
+            <div className="pdf-export-margins">
+              <span className="pdf-export-field-label">Margins (cm)</span>
+              <div className="pdf-export-margins-grid">
+                <label><span>Top</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.top} onChange={(event) => updateMargins('top', Number(event.target.value) || settings.marginsCm.top)} /></label>
+                <label><span>Right</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.right} onChange={(event) => updateMargins('right', Number(event.target.value) || settings.marginsCm.right)} /></label>
+                <label><span>Bottom</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.bottom} onChange={(event) => updateMargins('bottom', Number(event.target.value) || settings.marginsCm.bottom)} /></label>
+                <label><span>Left</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.left} onChange={(event) => updateMargins('left', Number(event.target.value) || settings.marginsCm.left)} /></label>
+              </div>
+            </div>
+          </section>
 
-        <div className="modal-actions">
-          <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => setSettings(payload.settings)} disabled={saving || exporting}>
-            Reset
-          </button>
-          <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => void handleSaveDefaults()} disabled={saving || exporting}>
-            {saving ? 'Saving...' : 'Save defaults'}
-          </button>
-          <button type="button" className="primary" onClick={() => void handleExport()} disabled={engineUnavailable || exporting || saving}>
-            {exporting ? 'Exporting...' : 'Export PDF'}
-          </button>
+          {/* Typography Section */}
+          <section className="pdf-export-section">
+            <h3 className="pdf-export-section-title">Typography</h3>
+            <div className="pdf-export-grid">
+              <label className="pdf-export-field">
+                <span>Font family</span>
+                <select value={settings.fontFamily} onChange={(event) => updateSettings({ fontFamily: event.target.value as PdfExportSettings['fontFamily'] })}>
+                  {payload.capabilities.fontFamilies.map((family) => <option key={family} value={family}>{family}</option>)}
+                </select>
+              </label>
+              <label className="pdf-export-field">
+                <span>Style preset</span>
+                <select value={settings.stylePreset} onChange={(event) => updateSettings({ stylePreset: event.target.value as PdfExportSettings['stylePreset'] })}>
+                  {payload.capabilities.styles.map((style) => <option key={style} value={style}>{style}</option>)}
+                </select>
+              </label>
+              <label className="pdf-export-field">
+                <span>Font size (pt)</span>
+                <input type="number" min={9} max={18} step={0.5} value={settings.fontSizePt} onChange={(event) => updateSettings({ fontSizePt: Number(event.target.value) || settings.fontSizePt })} />
+              </label>
+              <label className="pdf-export-field">
+                <span>Line height</span>
+                <input type="number" min={1.1} max={2} step={0.05} value={settings.lineHeight} onChange={(event) => updateSettings({ lineHeight: Number(event.target.value) || settings.lineHeight })} />
+              </label>
+            </div>
+            <div className="pdf-export-toggles">
+              <label className="pdf-export-checkbox"><input type="checkbox" checked={settings.justifyText} onChange={(event) => updateSettings({ justifyText: event.target.checked })} /> Justify paragraphs</label>
+            </div>
+          </section>
+
+          {/* Content Section */}
+          <section className="pdf-export-section">
+            <h3 className="pdf-export-section-title">Content</h3>
+            <div className="pdf-export-grid">
+              <label className="pdf-export-field">
+                <span>Header</span>
+                <select value={settings.headerMode} onChange={(event) => updateSettings({ headerMode: event.target.value as PdfExportHeaderMode })}>
+                  {payload.capabilities.headerModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+                </select>
+              </label>
+              <label className="pdf-export-field">
+                <span>Engine</span>
+                <select value={settings.engine} onChange={(event) => updateSettings({ engine: event.target.value as PdfExportSettings['engine'] })}>
+                  <option value="auto">Auto</option>
+                  {payload.capabilities.availableEngines.filter((engine) => engine !== 'auto').map((engine) => (
+                    <option key={engine} value={engine}>{engine}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="pdf-export-toggles">
+              <label className="pdf-export-checkbox"><input type="checkbox" checked={settings.toc} onChange={(event) => updateSettings({ toc: event.target.checked })} /> Include table of contents</label>
+              <label className="pdf-export-checkbox"><input type="checkbox" checked={settings.includeTitle} onChange={(event) => updateSettings({ includeTitle: event.target.checked })} /> Include note title</label>
+              <label className="pdf-export-checkbox"><input type="checkbox" checked={settings.includeDate} onChange={(event) => updateSettings({ includeDate: event.target.checked })} /> Include export date</label>
+            </div>
+          </section>
+
+          {/* Images Section */}
+          <section className="pdf-export-section">
+            <h3 className="pdf-export-section-title">Images</h3>
+            <div className="pdf-export-grid">
+              <label className="pdf-export-field">
+                <span>Max width %</span>
+                <input type="number" min={30} max={100} step={5} value={settings.imageMaxWidthPercent} onChange={(event) => updateSettings({ imageMaxWidthPercent: Number(event.target.value) || settings.imageMaxWidthPercent })} />
+              </label>
+              <label className="pdf-export-field">
+                <span>Alignment</span>
+                <select value={settings.imageAlign} onChange={(event) => updateSettings({ imageAlign: event.target.value as PdfExportImageAlignment })}>
+                  {payload.capabilities.imageAlignments.map((alignment) => <option key={alignment} value={alignment}>{alignment}</option>)}
+                </select>
+              </label>
+            </div>
+            <p className="pdf-export-hint-text">
+              Per-image overrides: <code>{'![alt](image.png){width="4in" height="3in"}'}</code>
+            </p>
+          </section>
+
+          {/* Code Section */}
+          <section className="pdf-export-section">
+            <h3 className="pdf-export-section-title">Code blocks</h3>
+            <label className="pdf-export-field">
+              <span>Line wrapping</span>
+              <select value={settings.codeWrap} onChange={(event) => updateSettings({ codeWrap: event.target.value as PdfExportCodeWrapMode })}>
+                {payload.capabilities.codeWrapModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+              </select>
+            </label>
+          </section>
+
+          <div className="pdf-export-footer">
+            Engines: {payload.capabilities.availableEngines.join(', ')} · Defaults saved to instance data
+          </div>
         </div>
       </div>
     </div>
