@@ -915,9 +915,6 @@ function OwnerNotePage({
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowExportModal(true)}>
             Print
           </button>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowExportModal(true)}>
-            Exports
-          </button>
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowAssetsModal(true)}>
             Images
           </button>
@@ -1638,7 +1635,6 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
         <div className="pdf-export-header">
           <div className="pdf-export-header-left">
             <h2 className="pdf-export-title">Print to PDF</h2>
-            <p className="pdf-export-subtitle">Exports are saved in the background with incremented file names and debug artifacts.</p>
           </div>
           <div className="pdf-export-actions">
             <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => setSettings(payload.settings)} disabled={saving || exporting}>
