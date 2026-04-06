@@ -72,6 +72,16 @@ export type ExportPdfInput = {
   assetDirectory: string;
 };
 
+export type ExportPdfResult = {
+  fileName: string;
+  pdf: Buffer;
+  debug: {
+    markdown: string;
+    css: string;
+    html: string;
+  };
+};
+
 export const defaultPdfExportSettings: PdfExportSettings = {
   stylePreset: 'report',
   pageSize: 'A4',
@@ -400,6 +410,44 @@ p, li {
   ${settings.justifyText ? 'text-align: justify;' : ''}
 }
 
+nav#TOC {
+  margin: 0 0 1.2em;
+  page-break-inside: avoid;
+}
+
+nav#TOC ul,
+nav#TOC ol {
+  margin: 0.2em 0;
+  padding: 0;
+  list-style: none;
+}
+
+nav#TOC ul ul,
+nav#TOC ul ol,
+nav#TOC ol ul,
+nav#TOC ol ol {
+  margin-left: 1.4em;
+}
+
+nav#TOC li {
+  margin: 0.12em 0;
+}
+
+nav#TOC a,
+nav#TOC .documine-toc-link {
+  display: block;
+  color: #000;
+  text-decoration: none;
+}
+
+nav#TOC a::after {
+  content: leader('.') target-counter(attr(href url), page);
+}
+
+nav#TOC .documine-toc-link::after {
+  content: leader('.') target-counter(attr(data-target url), page);
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -484,7 +532,12 @@ function transformExportHtml(bodyHtml: string, settings: PdfExportSettings): str
   const imageStyleWithDefaultWidth = `${imageStyleBase}max-width:${settings.imageMaxWidthPercent}%;`;
   const figcaptionStyle = `display:block;text-align:${imageTextAlign(settings.imageAlign)};margin:0.35em 0 0;font-size:0.95em;`;
 
-  const withStyledFigures = bodyHtml.replace(/<figure>/g, `<figure style="${figureStyle}">`);
+  const withOrderedToc = bodyHtml.replace(/<nav id="TOC"\b[^>]*>[\s\S]*?<\/nav>/i, (tocHtml) => {
+    return tocHtml
+      .replace(/<(\/?)ul\b/gi, '<$1ol')
+      .replace(/<a\b([^>]*?)\shref=(['"])(#[^'"]+)\2([^>]*)>([\s\S]*?)<\/a>/gi, '<span class="documine-toc-link" data-target="$3">$5</span>');
+  });
+  const withStyledFigures = withOrderedToc.replace(/<figure>/g, `<figure style="${figureStyle}">`);
   const withStyledCaptions = withStyledFigures.replace(/<figcaption(\b[^>]*)>/gi, `<figcaption$1 style="${figcaptionStyle}">`);
 
   return withStyledCaptions.replace(/<img\b([^>]*?)\s*\/?>/gi, (match, attrs: string) => {
@@ -502,40 +555,35 @@ function transformExportHtml(bodyHtml: string, settings: PdfExportSettings): str
 }
 
 async function markdownToHtml(source: string, htmlOutput: string, cssContent: string, settings: PdfExportSettings, toc: boolean, cwd: string): Promise<void> {
-  const bodyFragmentPath = path.join(cwd, 'body-fragment.html');
+  const standaloneHtmlPath = path.join(cwd, 'standalone.html');
   const args = [
     source,
     '--from',
     MARKDOWN_FROM,
     '--to',
     'html5',
+    '--standalone',
+    '--metadata',
+    'title=',
     '--embed-resources',
     '--resource-path',
     cwd,
     '-o',
-    bodyFragmentPath,
+    standaloneHtmlPath,
   ];
   if (toc) {
     args.push('--toc');
   }
   await run('pandoc', args, cwd);
 
-  const bodyHtml = transformExportHtml(await fs.readFile(bodyFragmentPath, 'utf8'), settings);
-  const documentHtml = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title></title>
-  <style>
-${cssContent}
-  </style>
-</head>
-<body>
-${bodyHtml}
-</body>
-</html>
-`;
+  const standaloneHtml = await fs.readFile(standaloneHtmlPath, 'utf8');
+  const withoutBundledStyles = standaloneHtml.replace(/\s*<style>[\s\S]*?<\/style>\s*/i, '\n');
+  const withInjectedStyles = withoutBundledStyles.includes('</head>')
+    ? withoutBundledStyles.replace('</head>', `  <style>\n${cssContent}  </style>\n</head>`)
+    : withoutBundledStyles;
+  const documentHtml = withInjectedStyles.replace(/<body(\b[^>]*)>([\s\S]*?)<\/body>/i, (_match, attrs: string, bodyHtml: string) => {
+    return `<body${attrs}>\n${transformExportHtml(bodyHtml, settings)}\n</body>`;
+  });
   await fs.writeFile(htmlOutput, documentHtml, 'utf8');
 }
 
@@ -580,7 +628,7 @@ async function htmlToPdfWithBrowser(htmlPath: string, pdfPath: string, tempDir: 
   }
 }
 
-export async function exportMarkdownToPdf(input: ExportPdfInput): Promise<{ fileName: string; pdf: Buffer }> {
+export async function exportMarkdownToPdf(input: ExportPdfInput): Promise<ExportPdfResult> {
   const capabilities = await detectPdfExportCapabilities();
   if (!capabilities.pandoc) {
     throw new Error('pandoc is required but was not found in PATH.');
@@ -610,9 +658,15 @@ export async function exportMarkdownToPdf(input: ExportPdfInput): Promise<{ file
     }
 
     const pdf = await fs.readFile(pdfPath);
+    const html = await fs.readFile(htmlPath, 'utf8');
     return {
       fileName: `${sanitizeFileNameSegment(title)}.pdf`,
       pdf,
+      debug: {
+        markdown: rewrittenMarkdown,
+        css: cssContent,
+        html,
+      },
     };
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });

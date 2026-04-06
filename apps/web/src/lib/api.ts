@@ -161,6 +161,34 @@ export type PdfExportSettingsPayload = {
   capabilities: PdfExportCapabilities;
 };
 
+export type NotePdfExport = {
+  fileName: string;
+  url: string;
+  downloadUrl: string;
+  debugUrl: string;
+  debugHtmlUrl: string;
+  debugCssUrl: string;
+  debugMarkdownUrl: string;
+  size: number;
+  createdAt: string;
+};
+
+export type NotePdfExportsPayload = {
+  ok: true;
+  exports: NotePdfExport[];
+};
+
+export type SaveNotePdfPayload = {
+  ok: true;
+  export: NotePdfExport | null;
+  exports: NotePdfExport[];
+};
+
+export type DeleteNotePdfPayload = {
+  ok: true;
+  exports: NotePdfExport[];
+};
+
 export class ApiError extends Error {
   status: number;
   details?: string[];
@@ -247,7 +275,7 @@ export function formatDate(iso: string) {
   return new Date(iso).toLocaleString();
 }
 
-export async function downloadNotePdf(noteId: string, settings: PdfExportSettings): Promise<void> {
+export async function saveNotePdf(noteId: string, settings: PdfExportSettings): Promise<SaveNotePdfPayload> {
   const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/export/pdf`), {
     method: 'POST',
     credentials: 'include',
@@ -255,23 +283,25 @@ export async function downloadNotePdf(noteId: string, settings: PdfExportSetting
     body: JSON.stringify({ settings }),
   });
 
-  if (!response.ok) {
-    await parseApiResponse(response);
-    return;
-  }
+  return parseApiResponse<SaveNotePdfPayload>(response);
+}
 
-  const blob = await response.blob();
-  const disposition = response.headers.get('Content-Disposition') || '';
-  const match = disposition.match(/filename="?([^";]+)"?/i);
-  const fileName = match?.[1] || 'note.pdf';
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = fileName;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+export async function listNotePdfExports(noteId: string): Promise<NotePdfExportsPayload> {
+  const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/exports`), {
+    method: 'GET',
+    credentials: 'include',
+  });
+
+  return parseApiResponse<NotePdfExportsPayload>(response);
+}
+
+export async function deleteNotePdf(noteId: string, fileName: string): Promise<DeleteNotePdfPayload> {
+  const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/exports/${encodeURIComponent(fileName)}`), {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+
+  return parseApiResponse<DeleteNotePdfPayload>(response);
 }
 
 export function buildWsUrl(pathAndQuery: string) {

@@ -2,12 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import {
   apiRequest,
   buildWsUrl,
-  downloadNotePdf,
+  deleteNotePdf,
   formatDate,
   getApiHttpOrigin,
+  listNotePdfExports,
+  saveNotePdf,
   type ApiKey,
   type NoteAsset,
   type NotePayload,
+  type NotePdfExport,
   type NoteSummary,
   type PdfExportCodeWrapMode,
   type PdfExportHeaderMode,
@@ -912,6 +915,9 @@ function OwnerNotePage({
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowExportModal(true)}>
             Print
           </button>
+          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowExportModal(true)}>
+            Exports
+          </button>
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowAssetsModal(true)}>
             Images
           </button>
@@ -1453,10 +1459,19 @@ function ImageAssetsModal({
 function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => void }) {
   const [payload, setPayload] = useState<PdfExportSettingsPayload | null>(null);
   const [settings, setSettings] = useState<PdfExportSettings | null>(null);
+  const [exportsList, setExportsList] = useState<NotePdfExport[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
+  const [confirmDeleteExport, setConfirmDeleteExport] = useState<string | null>(null);
+  const [deletingExport, setDeletingExport] = useState<string | null>(null);
+  const apiOrigin = getApiHttpOrigin();
+
+  const loadExports = useCallback(async () => {
+    const response = await listNotePdfExports(noteId);
+    setExportsList(response.exports);
+  }, [noteId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1464,12 +1479,16 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
       setLoading(true);
       setError('');
       try {
-        const nextPayload = await apiRequest<PdfExportSettingsPayload>('/api/export/settings');
+        const [nextPayload, nextExports] = await Promise.all([
+          apiRequest<PdfExportSettingsPayload>('/api/export/settings'),
+          listNotePdfExports(noteId),
+        ]);
         if (cancelled) {
           return;
         }
         setPayload(nextPayload);
         setSettings(nextPayload.settings);
+        setExportsList(nextExports.exports);
       } catch (cause) {
         if (!cancelled) {
           setError(cause instanceof Error ? cause.message : 'Failed to load PDF export settings.');
@@ -1484,7 +1503,7 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [noteId]);
 
   function updateSettings(patch: Partial<PdfExportSettings>) {
     setSettings((current) => current ? { ...current, ...patch } : current);
@@ -1524,12 +1543,55 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
     setExporting(true);
     setError('');
     try {
-      await downloadNotePdf(noteId, settings);
+      const response = await saveNotePdf(noteId, settings);
+      setExportsList(response.exports);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Failed to export PDF.');
     } finally {
       setExporting(false);
     }
+  }
+
+  function openExport(item: NotePdfExport) {
+    window.open(`${apiOrigin}${item.url}`, '_blank', 'noopener,noreferrer');
+  }
+
+  function downloadExport(item: NotePdfExport) {
+    const anchor = document.createElement('a');
+    anchor.href = `${apiOrigin}${item.downloadUrl}`;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener';
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  }
+
+  function openDebug(item: NotePdfExport) {
+    window.open(`${apiOrigin}${item.debugHtmlUrl}`, '_blank', 'noopener,noreferrer');
+  }
+
+  async function handleDeleteExport(item: NotePdfExport) {
+    setDeletingExport(item.fileName);
+    setError('');
+    try {
+      const response = await deleteNotePdf(noteId, item.fileName);
+      setExportsList(response.exports);
+      setConfirmDeleteExport((current) => (current === item.fileName ? null : current));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to delete export PDF.');
+    } finally {
+      setDeletingExport((current) => (current === item.fileName ? null : current));
+    }
+  }
+
+  function formatFileSize(bytes: number) {
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    }
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   if (loading) {
@@ -1573,11 +1635,10 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal pdf-export-modal" onClick={(event) => event.stopPropagation()}>
-        {/* Sticky Header */}
         <div className="pdf-export-header">
           <div className="pdf-export-header-left">
             <h2 className="pdf-export-title">Print to PDF</h2>
-            <p className="pdf-export-subtitle">Export with Pandoc</p>
+            <p className="pdf-export-subtitle">Exports are saved in the background with incremented file names and debug artifacts.</p>
           </div>
           <div className="pdf-export-actions">
             <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => setSettings(payload.settings)} disabled={saving || exporting}>
@@ -1587,20 +1648,74 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
               {saving ? 'Saving...' : 'Save'}
             </button>
             <button type="button" className="documine-btn documine-btn--sm documine-btn--primary" onClick={() => void handleExport()} disabled={engineUnavailable || exporting || saving}>
-              {exporting ? 'Exporting...' : 'Export'}
+              {exporting ? 'Saving PDF...' : 'Save PDF'}
             </button>
             <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>Close</button>
           </div>
         </div>
 
-        {/* Scrollable Content */}
         <div className="pdf-export-content">
           {!payload.capabilities.pandoc ? (
             <div className="inline-error">Pandoc is not available on this server. Install it locally or in Docker to enable PDF export.</div>
           ) : null}
           {error ? <div className="inline-error">{error}</div> : null}
 
-          {/* Page Setup Section */}
+          <section className="pdf-export-section">
+            <div className="pdf-export-section-header-row">
+              <h3 className="pdf-export-section-title">Recent exports</h3>
+              <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => void loadExports()} disabled={exporting || saving}>
+                Refresh
+              </button>
+            </div>
+            {exportsList.length === 0 ? (
+              <p className="pdf-export-loading">No PDFs saved yet.</p>
+            ) : (
+              <div className="pdf-export-history-list">
+                {exportsList.map((item) => (
+                  <div key={item.fileName} className="pdf-export-history-row">
+                    <div className="pdf-export-history-info">
+                      <div className="pdf-export-history-title">{item.fileName}</div>
+                      <div className="pdf-export-history-meta">{formatDate(item.createdAt)} · {formatFileSize(item.size)}</div>
+                    </div>
+                    <div className="pdf-export-history-actions">
+                      <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => openExport(item)}>Open</button>
+                      <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => downloadExport(item)}>Download</button>
+                      <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => openDebug(item)}>Debug HTML</button>
+                      {confirmDeleteExport === item.fileName ? (
+                        <div className="image-asset-confirm-delete">
+                          <button
+                            type="button"
+                            className="documine-btn documine-btn--sm documine-btn--ghost"
+                            onClick={() => setConfirmDeleteExport(null)}
+                            disabled={deletingExport === item.fileName}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            className="documine-btn documine-btn--sm documine-btn--danger"
+                            onClick={() => void handleDeleteExport(item)}
+                            disabled={deletingExport === item.fileName}
+                          >
+                            {deletingExport === item.fileName ? 'Deleting...' : 'Delete'}
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="documine-btn documine-btn--sm documine-btn--danger"
+                          onClick={() => setConfirmDeleteExport(item.fileName)}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
           <section className="pdf-export-section">
             <h3 className="pdf-export-section-title">Page setup</h3>
             <div className="pdf-export-grid">
@@ -1629,7 +1744,6 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
             </div>
           </section>
 
-          {/* Typography Section */}
           <section className="pdf-export-section">
             <h3 className="pdf-export-section-title">Typography</h3>
             <div className="pdf-export-grid">
@@ -1659,7 +1773,6 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
             </div>
           </section>
 
-          {/* Content Section */}
           <section className="pdf-export-section">
             <h3 className="pdf-export-section-title">Content</h3>
             <div className="pdf-export-grid">
@@ -1686,7 +1799,6 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
             </div>
           </section>
 
-          {/* Images Section */}
           <section className="pdf-export-section">
             <h3 className="pdf-export-section-title">Images</h3>
             <div className="pdf-export-grid">
@@ -1706,7 +1818,6 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
             </p>
           </section>
 
-          {/* Code Section */}
           <section className="pdf-export-section">
             <h3 className="pdf-export-section-title">Code blocks</h3>
             <label className="pdf-export-field">

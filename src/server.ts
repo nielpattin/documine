@@ -110,6 +110,18 @@ type NoteAssetSummary = {
   updatedAt: string;
 };
 
+type NotePdfExportSummary = {
+  fileName: string;
+  url: string;
+  downloadUrl: string;
+  debugUrl: string;
+  debugHtmlUrl: string;
+  debugCssUrl: string;
+  debugMarkdownUrl: string;
+  size: number;
+  createdAt: string;
+};
+
 type DeviceToken = {
   id: string;
   salt: string;
@@ -168,6 +180,7 @@ const port = Number(cliArg('port') || process.env.PORT || 3120);
 const dataDir = cliArg('data') || process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const notesDir = path.join(dataDir, 'notes');
 const noteAssetsDir = path.join(dataDir, 'assets');
+const noteExportsDir = path.join(dataDir, 'exports');
 const authFilePath = path.join(dataDir, 'auth.json');
 const exportSettingsFilePath = path.join(dataDir, 'export-settings.json');
 const ownerSessionCookieName = 'documine_owner_session';
@@ -445,6 +458,114 @@ app.get('/api/notes/:id', (c) => {
   return c.json({ ok: true, ...serializeNoteForClient(note, c) });
 });
 
+app.get('/api/notes/:id/exports', (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const note = notes.get(c.req.param('id'));
+  if (!note) {
+    return c.json({ ok: false, error: 'Note not found.' }, 404);
+  }
+
+  return c.json({ ok: true, exports: collectNoteExports(note) });
+});
+
+app.get('/api/notes/:id/exports/:fileName', (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const note = notes.get(c.req.param('id'));
+  if (!note) {
+    return c.json({ ok: false, error: 'Note not found.' }, 404);
+  }
+
+  const exportFile = loadManagedNoteExportFile(note.id, c.req.param('fileName'));
+  if (!exportFile) {
+    return c.json({ ok: false, error: 'Export not found.' }, 404);
+  }
+
+  const asDownload = c.req.query('download') === '1';
+  const asInline = c.req.query('inline') === '1' || !asDownload;
+  const dispositionType = asInline ? 'inline' : 'attachment';
+  return c.body(fs.readFileSync(exportFile.filePath), 200, {
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `${dispositionType}; filename="${exportFile.fileName}"`,
+    'Cache-Control': 'no-store',
+  });
+});
+
+app.get('/api/notes/:id/exports/:fileName/debug', (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const note = notes.get(c.req.param('id'));
+  if (!note) {
+    return c.json({ ok: false, error: 'Note not found.' }, 404);
+  }
+
+  const exportFile = loadManagedDebugExportFile(note.id, c.req.param('fileName'));
+  if (!exportFile) {
+    return c.json({ ok: false, error: 'Export debug not found.' }, 404);
+  }
+
+  return c.json({ ok: true, fileName: exportFile.fileName, ...exportFile.debug });
+});
+
+app.get('/api/notes/:id/exports/:fileName/debug/:kind', (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const note = notes.get(c.req.param('id'));
+  if (!note) {
+    return c.json({ ok: false, error: 'Note not found.' }, 404);
+  }
+
+  const exportFile = loadManagedDebugExportFile(note.id, c.req.param('fileName'));
+  if (!exportFile) {
+    return c.json({ ok: false, error: 'Export debug not found.' }, 404);
+  }
+
+  const kind = c.req.param('kind');
+  if (kind === 'html') {
+    return c.body(exportFile.debug.html, 200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  }
+  if (kind === 'css') {
+    return c.body(exportFile.debug.css, 200, { 'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': 'no-store' });
+  }
+  if (kind === 'markdown') {
+    return c.body(exportFile.debug.markdown, 200, { 'Content-Type': 'text/markdown; charset=utf-8', 'Cache-Control': 'no-store' });
+  }
+  return c.json({ ok: false, error: 'Unknown debug artifact.' }, 404);
+});
+
+app.delete('/api/notes/:id/exports/:fileName', (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const note = notes.get(c.req.param('id'));
+  if (!note) {
+    return c.json({ ok: false, error: 'Note not found.' }, 404);
+  }
+
+  const exportFile = loadManagedNoteExportFile(note.id, c.req.param('fileName'));
+  if (!exportFile) {
+    return c.json({ ok: false, error: 'Export not found.' }, 404);
+  }
+
+  try { fs.unlinkSync(exportFile.filePath); } catch {}
+  try { fs.unlinkSync(noteExportAssetPath(note.id, exportFile.fileName, '.html')); } catch {}
+  try { fs.unlinkSync(noteExportAssetPath(note.id, exportFile.fileName, '.css')); } catch {}
+  try { fs.unlinkSync(noteExportAssetPath(note.id, exportFile.fileName, '.md')); } catch {}
+  try { fs.unlinkSync(noteExportAssetPath(note.id, exportFile.fileName, '.json')); } catch {}
+
+  return c.json({ ok: true, exports: collectNoteExports(note) });
+});
+
 app.post('/api/notes/:id/export/pdf', async (c) => {
   if (!isOwnerAuthenticated(c)) {
     return c.json({ ok: false, error: 'Unauthorized.' }, 401);
@@ -466,10 +587,24 @@ app.post('/api/notes/:id/export/pdf', async (c) => {
       settings: body.settings === undefined ? savedSettings : body.settings,
       assetDirectory: noteAssetDirectory(note.id),
     });
-    return c.body(new Uint8Array(result.pdf), 200, {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="${result.fileName}"`,
-      'Cache-Control': 'no-store',
+    const finalFileName = buildIncrementedExportFileName(note.id, note.title || result.fileName.replace(/\.pdf$/i, ''));
+    const exportPath = noteExportPath(note.id, finalFileName);
+    fs.mkdirSync(noteExportDirectory(note.id), { recursive: true });
+    fs.writeFileSync(exportPath, result.pdf);
+    fs.writeFileSync(noteExportAssetPath(note.id, finalFileName, '.html'), result.debug.html, 'utf8');
+    fs.writeFileSync(noteExportAssetPath(note.id, finalFileName, '.css'), result.debug.css, 'utf8');
+    fs.writeFileSync(noteExportAssetPath(note.id, finalFileName, '.md'), result.debug.markdown, 'utf8');
+    writeJson(noteExportAssetPath(note.id, finalFileName, '.json'), {
+      noteId: note.id,
+      noteTitle: note.title,
+      createdAt: nowIso(),
+      settings: body.settings === undefined ? savedSettings : body.settings,
+      fileName: finalFileName,
+    });
+    return c.json({
+      ok: true,
+      export: collectNoteExports(note).find((item) => item.fileName === finalFileName) || null,
+      exports: collectNoteExports(note),
     });
   } catch (error) {
     return c.json({ ok: false, error: error instanceof Error ? error.message : 'PDF export failed.' }, 500);
@@ -536,6 +671,7 @@ app.delete('/api/notes/:id', (c) => {
   try { fs.unlinkSync(noteMarkdownPath(noteId)); } catch {}
   try { fs.unlinkSync(noteMetaPath(noteId)); } catch {}
   try { fs.rmSync(noteAssetDirectory(noteId), { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(noteExportDirectory(noteId), { recursive: true, force: true }); } catch {}
   return c.json({ ok: true });
 });
 
@@ -1586,14 +1722,121 @@ function ensureDirectories() {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(notesDir, { recursive: true });
   fs.mkdirSync(noteAssetsDir, { recursive: true });
+  fs.mkdirSync(noteExportsDir, { recursive: true });
 }
 
 function noteAssetDirectory(noteId: string) {
   return path.join(noteAssetsDir, noteId);
 }
 
+function noteExportDirectory(noteId: string) {
+  return path.join(noteExportsDir, noteId);
+}
+
 function noteAssetPath(noteId: string, fileName: string) {
   return path.join(noteAssetDirectory(noteId), fileName);
+}
+
+function buildIncrementedExportFileName(noteId: string, noteTitle: string) {
+  const baseName = sanitizeExportBaseName(noteTitle || noteId);
+  const directory = noteExportDirectory(noteId);
+  fs.mkdirSync(directory, { recursive: true });
+  let nextIndex = 1;
+  const existingFiles = fs.existsSync(directory) ? fs.readdirSync(directory) : [];
+  for (const file of existingFiles) {
+    const match = file.match(new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:-(\\d+))?\\.pdf$`, 'i'));
+    if (!match) {
+      continue;
+    }
+    const currentIndex = match[1] ? Number(match[1]) : 1;
+    if (Number.isFinite(currentIndex)) {
+      nextIndex = Math.max(nextIndex, currentIndex + 1);
+    }
+  }
+  return nextIndex === 1 ? `${baseName}.pdf` : `${baseName}-${nextIndex}.pdf`;
+}
+
+function sanitizeExportBaseName(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'note';
+}
+
+function noteExportPath(noteId: string, fileName: string) {
+  return path.join(noteExportDirectory(noteId), fileName);
+}
+
+function noteExportAssetPath(noteId: string, fileName: string, suffix: '.html' | '.css' | '.md' | '.json') {
+  return path.join(noteExportDirectory(noteId), `${fileName}${suffix}`);
+}
+
+function noteExportReferencePath(noteId: string, fileName: string) {
+  return `/api/notes/${encodeURIComponent(noteId)}/exports/${encodeURIComponent(fileName)}`;
+}
+
+function collectNoteExports(note: NoteRecord): NotePdfExportSummary[] {
+  const directory = noteExportDirectory(note.id);
+  if (!fs.existsSync(directory)) {
+    return [];
+  }
+  return fs.readdirSync(directory)
+    .filter((file) => file.toLowerCase().endsWith('.pdf'))
+    .map((fileName) => {
+      const filePath = noteExportPath(note.id, fileName);
+      const stats = fs.statSync(filePath);
+      const baseUrl = noteExportReferencePath(note.id, fileName);
+      return {
+        fileName,
+        url: `${baseUrl}?inline=1`,
+        downloadUrl: `${baseUrl}?download=1`,
+        debugUrl: `${baseUrl}/debug`,
+        debugHtmlUrl: `${baseUrl}/debug/html`,
+        debugCssUrl: `${baseUrl}/debug/css`,
+        debugMarkdownUrl: `${baseUrl}/debug/markdown`,
+        size: stats.size,
+        createdAt: stats.birthtime.toISOString(),
+      } satisfies NotePdfExportSummary;
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function loadNoteExportDebug(noteId: string, fileName: string) {
+  const metadataPath = noteExportAssetPath(noteId, fileName, '.json');
+  const htmlPath = noteExportAssetPath(noteId, fileName, '.html');
+  const cssPath = noteExportAssetPath(noteId, fileName, '.css');
+  const markdownPath = noteExportAssetPath(noteId, fileName, '.md');
+  if (!fs.existsSync(metadataPath) || !fs.existsSync(htmlPath) || !fs.existsSync(cssPath) || !fs.existsSync(markdownPath)) {
+    return null;
+  }
+  return {
+    metadata: readJson<Record<string, unknown> | null>(metadataPath, null),
+    html: fs.readFileSync(htmlPath, 'utf8'),
+    css: fs.readFileSync(cssPath, 'utf8'),
+    markdown: fs.readFileSync(markdownPath, 'utf8'),
+  };
+}
+
+function loadManagedNoteExportFile(noteId: string, rawFileName: string) {
+  const fileName = path.basename(rawFileName);
+  if (!fileName.toLowerCase().endsWith('.pdf')) {
+    return null;
+  }
+  const filePath = noteExportPath(noteId, fileName);
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    return null;
+  }
+  return { fileName, filePath };
+}
+
+function loadManagedDebugExportFile(noteId: string, rawFileName: string) {
+  const fileName = path.basename(rawFileName);
+  const exportFile = loadManagedNoteExportFile(noteId, fileName);
+  if (!exportFile) {
+    return null;
+  }
+  const debug = loadNoteExportDebug(noteId, exportFile.fileName);
+  if (!debug) {
+    return null;
+  }
+  return { fileName: exportFile.fileName, debug };
 }
 
 function loadNotesIntoMemory() {
