@@ -588,6 +588,7 @@ input:focus, textarea:focus { border-color: var(--muted); }
 .markdown-body th, .markdown-body td { border: 1px solid var(--line); padding: 0.55rem 0.7rem; text-align: left; }
 .markdown-body a { color: var(--blue); }
 .markdown-body img { max-width: 100%; height: auto; }
+.markdown-body img[title] { cursor: help; }
 
 /* Mermaid diagrams */
 .mermaid-wrap { position: relative; margin: 0 0 1rem; overflow: hidden; border: 1px solid var(--code-border); border-radius: 14px; background: var(--code-bg); user-select: none; }

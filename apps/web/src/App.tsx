@@ -119,6 +119,39 @@ function buildSharedAgentModal(shareId: string): AgentModalConfig {
   };
 }
 
+function preparePreviewHtml(html: string) {
+  if (!html || typeof window === 'undefined' || typeof DOMParser === 'undefined') {
+    return html;
+  }
+
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  const images = Array.from(document.querySelectorAll('img'));
+  for (const image of images) {
+    let sibling: ChildNode | null = image.nextSibling;
+    while (sibling && sibling.nodeType === Node.TEXT_NODE) {
+      const text = sibling.textContent || '';
+      const match = text.match(/^\s*\{([^{}]+)\}(.*)$/s);
+      if (!match) {
+        break;
+      }
+      const hint = match[1]?.trim();
+      if (hint && !image.getAttribute('title')) {
+        image.setAttribute('title', hint);
+      }
+      const rest = match[2] || '';
+      if (rest.trim()) {
+        sibling.textContent = rest;
+        break;
+      }
+      const nextSibling = sibling.nextSibling;
+      sibling.parentNode?.removeChild(sibling);
+      sibling = nextSibling;
+    }
+  }
+
+  return document.body.innerHTML;
+}
+
 function AgentSetupModal({ config, onClose }: { config: AgentModalConfig; onClose: () => void }) {
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -665,7 +698,7 @@ function OwnerNotePage({
       setTitle(nextPayload.note.title);
       setShareAccess(nextPayload.note.shareAccess);
       setMarkdown(nextPayload.note.markdown);
-      setRenderedHtml(nextPayload.note.renderedHtml);
+      setRenderedHtml(preparePreviewHtml(nextPayload.note.renderedHtml));
       setSaveStatus('Saved');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Failed to load note.');
@@ -692,7 +725,7 @@ function OwnerNotePage({
     }
 
     if (markdown === payload.note.markdown) {
-      setRenderedHtml(payload.note.renderedHtml);
+      setRenderedHtml(preparePreviewHtml(payload.note.renderedHtml));
       return;
     }
 
@@ -702,7 +735,7 @@ function OwnerNotePage({
           method: 'POST',
           body: { markdown },
         });
-        setRenderedHtml(renderPayload.html);
+        setRenderedHtml(preparePreviewHtml(renderPayload.html));
       } catch {
         // Keep last successful preview
       }
@@ -1001,7 +1034,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
       setPayload(nextPayload);
       setIdentityName(nextPayload.viewer.commenterName || '');
       setMarkdown(nextPayload.note.markdown);
-      setRenderedHtml(nextPayload.note.renderedHtml);
+      setRenderedHtml(preparePreviewHtml(nextPayload.note.renderedHtml));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Failed to load shared note.');
     } finally {
@@ -1040,7 +1073,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
     }
 
     if (markdown === payload.note.markdown) {
-      setRenderedHtml(payload.note.renderedHtml);
+      setRenderedHtml(preparePreviewHtml(payload.note.renderedHtml));
       return;
     }
 
@@ -1050,7 +1083,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
           method: 'POST',
           body: { markdown },
         });
-        setRenderedHtml(renderPayload.html);
+        setRenderedHtml(preparePreviewHtml(renderPayload.html));
       } catch {
         // Keep last successful preview
       }

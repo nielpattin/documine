@@ -1963,8 +1963,23 @@ function makeAssetUrl(c: Context, noteId: string, fileName: string) {
   return `${url.protocol}//${url.host}${assetMarkdownReferencePath(noteId, fileName)}`;
 }
 
+function applyPreviewImageAttributeHints(rawHtml: string) {
+  return rawHtml.replace(/<p>(\s*<img\b[^>]*?)(?:\s*)\{([^{}]+)\}(\s*)<\/p>/gi, (_match, imgHtml: string, attrs: string, trailingSpace: string) => {
+    const title = attrs.replace(/&quot;/g, '"').trim();
+    if (!title) {
+      return `<p>${imgHtml}${trailingSpace}</p>`;
+    }
+    if (/\btitle\s*=/.test(imgHtml)) {
+      return `<p>${imgHtml}${trailingSpace}</p>`;
+    }
+    const escapedTitle = escapeHtml(title);
+    const hintedImgHtml = imgHtml.replace(/\s*\/?>$/, (ending) => ` title="${escapedTitle}"${ending}`);
+    return `<p>${hintedImgHtml}${trailingSpace}</p>`;
+  });
+}
+
 function renderMarkdown(markdown: string) {
-  const rawHtml = marked.parse(markdown) as string;
+  const rawHtml = applyPreviewImageAttributeHints(marked.parse(markdown) as string);
   return sanitizeHtml(rawHtml, {
     allowedTags: sanitizeHtml.defaults.allowedTags.concat([
       'img',
