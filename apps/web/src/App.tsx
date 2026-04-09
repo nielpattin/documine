@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from 'react';
 import {
   apiRequest,
   buildWsUrl,
@@ -1682,6 +1682,16 @@ function formatDurationMs(value: number) {
   return `${(value / 1000).toFixed(1)} s`;
 }
 
+function handleCommentTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>, canSubmit: boolean, submit: () => void) {
+  if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing) {
+    return;
+  }
+  event.preventDefault();
+  if (canSubmit) {
+    submit();
+  }
+}
+
 function RenderedPdfPreview({ url, loading, error, dirty }: { url: string; loading: boolean; error: string; dirty: boolean }) {
   return (
     <div className="preview-scroll preview-scroll--pdf">
@@ -2161,7 +2171,12 @@ function NewCommentThreadModal({
         <p>Comment on the selected text.</p>
         <pre className="agent-instructions"><code>{anchor.quote}</code></pre>
         <div className="field">
-          <textarea value={body} onChange={(event) => setBody(event.target.value)} placeholder="Comment" />
+          <textarea
+            value={body}
+            onChange={(event) => setBody(event.target.value)}
+            onKeyDown={(event) => handleCommentTextareaKeyDown(event, !busy && !!body.trim(), () => void handleSubmit())}
+            placeholder="Comment"
+          />
         </div>
         {error ? <div className="inline-error">{error}</div> : null}
         <div className="modal-actions">
@@ -2806,7 +2821,12 @@ function ThreadCard({
         <div className="compact" style={{ marginTop: '0.75rem' }}>
           {replyParentId ? <div className="reply-target-note">Replying to selected comment</div> : null}
           <div className="field">
-            <textarea value={replyBody} onChange={(event) => setReplyBody(event.target.value)} placeholder="Reply" />
+            <textarea
+              value={replyBody}
+              onChange={(event) => setReplyBody(event.target.value)}
+              onKeyDown={(event) => handleCommentTextareaKeyDown(event, !replying && !!replyBody.trim(), () => void handleReply())}
+              placeholder="Reply"
+            />
           </div>
           <div className="modal-actions">
             <button type="button" className="primary" onClick={() => void handleReply()} disabled={replying || !replyBody.trim()}>
