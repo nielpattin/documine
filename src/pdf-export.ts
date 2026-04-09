@@ -1,16 +1,41 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+type PendingWeasyWorkerRequest = {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  signal?: AbortSignal;
+  abortListener?: () => void;
+};
+
+type WeasyWorkerHandle = {
+  process: ChildProcessWithoutNullStreams;
+  pending: Map<string, PendingWeasyWorkerRequest>;
+  ready: Promise<void>;
+};
+
+const weasyRuntimeDir = path.join(os.tmpdir(), 'documine-weasy-runtime');
+let bundledWeasyRuntimePromise: Promise<string> | null = null;
+let weasyWorkerPromise: Promise<WeasyWorkerHandle> | null = null;
+
+for (const event of ['exit', 'SIGINT', 'SIGTERM'] as const) {
+  process.once(event, () => {
+    disposeWeasyWorker(new Error('WeasyPrint worker shutting down.'));
+  });
+}
+
 const MARKDOWN_FROM = 'markdown+raw_attribute+link_attributes+fenced_divs+bracketed_spans+grid_tables+pipe_tables+simple_tables+multiline_tables';
 const PDF_STYLE_PRESETS = ['report', 'academic', 'clean', 'compact'] as const;
 const PDF_PAGE_SIZES = ['A4', 'Letter', 'Legal'] as const;
-const PDF_ENGINES = ['auto', 'browser', 'wkhtmltopdf', 'weasyprint'] as const;
+const PDF_ENGINES = ['weasyprint'] as const;
 const PDF_ORIENTATIONS = ['portrait', 'landscape'] as const;
 const PDF_FONT_FAMILIES = ['Times New Roman', 'Georgia', 'Arial', 'Inter', 'system-ui'] as const;
 const PDF_HEADER_MODES = ['none', 'title', 'date', 'title-date'] as const;
@@ -52,8 +77,6 @@ export type PdfExportSettings = {
 
 export type PdfExportCapabilities = {
   pandoc: boolean;
-  browser: boolean;
-  wkhtmltopdf: boolean;
   weasyprint: boolean;
   availableEngines: PdfEngine[];
   styles: PdfStylePreset[];
@@ -70,6 +93,8 @@ export type ExportPdfInput = {
   markdown: string;
   settings: unknown;
   assetDirectory: string;
+  signal?: AbortSignal;
+  onStageTiming?: (stage: 'pandoc' | 'engine' | 'total', durationMs: number) => void;
 };
 
 export type ExportPdfResult = {
@@ -80,6 +105,17 @@ export type ExportPdfResult = {
     css: string;
     html: string;
   };
+};
+
+export type PdfPreviewResult = {
+  fileName: string;
+  pdf: Buffer;
+};
+
+export type ExportHtmlPreviewResult = {
+  markdown: string;
+  css: string;
+  html: string;
 };
 
 export const defaultPdfExportSettings: PdfExportSettings = {
@@ -166,6 +202,8 @@ export async function savePdfExportSettings(filePath: string, settingsInput: unk
   return settings;
 }
 
+let cachedCapabilities: PdfExportCapabilities | null = null;
+
 async function hasExecutable(command: string): Promise<boolean> {
   try {
     await execFileAsync(command, ['--version']);
@@ -175,55 +213,206 @@ async function hasExecutable(command: string): Promise<boolean> {
   }
 }
 
-function browserCandidates(): string[] {
-  const envBrowser = process.env.CHROME_BIN || process.env.BROWSER_BIN;
-  const candidates = [
-    envBrowser,
-    'chromium-browser',
-    'chromium',
-    'google-chrome',
-    'chrome',
-    'msedge',
-    'microsoft-edge',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/chromium',
-    '/c/Program Files/Google/Chrome/Application/chrome.exe',
-    '/c/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-    '/c/Program Files/Microsoft/Edge/Application/msedge.exe',
-    '/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-    'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  ].filter(Boolean) as string[];
-  return [...new Set(candidates)];
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function findBrowserExecutable(): Promise<string | null> {
-  for (const candidate of browserCandidates()) {
-    try {
-      await execFileAsync(candidate, ['--version']);
-      return candidate;
-    } catch {
-      continue;
-    }
+async function listPyInstallerExtractionDirs(): Promise<string[]> {
+  const entries = await fs.readdir(os.tmpdir(), { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('_MEI'))
+    .map((entry) => path.join(os.tmpdir(), entry.name));
+}
+
+async function isWeasyRuntimeExtractionDir(candidate: string): Promise<boolean> {
+  const requiredPaths = [
+    'libgobject-2.0-0.dll',
+    'libpango-1.0-0.dll',
+    'python313.dll',
+    'weasyprint',
+    'base_library.zip',
+  ];
+  try {
+    await Promise.all(requiredPaths.map((requiredPath) => fs.access(path.join(candidate, requiredPath))));
+    return true;
+  } catch {
+    return false;
   }
-  return null;
+}
+
+async function ensureBundledWeasyRuntime(): Promise<string> {
+  if (await isWeasyRuntimeExtractionDir(weasyRuntimeDir)) {
+    return weasyRuntimeDir;
+  }
+
+  if (bundledWeasyRuntimePromise) {
+    return bundledWeasyRuntimePromise;
+  }
+
+  bundledWeasyRuntimePromise = (async () => {
+    const extractionDirsBefore = new Set(await listPyInstallerExtractionDirs());
+    const probe = spawn('weasyprint', ['-', os.devNull], {
+      stdio: ['pipe', 'ignore', 'ignore'],
+      env: { ...process.env },
+    });
+    let extractedDir: string | null = null;
+    try {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const extractionDirs = await listPyInstallerExtractionDirs();
+        const freshDirs = extractionDirs.filter((candidate) => !extractionDirsBefore.has(candidate));
+        for (const candidate of freshDirs.reverse()) {
+          if (await isWeasyRuntimeExtractionDir(candidate)) {
+            extractedDir = candidate;
+            break;
+          }
+        }
+        if (extractedDir) {
+          break;
+        }
+        await delay(50);
+      }
+      if (!extractedDir) {
+        throw new Error('Failed to locate WeasyPrint bundled runtime extraction directory.');
+      }
+
+      const runtimeCopyDir = `${weasyRuntimeDir}-${process.pid}.tmp`;
+      await fs.rm(runtimeCopyDir, { recursive: true, force: true });
+      await fs.cp(extractedDir, runtimeCopyDir, { recursive: true });
+      await fs.rm(weasyRuntimeDir, { recursive: true, force: true });
+      await fs.rename(runtimeCopyDir, weasyRuntimeDir);
+      return weasyRuntimeDir;
+    } finally {
+      probe.kill();
+      await new Promise((resolve) => probe.once('exit', resolve));
+    }
+  })();
+
+  return bundledWeasyRuntimePromise;
+}
+
+function rejectPendingWeasyRequests(worker: WeasyWorkerHandle, error: Error): void {
+  for (const [requestId, pending] of worker.pending) {
+    if (pending.signal && pending.abortListener) {
+      pending.signal.removeEventListener('abort', pending.abortListener);
+    }
+    pending.abortListener = undefined;
+    pending.reject(error);
+    worker.pending.delete(requestId);
+  }
+}
+
+function disposeWeasyWorker(error: Error): void {
+  if (!weasyWorkerPromise) {
+    return;
+  }
+  void weasyWorkerPromise.then((worker) => {
+    rejectPendingWeasyRequests(worker, error);
+    if (!worker.process.killed) {
+      worker.process.kill();
+    }
+  }).catch(() => {
+    // ignore startup failures
+  });
+  weasyWorkerPromise = null;
+}
+
+async function getWeasyWorker(): Promise<WeasyWorkerHandle> {
+  if (weasyWorkerPromise) {
+    return weasyWorkerPromise;
+  }
+
+  weasyWorkerPromise = (async () => {
+    const runtimeDir = await ensureBundledWeasyRuntime();
+    const workerScriptPath = path.join(process.cwd(), 'src', 'weasyprint-worker.py');
+    const workerProcess = spawn('uv', ['run', '--quiet', '--with', 'weasyprint', 'python', workerScriptPath, runtimeDir], {
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+    const pending = new Map<string, PendingWeasyWorkerRequest>();
+    let readyResolve: (() => void) | null = null;
+    let readyReject: ((error: Error) => void) | null = null;
+    const ready = new Promise<void>((resolve, reject) => {
+      readyResolve = resolve;
+      readyReject = reject;
+    });
+    const worker: WeasyWorkerHandle = {
+      process: workerProcess,
+      pending,
+      ready,
+    };
+    let stderr = '';
+    workerProcess.stderr.on('data', (chunk: Buffer | string) => {
+      stderr += String(chunk);
+    });
+    const output = createInterface({ input: workerProcess.stdout });
+    output.on('line', (line) => {
+      let message: Record<string, unknown>;
+      try {
+        message = JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      if (message.type === 'ready') {
+        readyResolve?.();
+        readyResolve = null;
+        readyReject = null;
+        return;
+      }
+      if (message.type === 'startup-error') {
+        const error = new Error(String(message.error || 'WeasyPrint worker failed to start.'));
+        readyReject?.(error);
+        readyResolve = null;
+        readyReject = null;
+        return;
+      }
+      const requestId = typeof message.id === 'string' ? message.id : null;
+      if (!requestId) {
+        return;
+      }
+      const pendingRequest = pending.get(requestId);
+      if (!pendingRequest) {
+        return;
+      }
+      pending.delete(requestId);
+      if (pendingRequest.signal && pendingRequest.abortListener) {
+        pendingRequest.signal.removeEventListener('abort', pendingRequest.abortListener);
+      }
+      pendingRequest.abortListener = undefined;
+      if (message.type === 'done') {
+        pendingRequest.resolve();
+        return;
+      }
+      const errorText = String(message.error || 'WeasyPrint worker request failed.');
+      pendingRequest.reject(new Error(`weasyprint worker failed: ${errorText}`));
+    });
+    workerProcess.once('exit', () => {
+      const error = new Error(stderr.trim() || 'WeasyPrint worker exited unexpectedly.');
+      readyReject?.(error);
+      readyResolve = null;
+      readyReject = null;
+      rejectPendingWeasyRequests(worker, error);
+      weasyWorkerPromise = null;
+    });
+    await ready;
+    return worker;
+  })();
+
+  return weasyWorkerPromise;
 }
 
 export async function detectPdfExportCapabilities(): Promise<PdfExportCapabilities> {
-  const pandoc = await hasExecutable('pandoc');
-  const wkhtmltopdf = await hasExecutable('wkhtmltopdf');
-  const weasyprint = await hasExecutable('weasyprint');
-  const browser = false;
-  const availableEngines: PdfEngine[] = ['auto'];
-  if (wkhtmltopdf) availableEngines.push('wkhtmltopdf');
-  if (weasyprint) availableEngines.push('weasyprint');
+  if (cachedCapabilities) {
+    return cachedCapabilities;
+  }
 
-  return {
+  const pandoc = await hasExecutable('pandoc');
+  const weasyprint = await hasExecutable('weasyprint');
+  const availableEngines: PdfEngine[] = weasyprint ? ['weasyprint'] : [];
+
+  cachedCapabilities = {
     pandoc,
-    browser,
-    wkhtmltopdf,
     weasyprint,
     availableEngines,
     styles: [...PDF_STYLE_PRESETS],
@@ -233,25 +422,32 @@ export async function detectPdfExportCapabilities(): Promise<PdfExportCapabiliti
     codeWrapModes: [...PDF_CODE_WRAP_MODES],
     imageAlignments: [...PDF_IMAGE_ALIGNMENTS],
   };
+  return cachedCapabilities;
 }
 
-function resolvePdfEngine(requested: PdfEngine, capabilities: PdfExportCapabilities): Exclude<PdfEngine, 'auto'> {
-  if (requested === 'browser') {
-    throw new Error('Browser PDF engine is disabled. Use weasyprint or wkhtmltopdf.');
+function resolvePdfEngine(_requested: PdfEngine, capabilities: PdfExportCapabilities): PdfEngine {
+  if (capabilities.weasyprint) {
+    return 'weasyprint';
   }
-  if (requested !== 'auto') {
-    if (!capabilities.availableEngines.includes(requested)) {
-      throw new Error(`Requested PDF engine is not available: ${requested}`);
-    }
-    return requested;
-  }
-  if (capabilities.weasyprint) return 'weasyprint';
-  if (capabilities.wkhtmltopdf) return 'wkhtmltopdf';
-  throw new Error('No supported PDF engine found. Install weasyprint or wkhtmltopdf.');
+  throw new Error('No supported PDF engine found. Install weasyprint.');
 }
 
 function sanitizeFileNameSegment(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'note';
+}
+
+function previewWorkspaceSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120) || 'note';
+}
+
+async function ensurePreviewWorkspace(noteId: string): Promise<{ cacheDir: string; tempDir: string }> {
+  const rootDir = path.join(os.tmpdir(), 'documine-pdf-preview-cache', previewWorkspaceSegment(noteId));
+  const cacheDir = path.join(rootDir, 'weasy-cache');
+  const rendersDir = path.join(rootDir, 'renders');
+  await fs.mkdir(cacheDir, { recursive: true });
+  await fs.mkdir(rendersDir, { recursive: true });
+  const tempDir = await fs.mkdtemp(path.join(rendersDir, 'render-'));
+  return { cacheDir, tempDir };
 }
 
 function prependExportHeader(markdown: string, _title: string, settings: PdfExportSettings): string {
@@ -509,14 +705,18 @@ ${headerCss(title, settings)}
 `.trim() + '\n';
 }
 
-async function run(command: string, args: string[], cwd?: string): Promise<void> {
+async function run(command: string, args: string[], cwd?: string, signal?: AbortSignal): Promise<void> {
   try {
     await execFileAsync(command, args, {
       cwd,
       maxBuffer: 20 * 1024 * 1024,
       env: { ...process.env },
+      signal,
     });
   } catch (error) {
+    if (signal?.aborted) {
+      throw new Error('PDF preview superseded by a newer request.');
+    }
     const message = error instanceof Error && 'stderr' in error
       ? String((error as { stderr?: string }).stderr || (error as { stdout?: string }).stdout || error.message)
       : error instanceof Error
@@ -554,8 +754,8 @@ function transformExportHtml(bodyHtml: string, settings: PdfExportSettings): str
   });
 }
 
-async function markdownToHtml(source: string, htmlOutput: string, cssContent: string, settings: PdfExportSettings, toc: boolean, cwd: string): Promise<void> {
-  const standaloneHtmlPath = path.join(cwd, 'standalone.html');
+async function markdownToHtmlString(source: string, cssContent: string, settings: PdfExportSettings, toc: boolean, cwd: string, options?: { embedResources?: boolean; signal?: AbortSignal }): Promise<string> {
+  const embedResources = options?.embedResources !== false;
   const args = [
     source,
     '--from',
@@ -565,70 +765,160 @@ async function markdownToHtml(source: string, htmlOutput: string, cssContent: st
     '--standalone',
     '--metadata',
     'title=',
-    '--embed-resources',
-    '--resource-path',
-    cwd,
-    '-o',
-    standaloneHtmlPath,
   ];
+  if (embedResources) {
+    args.push('--embed-resources', '--resource-path', cwd);
+  }
   if (toc) {
     args.push('--toc');
   }
-  await run('pandoc', args, cwd);
 
-  const standaloneHtml = await fs.readFile(standaloneHtmlPath, 'utf8');
+  const { stdout } = await execFileAsync('pandoc', args, {
+    cwd,
+    maxBuffer: 20 * 1024 * 1024,
+    env: { ...process.env },
+    signal: options?.signal,
+  });
+  const standaloneHtml = String(stdout);
   const withoutBundledStyles = standaloneHtml.replace(/\s*<style>[\s\S]*?<\/style>\s*/i, '\n');
   const withInjectedStyles = withoutBundledStyles.includes('</head>')
     ? withoutBundledStyles.replace('</head>', `  <style>\n${cssContent}  </style>\n</head>`)
     : withoutBundledStyles;
-  const documentHtml = withInjectedStyles.replace(/<body(\b[^>]*)>([\s\S]*?)<\/body>/i, (_match, attrs: string, bodyHtml: string) => {
+  return withInjectedStyles.replace(/<body(\b[^>]*)>([\s\S]*?)<\/body>/i, (_match, attrs: string, bodyHtml: string) => {
     return `<body${attrs}>\n${transformExportHtml(bodyHtml, settings)}\n</body>`;
   });
+}
+
+async function markdownToHtml(source: string, htmlOutput: string, cssContent: string, settings: PdfExportSettings, toc: boolean, cwd: string, options?: { embedResources?: boolean; signal?: AbortSignal }): Promise<void> {
+  const documentHtml = await markdownToHtmlString(source, cssContent, settings, toc, cwd, options);
   await fs.writeFile(htmlOutput, documentHtml, 'utf8');
 }
 
-async function htmlToPdfWithPandoc(htmlPath: string, pdfPath: string, engine: 'wkhtmltopdf', cwd: string): Promise<void> {
-  await run('pandoc', [htmlPath, '--from', 'html', '--to', 'pdf', '--pdf-engine', engine, '-o', pdfPath], cwd);
-}
-
-async function htmlToPdfWithWeasyprint(htmlPath: string, pdfPath: string, cwd: string): Promise<void> {
-  await run('weasyprint', [htmlPath, pdfPath], cwd);
-}
-
-async function htmlToPdfWithBrowser(htmlPath: string, pdfPath: string, tempDir: string): Promise<void> {
-  const browser = await findBrowserExecutable();
-  if (!browser) {
-    throw new Error('No browser PDF backend found.');
+async function renderPdfWithWeasyWorker(htmlPath: string, pdfPath: string, cacheDir?: string, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    throw new Error('PDF preview superseded by a newer request.');
   }
-  const uri = pathToFileURL(htmlPath).toString();
-  const userDataDir = path.join(tempDir, 'chrome-profile');
-  await fs.mkdir(userDataDir, { recursive: true });
-  const sharedArgs = [
-    '--disable-gpu',
-    '--no-sandbox',
-    '--allow-file-access-from-files',
-    '--disable-extensions',
-    '--disable-background-networking',
-    '--disable-sync',
-    '--hide-scrollbars',
-    '--mute-audio',
-    '--no-first-run',
-    '--no-default-browser-check',
-    `--user-data-dir=${userDataDir}`,
-    '--window-size=1280,1696',
-    '--no-pdf-header-footer',
-    '--virtual-time-budget=12000',
-    `--print-to-pdf=${pdfPath}`,
-    uri,
-  ];
+  const worker = await getWeasyWorker();
+  const requestId = randomUUID();
+  await new Promise<void>((resolve, reject) => {
+    const pending: PendingWeasyWorkerRequest = {
+      resolve,
+      reject,
+      signal,
+    };
+    if (signal) {
+      pending.abortListener = () => {
+        worker.pending.delete(requestId);
+        disposeWeasyWorker(new Error('PDF preview superseded by a newer request.'));
+        reject(new Error('PDF preview superseded by a newer request.'));
+      };
+      signal.addEventListener('abort', pending.abortListener, { once: true });
+    }
+    worker.pending.set(requestId, pending);
+    worker.process.stdin.write(`${JSON.stringify({ type: 'render', id: requestId, htmlPath, pdfPath, cacheDir })}\n`);
+  });
+}
+
+async function htmlToPdfWithWeasyprint(htmlPath: string, pdfPath: string, cwd: string, signal?: AbortSignal, options?: { cacheDir?: string; preferWorker?: boolean }): Promise<void> {
+  if (options?.preferWorker) {
+    await renderPdfWithWeasyWorker(htmlPath, pdfPath, options.cacheDir, signal);
+    return;
+  }
+  const args = options?.cacheDir ? ['-c', options.cacheDir, htmlPath, pdfPath] : [htmlPath, pdfPath];
+  await run('weasyprint', args, cwd, signal);
+}
+
+export async function warmPdfPreviewEngine(): Promise<void> {
+  const worker = await getWeasyWorker();
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'documine-pdf-preview-warm-'));
   try {
-    await run(browser, ['--headless=new', ...sharedArgs]);
-  } catch {
-    await run(browser, ['--headless', ...sharedArgs]);
+    const htmlPath = path.join(tempDir, 'warm.html');
+    const pdfPath = path.join(tempDir, 'warm.pdf');
+    await fs.writeFile(htmlPath, '<!doctype html><html><head><meta charset="utf-8"><title>warm</title></head><body><p>warm</p></body></html>', 'utf8');
+    await renderPdfWithWeasyWorker(htmlPath, pdfPath);
+    await fs.readFile(pdfPath);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    if (worker.process.stdin.writableNeedDrain) {
+      await new Promise((resolve) => worker.process.stdin.once('drain', resolve));
+    }
+  }
+}
+
+export async function renderMarkdownToExportHtml(input: ExportPdfInput): Promise<ExportHtmlPreviewResult> {
+  const capabilities = await detectPdfExportCapabilities();
+  if (!capabilities.pandoc) {
+    throw new Error('pandoc is required but was not found in PATH.');
+  }
+  const settings = mergeSettings(input.settings);
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'documine-export-preview-'));
+  try {
+    const markdownPath = path.join(tempDir, 'note.md');
+    const cssPath = path.join(tempDir, 'export.css');
+    const htmlPath = path.join(tempDir, 'export.html');
+    const title = input.noteTitle || 'Untitled';
+
+    const previewMarkdown = prependExportHeader(input.markdown, title, settings);
+    await fs.writeFile(markdownPath, previewMarkdown, 'utf8');
+    const cssContent = buildPdfCss(title, settings);
+    await fs.writeFile(cssPath, cssContent, 'utf8');
+    await markdownToHtml(markdownPath, htmlPath, cssContent, settings, settings.toc, tempDir, { embedResources: false });
+
+    const html = await fs.readFile(htmlPath, 'utf8');
+    return {
+      markdown: previewMarkdown,
+      css: cssContent,
+      html,
+    };
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+export async function renderMarkdownToPdfPreview(input: ExportPdfInput): Promise<PdfPreviewResult> {
+  const totalStartedAt = performance.now();
+  const capabilities = await detectPdfExportCapabilities();
+  if (!capabilities.pandoc) {
+    throw new Error('pandoc is required but was not found in PATH.');
+  }
+  const settings = mergeSettings(input.settings);
+  const engine = resolvePdfEngine(settings.engine, capabilities);
+  const { cacheDir, tempDir } = await ensurePreviewWorkspace(input.noteId);
+  try {
+    const markdownPath = path.join(tempDir, 'note.md');
+    const htmlPath = path.join(tempDir, 'export.html');
+    const pdfPath = path.join(tempDir, 'export.pdf');
+    const title = input.noteTitle || 'Untitled';
+
+    const rewrittenMarkdown = rewriteMarkdownAssetPaths(prependExportHeader(input.markdown, title, settings), input.noteId, input.assetDirectory);
+    await fs.writeFile(markdownPath, rewrittenMarkdown, 'utf8');
+    const cssContent = buildPdfCss(title, settings);
+
+    const pandocStartedAt = performance.now();
+    const documentHtml = await markdownToHtmlString(markdownPath, cssContent, settings, settings.toc, tempDir, {
+      embedResources: engine !== 'weasyprint',
+      signal: input.signal,
+    });
+    await fs.writeFile(htmlPath, documentHtml, 'utf8');
+    input.onStageTiming?.('pandoc', performance.now() - pandocStartedAt);
+
+    const engineStartedAt = performance.now();
+    await htmlToPdfWithWeasyprint(htmlPath, pdfPath, tempDir, input.signal, { preferWorker: true });
+    input.onStageTiming?.('engine', performance.now() - engineStartedAt);
+
+    const pdf = await fs.readFile(pdfPath);
+    input.onStageTiming?.('total', performance.now() - totalStartedAt);
+    return {
+      fileName: `${sanitizeFileNameSegment(title)}.pdf`,
+      pdf,
+    };
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
   }
 }
 
 export async function exportMarkdownToPdf(input: ExportPdfInput): Promise<ExportPdfResult> {
+  const totalStartedAt = performance.now();
   const capabilities = await detectPdfExportCapabilities();
   if (!capabilities.pandoc) {
     throw new Error('pandoc is required but was not found in PATH.');
@@ -647,18 +937,20 @@ export async function exportMarkdownToPdf(input: ExportPdfInput): Promise<Export
     await fs.writeFile(markdownPath, rewrittenMarkdown, 'utf8');
     const cssContent = buildPdfCss(title, settings);
     await fs.writeFile(cssPath, cssContent, 'utf8');
-    await markdownToHtml(markdownPath, htmlPath, cssContent, settings, settings.toc, tempDir);
+    const pandocStartedAt = performance.now();
+    await markdownToHtml(markdownPath, htmlPath, cssContent, settings, settings.toc, tempDir, {
+      embedResources: engine !== 'weasyprint',
+      signal: input.signal,
+    });
+    input.onStageTiming?.('pandoc', performance.now() - pandocStartedAt);
 
-    if (engine === 'browser') {
-      await htmlToPdfWithBrowser(htmlPath, pdfPath, tempDir);
-    } else if (engine === 'weasyprint') {
-      await htmlToPdfWithWeasyprint(htmlPath, pdfPath, tempDir);
-    } else {
-      await htmlToPdfWithPandoc(htmlPath, pdfPath, engine, tempDir);
-    }
+    const engineStartedAt = performance.now();
+    await htmlToPdfWithWeasyprint(htmlPath, pdfPath, tempDir, input.signal);
+    input.onStageTiming?.('engine', performance.now() - engineStartedAt);
 
     const pdf = await fs.readFile(pdfPath);
     const html = await fs.readFile(htmlPath, 'utf8');
+    input.onStageTiming?.('total', performance.now() - totalStartedAt);
     return {
       fileName: `${sanitizeFileNameSegment(title)}.pdf`,
       pdf,

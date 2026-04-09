@@ -6,6 +6,7 @@ import {
   formatDate,
   getApiHttpOrigin,
   listNotePdfExports,
+  requestRenderedPdfPreview,
   saveNotePdf,
   type ApiKey,
   type NoteAsset,
@@ -24,7 +25,7 @@ import {
   type ViewerPayload,
   uploadImage,
 } from './lib/api';
-import { createCollabEditor, type CollabEditorHandle } from './lib/collab-editor';
+import { createCollabEditor, type CollabEditorHandle, type ShareParticipant } from './lib/collab-editor';
 
 const FALLBACK_OWNER_TOKEN_KEY = 'documine_owner_token';
 
@@ -38,10 +39,12 @@ type CollabTextareaProps = {
   noteId?: string;
   shareId?: string;
   initialValue: string;
+  wrapEnabled: boolean;
   onReady?: (payload: { markdown: string; title: string; shareId: string }) => void;
   onTextChange: (markdown: string) => void;
   onConnectionChange: (connected: boolean) => void;
   onThreadsUpdated?: () => void;
+  onParticipantsChange?: (participants: ShareParticipant[]) => void;
   onUploadImage?: (file: File) => Promise<{ ok: true; asset: { url: string; markdown: string } }>;
   onEditorMount?: (handle: CollabEditorHandle | null) => void;
 };
@@ -52,6 +55,8 @@ type AgentModalConfig = {
   requiresApiKey?: boolean;
   buildInstructions: (apiKey: string | null) => string;
 };
+
+type PreviewMode = 'markdown' | 'rendered-pdf';
 
 function buildOwnerAgentModal(noteId: string): AgentModalConfig {
   const apiBaseUrl = getApiHttpOrigin();
@@ -231,6 +236,15 @@ function getStoredTheme() {
 function applyTheme(theme: string) {
   document.documentElement.setAttribute('data-theme', theme);
   window.localStorage.setItem('md_theme', theme);
+}
+
+function getStoredEditorWrapEnabled() {
+  const value = window.localStorage.getItem('documine_editor_wrap');
+  return value == null ? true : value !== 'off';
+}
+
+function setStoredEditorWrapEnabled(enabled: boolean) {
+  window.localStorage.setItem('documine_editor_wrap', enabled ? 'on' : 'off');
 }
 
 function App() {
@@ -670,9 +684,20 @@ function OwnerNotePage({
   const [connected, setConnected] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [previewMode, setPreviewMode] = useState<PreviewMode>('markdown');
+  const [editorWrapEnabled, setEditorWrapEnabled] = useState(() => getStoredEditorWrapEnabled());
+  const [renderedPdfUrl, setRenderedPdfUrl] = useState('');
+  const [renderedPdfLoading, setRenderedPdfLoading] = useState(false);
+  const [renderedPdfError, setRenderedPdfError] = useState('');
+  const [renderedPdfVersion, setRenderedPdfVersion] = useState(0);
+  const [renderedPdfDirty, setRenderedPdfDirty] = useState(false);
+  const [renderedPdfElapsedMs, setRenderedPdfElapsedMs] = useState(0);
+  const [renderedPdfLastDurationMs, setRenderedPdfLastDurationMs] = useState<number | null>(null);
+  const renderedPdfRequestIdRef = useRef(0);
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showAssetsModal, setShowAssetsModal] = useState(false);
+  const [shareParticipants, setShareParticipants] = useState<ShareParticipant[]>([]);
   const [assets, setAssets] = useState<NoteAsset[]>([]);
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [showComments, setShowComments] = useState(true);
@@ -746,6 +771,80 @@ function OwnerNotePage({
 
     return () => window.clearTimeout(timer);
   }, [markdown, payload]);
+
+  useEffect(() => {
+    setRenderedPdfDirty(true);
+  }, [markdown, noteId]);
+
+  useEffect(() => {
+    if (previewMode !== 'rendered-pdf') {
+      setRenderedPdfLoading(false);
+      setRenderedPdfError('');
+      return;
+    }
+
+    const shouldRefresh = renderedPdfVersion > 0 || !renderedPdfUrl || renderedPdfDirty;
+    if (!shouldRefresh) {
+      setRenderedPdfError('');
+      return;
+    }
+
+    const delayMs = renderedPdfVersion > 0 || !renderedPdfUrl ? 0 : 1200;
+    const requestId = ++renderedPdfRequestIdRef.current;
+    const timer = window.setTimeout(async () => {
+      const startedAt = performance.now();
+      setRenderedPdfLoading(true);
+      setRenderedPdfElapsedMs(0);
+      setRenderedPdfError('');
+      try {
+        const blob = await requestRenderedPdfPreview(noteId, markdown);
+        if (renderedPdfRequestIdRef.current !== requestId) {
+          return;
+        }
+        const nextUrl = URL.createObjectURL(blob);
+        setRenderedPdfUrl((current) => {
+          if (current) {
+            URL.revokeObjectURL(current);
+          }
+          return nextUrl;
+        });
+        setRenderedPdfDirty(false);
+        setRenderedPdfLastDurationMs(Math.round(performance.now() - startedAt));
+      } catch (cause) {
+        if (renderedPdfRequestIdRef.current === requestId) {
+          setRenderedPdfError(cause instanceof Error ? cause.message : 'Failed to render PDF preview.');
+          setRenderedPdfLastDurationMs(Math.round(performance.now() - startedAt));
+        }
+      } finally {
+        if (renderedPdfRequestIdRef.current === requestId) {
+          setRenderedPdfLoading(false);
+        }
+      }
+    }, delayMs);
+
+    return () => window.clearTimeout(timer);
+  }, [markdown, noteId, previewMode, renderedPdfVersion, renderedPdfDirty, renderedPdfUrl]);
+
+  useEffect(() => {
+    if (!renderedPdfLoading) {
+      return;
+    }
+
+    const startedAt = performance.now();
+    const interval = window.setInterval(() => {
+      setRenderedPdfElapsedMs(Math.round(performance.now() - startedAt));
+    }, 100);
+
+    return () => window.clearInterval(interval);
+  }, [renderedPdfLoading]);
+
+  useEffect(() => {
+    return () => {
+      if (renderedPdfUrl) {
+        URL.revokeObjectURL(renderedPdfUrl);
+      }
+    };
+  }, [renderedPdfUrl]);
 
   async function saveMeta(partial?: { title?: string; shareAccess?: ShareAccess }) {
     if (!payload) {
@@ -924,6 +1023,20 @@ function OwnerNotePage({
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowResolved((current) => !current)} disabled={!showComments}>
             {showResolved ? 'Hide resolved' : 'Show resolved'}
           </button>
+          <div className="documine-segmented-control" role="group" aria-label="Editor line wrapping">
+            <button type="button" className={`documine-btn documine-btn--md ${editorWrapEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => {
+              setEditorWrapEnabled(true);
+              setStoredEditorWrapEnabled(true);
+            }}>
+              Wrap
+            </button>
+            <button type="button" className={`documine-btn documine-btn--md ${!editorWrapEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => {
+              setEditorWrapEnabled(false);
+              setStoredEditorWrapEnabled(false);
+            }}>
+              No wrap
+            </button>
+          </div>
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowAgentModal(true)}>
             Agent
           </button>
@@ -936,6 +1049,20 @@ function OwnerNotePage({
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => void onLogout()}>
             Logout
           </button>
+          {shareParticipants.length ? (
+            <div className="presence-avatars" aria-label="People currently in this share">
+              {shareParticipants.map((participant) => (
+                <div
+                  key={participant.clientId}
+                  className="presence-avatar"
+                  title={`${participant.name} · ${participant.permissionLabel}`}
+                  aria-label={`${participant.name}. ${participant.permissionLabel}`}
+                >
+                  {participant.name.trim().charAt(0).toUpperCase() || '?'}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       </header>
 
@@ -945,6 +1072,7 @@ function OwnerNotePage({
           <CollabTextarea
             noteId={noteId}
             initialValue={markdown}
+            wrapEnabled={editorWrapEnabled}
             onUploadImage={async (file) => {
               const response = await uploadImage(file, { noteId });
               if (showAssetsModal) {
@@ -964,29 +1092,53 @@ function OwnerNotePage({
             }}
             onConnectionChange={setConnected}
             onThreadsUpdated={() => void loadNote({ background: true })}
+            onParticipantsChange={setShareParticipants}
           />
         </div>
 
         <section className={`preview-stage ${showPreview ? 'preview-open' : ''}`}>
           <div className="preview-controls">
+            <div className="preview-mode-toggle">
+              <button type="button" className={`documine-btn documine-btn--sm ${previewMode === 'markdown' ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => setPreviewMode('markdown')}>
+                Markdown
+              </button>
+              <button type="button" className={`documine-btn documine-btn--sm ${previewMode === 'rendered-pdf' ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => setPreviewMode('rendered-pdf')}>
+                Rendered PDF
+              </button>
+            </div>
+            {previewMode === 'rendered-pdf' ? (
+              <span className="pdf-preview-note pdf-preview-note--inline">
+                {renderedPdfLoading
+                  ? `Refreshing PDF preview... ${formatDurationMs(renderedPdfElapsedMs)}`
+                  : renderedPdfDirty
+                    ? 'Waiting for typing to pause before refreshing.'
+                    : renderedPdfLastDurationMs !== null
+                      ? `Last refresh: ${formatDurationMs(renderedPdfLastDurationMs)}`
+                      : 'Auto-refreshes after a short idle delay.'}
+              </span>
+            ) : null}
             <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost preview-close-btn" onClick={() => setShowPreview(false)}>
               Close
             </button>
           </div>
-          <AnchoredCommentCanvas
-            renderedHtml={renderedHtml}
-            threads={payload.threads}
-            canCreateThread={showComments}
-            commentsVisible={showComments}
-            showResolved={showResolved}
-            emptyMessage="No comment threads yet. Select text in the preview to add one."
-            onRequestCreateThread={requestCreateThread}
-            onReply={replyToThread}
-            onResolve={setThreadResolved}
-            onDeleteThread={deleteThread}
-            onEditMessage={editMessage}
-            onDeleteMessage={deleteMessage}
-          />
+          {previewMode === 'rendered-pdf' ? (
+            <RenderedPdfPreview url={renderedPdfUrl} loading={renderedPdfLoading} error={renderedPdfError} dirty={renderedPdfDirty} />
+          ) : (
+            <AnchoredCommentCanvas
+              renderedHtml={renderedHtml}
+              threads={payload.threads}
+              canCreateThread={showComments}
+              commentsVisible={showComments}
+              showResolved={showResolved}
+              emptyMessage="No comment threads yet. Select text in the preview to add one."
+              onRequestCreateThread={requestCreateThread}
+              onReply={replyToThread}
+              onResolve={setThreadResolved}
+              onDeleteThread={deleteThread}
+              onEditMessage={editMessage}
+              onDeleteMessage={deleteMessage}
+            />
+          )}
         </section>
       </div>
       {pendingThreadAnchor ? (
@@ -996,7 +1148,10 @@ function OwnerNotePage({
           onClose={() => setPendingThreadAnchor(null)}
         />
       ) : null}
-      {showExportModal ? <PdfExportModal noteId={noteId} onClose={() => setShowExportModal(false)} /> : null}
+      {showExportModal ? <PdfExportModal noteId={noteId} onClose={() => {
+        setShowExportModal(false);
+        setRenderedPdfVersion((value) => value + 1);
+      }} /> : null}
       {showAssetsModal ? (
         <ImageAssetsModal
           assets={assets}
@@ -1021,6 +1176,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
   const [renderedHtml, setRenderedHtml] = useState('');
   const [connected, setConnected] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [editorWrapEnabled, setEditorWrapEnabled] = useState(() => getStoredEditorWrapEnabled());
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [showComments, setShowComments] = useState(true);
   const [showResolved, setShowResolved] = useState(false);
@@ -1191,6 +1347,20 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowResolved((current) => !current)} disabled={!showComments}>
             {showResolved ? 'Hide resolved' : 'Show resolved'}
           </button>
+          <div className="documine-segmented-control" role="group" aria-label="Editor line wrapping">
+            <button type="button" className={`documine-btn documine-btn--md ${editorWrapEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => {
+              setEditorWrapEnabled(true);
+              setStoredEditorWrapEnabled(true);
+            }}>
+              Wrap
+            </button>
+            <button type="button" className={`documine-btn documine-btn--md ${!editorWrapEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => {
+              setEditorWrapEnabled(false);
+              setStoredEditorWrapEnabled(false);
+            }}>
+              No wrap
+            </button>
+          </div>
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowAgentModal(true)}>
             Agent
           </button>
@@ -1212,6 +1382,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
             <CollabTextarea
               shareId={shareId}
               initialValue={markdown}
+              wrapEnabled={editorWrapEnabled}
               onUploadImage={(file) => uploadImage(file, { shareId })}
               onReady={(next) => {
                 setMarkdown(next.markdown);
@@ -1291,21 +1462,25 @@ function CollabTextarea({
   noteId,
   shareId,
   initialValue,
+  wrapEnabled,
   onReady,
   onTextChange,
   onConnectionChange,
   onThreadsUpdated,
+  onParticipantsChange,
   onUploadImage,
   onEditorMount,
 }: CollabTextareaProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const horizontalScrollRef = useRef<HTMLDivElement | null>(null);
+  const horizontalScrollSpacerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<CollabEditorHandle | null>(null);
-  const callbacksRef = useRef({ onReady, onTextChange, onConnectionChange, onThreadsUpdated, onUploadImage });
+  const callbacksRef = useRef({ onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onUploadImage });
   const onEditorMountRef = useRef(onEditorMount);
 
   useEffect(() => {
-    callbacksRef.current = { onReady, onTextChange, onConnectionChange, onThreadsUpdated, onUploadImage };
-  }, [onConnectionChange, onReady, onTextChange, onThreadsUpdated, onUploadImage]);
+    callbacksRef.current = { onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onUploadImage };
+  }, [onConnectionChange, onParticipantsChange, onReady, onTextChange, onThreadsUpdated, onUploadImage]);
 
   useEffect(() => {
     onEditorMountRef.current = onEditorMount;
@@ -1337,6 +1512,7 @@ function CollabTextarea({
       onTextChange: (nextMarkdown: string) => callbacksRef.current.onTextChange(nextMarkdown),
       onConnectionChange: (connected: boolean) => callbacksRef.current.onConnectionChange(connected),
       onThreadsUpdated: () => callbacksRef.current.onThreadsUpdated?.(),
+      onParticipantsChange: (participants: ShareParticipant[]) => callbacksRef.current.onParticipantsChange?.(participants),
       onUploadImage: callbacksRef.current.onUploadImage
         ? (file: File) => callbacksRef.current.onUploadImage!(file)
         : undefined,
@@ -1350,7 +1526,53 @@ function CollabTextarea({
     };
   }, [noteId, shareId]);
 
-  return <textarea ref={textareaRef} className="editor-textarea" spellCheck={false} />;
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    const horizontalScroll = horizontalScrollRef.current;
+    const spacer = horizontalScrollSpacerRef.current;
+    if (!textarea || !horizontalScroll || !spacer) {
+      return;
+    }
+
+    const syncMetrics = () => {
+      spacer.style.width = `${Math.max(textarea.scrollWidth, textarea.clientWidth)}px`;
+      horizontalScroll.scrollLeft = textarea.scrollLeft;
+    };
+    const syncFromTextarea = () => {
+      horizontalScroll.scrollLeft = textarea.scrollLeft;
+      syncMetrics();
+    };
+    const syncFromScrollbar = () => {
+      textarea.scrollLeft = horizontalScroll.scrollLeft;
+    };
+
+    syncMetrics();
+    textarea.addEventListener('scroll', syncFromTextarea);
+    textarea.addEventListener('input', syncMetrics);
+    horizontalScroll.addEventListener('scroll', syncFromScrollbar);
+
+    const resizeObserver = new ResizeObserver(syncMetrics);
+    resizeObserver.observe(textarea);
+
+    const intervalId = window.setInterval(syncMetrics, 250);
+
+    return () => {
+      textarea.removeEventListener('scroll', syncFromTextarea);
+      textarea.removeEventListener('input', syncMetrics);
+      horizontalScroll.removeEventListener('scroll', syncFromScrollbar);
+      resizeObserver.disconnect();
+      window.clearInterval(intervalId);
+    };
+  }, [wrapEnabled, initialValue]);
+
+  return (
+    <div className={`editor-textarea-shell ${wrapEnabled ? '' : 'editor-textarea-shell--nowrap'}`.trim()}>
+      <textarea ref={textareaRef} className={`editor-textarea ${wrapEnabled ? '' : 'editor-textarea--nowrap'}`.trim()} spellCheck={false} wrap={wrapEnabled ? 'soft' : 'off'} />
+      <div ref={horizontalScrollRef} className="editor-horizontal-scroll" aria-hidden={wrapEnabled}>
+        <div ref={horizontalScrollSpacerRef} className="editor-horizontal-scroll-spacer" />
+      </div>
+    </div>
+  );
 }
 
 function ImageAssetsModal({
@@ -1448,6 +1670,32 @@ function ImageAssetsModal({
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function formatDurationMs(value: number) {
+  if (value < 1000) {
+    return `${value} ms`;
+  }
+  return `${(value / 1000).toFixed(1)} s`;
+}
+
+function RenderedPdfPreview({ url, loading, error, dirty }: { url: string; loading: boolean; error: string; dirty: boolean }) {
+  return (
+    <div className="preview-scroll preview-scroll--pdf">
+      <div className="pdf-preview-shell">
+        {error ? <div className="inline-error">{error}</div> : null}
+        {url ? (
+          <iframe
+            title="Rendered PDF preview"
+            className="pdf-preview-frame pdf-preview-frame--document"
+            src={url}
+          />
+        ) : !loading && !dirty ? (
+          <p className="pdf-preview-status">No rendered PDF preview available yet.</p>
+        ) : null}
       </div>
     </div>
   );
@@ -1778,15 +2026,6 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
                   {payload.capabilities.headerModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
                 </select>
               </label>
-              <label className="pdf-export-field">
-                <span>Engine</span>
-                <select value={settings.engine} onChange={(event) => updateSettings({ engine: event.target.value as PdfExportSettings['engine'] })}>
-                  <option value="auto">Auto</option>
-                  {payload.capabilities.availableEngines.filter((engine) => engine !== 'auto').map((engine) => (
-                    <option key={engine} value={engine}>{engine}</option>
-                  ))}
-                </select>
-              </label>
             </div>
             <div className="pdf-export-toggles">
               <label className="pdf-export-checkbox"><input type="checkbox" checked={settings.toc} onChange={(event) => updateSettings({ toc: event.target.checked })} /> Include table of contents</label>
@@ -1825,7 +2064,7 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
           </section>
 
           <div className="pdf-export-footer">
-            Engines: {payload.capabilities.availableEngines.join(', ')} · Defaults saved to instance data
+            Engine: WeasyPrint · Defaults saved to instance data
           </div>
         </div>
       </div>

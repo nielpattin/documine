@@ -110,7 +110,7 @@ export type NoteAsset = {
 export type PdfExportStylePreset = 'report' | 'academic' | 'clean' | 'compact';
 export type PdfExportPageSize = 'A4' | 'Letter' | 'Legal';
 export type PdfExportOrientation = 'portrait' | 'landscape';
-export type PdfExportEngine = 'auto' | 'wkhtmltopdf' | 'weasyprint';
+export type PdfExportEngine = 'weasyprint';
 export type PdfExportFontFamily = 'Times New Roman' | 'Georgia' | 'Arial' | 'Inter' | 'system-ui';
 export type PdfExportHeaderMode = 'none' | 'title' | 'date' | 'title-date';
 export type PdfExportCodeWrapMode = 'wrap' | 'scroll';
@@ -142,8 +142,6 @@ export type PdfExportSettings = {
 
 export type PdfExportCapabilities = {
   pandoc: boolean;
-  browser: boolean;
-  wkhtmltopdf: boolean;
   weasyprint: boolean;
   availableEngines: PdfExportEngine[];
   styles: PdfExportStylePreset[];
@@ -205,6 +203,17 @@ function trimTrailingSlash(value: string) {
   return value.replace(/\/$/, "");
 }
 
+function isLocalBrowserHost(hostname: string) {
+  return hostname === 'localhost' || hostname === '127.0.0.1';
+}
+
+function resolveLocalApiOrigin(protocol: string, hostname: string, port: string, origin: string) {
+  if (isLocalBrowserHost(hostname) && port && port !== '3120') {
+    return `${protocol}//${hostname}:3120`;
+  }
+  return trimTrailingSlash(origin);
+}
+
 export function getApiHttpOrigin() {
   const envOrigin = (import.meta.env.VITE_DOCUMINE_API_HTTP_ORIGIN as string | undefined)?.trim();
   if (envOrigin) {
@@ -212,11 +221,7 @@ export function getApiHttpOrigin() {
   }
 
   const { protocol, hostname, port, origin } = window.location;
-  if (port === "5173") {
-    return `${protocol}//${hostname}:3120`;
-  }
-
-  return trimTrailingSlash(origin);
+  return resolveLocalApiOrigin(protocol, hostname, port, origin);
 }
 
 function buildApiUrl(path: string) {
@@ -228,7 +233,20 @@ function buildApiUrl(path: string) {
 
 async function parseApiResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
+  let payload: any = null;
+
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      const contentType = response.headers.get('content-type') || '';
+      const looksLikeHtml = /text\/html/i.test(contentType) || text.trimStart().startsWith('<!doctype') || text.trimStart().startsWith('<html');
+      const message = looksLikeHtml
+        ? 'API returned HTML instead of JSON. Check that the web app is talking to the API server on port 3120.'
+        : 'API returned invalid JSON.';
+      throw new ApiError(message, response.status || 0);
+    }
+  }
 
   if (!response.ok) {
     throw new ApiError(payload?.error || payload?.errors?.join(", ") || "Request failed.", response.status, payload?.errors);
@@ -304,6 +322,28 @@ export async function deleteNotePdf(noteId: string, fileName: string): Promise<D
   return parseApiResponse<DeleteNotePdfPayload>(response);
 }
 
+export async function requestRenderedPdfPreview(noteId: string, markdown: string, settings?: PdfExportSettings): Promise<Blob> {
+  const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/export/pdf-preview`), {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings === undefined ? { markdown } : { markdown, settings }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    let payload: { error?: string; errors?: string[] } | null = null;
+    try {
+      payload = text ? JSON.parse(text) as { error?: string; errors?: string[] } : null;
+    } catch {
+      payload = null;
+    }
+    throw new ApiError(payload?.error || payload?.errors?.join(', ') || 'Request failed.', response.status, payload?.errors);
+  }
+
+  return response.blob();
+}
+
 export function buildWsUrl(pathAndQuery: string) {
   const envOrigin = (import.meta.env.VITE_DOCUMINE_API_WS_ORIGIN as string | undefined)?.trim();
   if (envOrigin) {
@@ -311,9 +351,10 @@ export function buildWsUrl(pathAndQuery: string) {
   }
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  if (window.location.port === "5173") {
-    return `${protocol}//${window.location.hostname}:3120${pathAndQuery}`;
+  const { hostname, port, host } = window.location;
+  if (isLocalBrowserHost(hostname) && port && port !== '3120') {
+    return `${protocol}//${hostname}:3120${pathAndQuery}`;
   }
 
-  return `${protocol}//${window.location.host}${pathAndQuery}`;
+  return `${protocol}//${host}${pathAndQuery}`;
 }

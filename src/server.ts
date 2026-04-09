@@ -17,7 +17,9 @@ import {
   detectPdfExportCapabilities,
   exportMarkdownToPdf,
   loadPdfExportSettings,
+  renderMarkdownToPdfPreview,
   savePdfExportSettings,
+  warmPdfPreviewEngine,
 } from './pdf-export.js';
 import {
   type CollabState,
@@ -163,11 +165,21 @@ type ClientConn = {
   selection?: ClientPresenceMessage['selection'];
 };
 
+type ShareParticipantMessage = {
+  type: 'participants';
+  participants: Array<{
+    clientId: string;
+    name: string;
+    permissionLabel: string;
+  }>;
+};
+
 type AnyServerMessage =
   | (ServerHelloMessage & { clientId?: string })
   | ServerMutationMessage
   | ServerPresenceMessage
   | ServerPresenceLeaveMessage
+  | ShareParticipantMessage
   | { type: 'updated'; noteId: string; shareId: string; updatedAt: string }
   | { type: 'threads-updated'; noteId: string; shareId: string };
 
@@ -183,6 +195,7 @@ const noteAssetsDir = path.join(dataDir, 'assets');
 const noteExportsDir = path.join(dataDir, 'exports');
 const authFilePath = path.join(dataDir, 'auth.json');
 const exportSettingsFilePath = path.join(dataDir, 'export-settings.json');
+const activePdfPreviewControllers = new Map<string, AbortController>();
 const ownerSessionCookieName = 'documine_owner_session';
 const ownerLocalStorageTokenKey = 'documine_owner_token';
 const commenterIdCookieName = 'documine_commenter_id';
@@ -564,6 +577,60 @@ app.delete('/api/notes/:id/exports/:fileName', (c) => {
   try { fs.unlinkSync(noteExportAssetPath(note.id, exportFile.fileName, '.json')); } catch {}
 
   return c.json({ ok: true, exports: collectNoteExports(note) });
+});
+
+app.post('/api/notes/:id/export/pdf-preview', async (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const note = notes.get(c.req.param('id'));
+  if (!note) {
+    return c.json({ ok: false, error: 'Note not found.' }, 404);
+  }
+
+  const body = await readJsonBody(c) as { markdown?: unknown; settings?: unknown };
+  const savedSettings = await loadPdfExportSettings(exportSettingsFilePath);
+  const previewKey = `${note.id}:owner-preview`;
+  activePdfPreviewControllers.get(previewKey)?.abort();
+  const controller = new AbortController();
+  activePdfPreviewControllers.set(previewKey, controller);
+  const requestStartedAt = performance.now();
+  const stageTimings: Partial<Record<'pandoc' | 'engine' | 'total', number>> = {};
+
+  try {
+    const result = await renderMarkdownToPdfPreview({
+      noteId: note.id,
+      noteTitle: note.title,
+      markdown: typeof body.markdown === 'string' ? body.markdown : note.markdown,
+      settings: body.settings === undefined ? savedSettings : body.settings,
+      assetDirectory: noteAssetDirectory(note.id),
+      signal: controller.signal,
+      onStageTiming: (stage, durationMs) => {
+        stageTimings[stage] = durationMs;
+      },
+    });
+    if (activePdfPreviewControllers.get(previewKey) === controller) {
+      activePdfPreviewControllers.delete(previewKey);
+    }
+    console.log(`[pdf-preview] note=${note.id} total=${Math.round(performance.now() - requestStartedAt)}ms pandoc=${Math.round(stageTimings.pandoc || 0)}ms engine=${Math.round(stageTimings.engine || 0)}ms`);
+    return c.body(new Uint8Array(result.pdf), 200, {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${result.fileName}"`,
+      'Cache-Control': 'no-store',
+    });
+  } catch (error) {
+    if (activePdfPreviewControllers.get(previewKey) === controller) {
+      activePdfPreviewControllers.delete(previewKey);
+    }
+    const message = error instanceof Error ? error.message : 'PDF preview failed.';
+    if (controller.signal.aborted) {
+      console.log(`[pdf-preview] note=${note.id} cancelled after ${Math.round(performance.now() - requestStartedAt)}ms`);
+      return c.json({ ok: false, error: 'PDF preview superseded by a newer request.' }, 409);
+    }
+    console.log(`[pdf-preview] note=${note.id} failed after ${Math.round(performance.now() - requestStartedAt)}ms pandoc=${Math.round(stageTimings.pandoc || 0)}ms engine=${Math.round(stageTimings.engine || 0)}ms error=${message}`);
+    return c.json({ ok: false, error: message }, 500);
+  }
 });
 
 app.post('/api/notes/:id/export/pdf', async (c) => {
@@ -1419,6 +1486,7 @@ wss.on('connection', (ws, req) => {
     clients.push(conn);
     sendServerMessage(ws, { ...buildHelloMessage(note), clientId });
     sendExistingPresence(conn);
+    broadcastShareParticipants(note.id);
 
     ws.on('pong', () => { conn.alive = true; });
     ws.on('message', (data) => handleEditorMessage(conn, String(data)));
@@ -1451,6 +1519,7 @@ wss.on('connection', (ws, req) => {
       clients.push(conn);
       sendServerMessage(ws, { ...buildHelloMessage(note), clientId });
       sendExistingPresence(conn);
+      broadcastShareParticipants(note.id);
 
       ws.on('pong', () => { conn.alive = true; });
       ws.on('message', (data) => handleEditorMessage(conn, String(data)));
@@ -1459,6 +1528,7 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
+    const commenterName = getCommenterIdentityFromHeaders(req.headers).name;
     const clientId = `c${++clientIdCounter}`;
     const conn: ClientConn = {
       ws,
@@ -1466,11 +1536,12 @@ wss.on('connection', (ws, req) => {
       noteId: note.id,
       shareId: note.shareId,
       clientId,
-      name: '',
+      name: commenterName || 'Guest',
       color: '',
       alive: true,
     };
     clients.push(conn);
+    broadcastShareParticipants(note.id);
     ws.on('pong', () => { conn.alive = true; });
     ws.on('close', () => handleDisconnect(conn));
     ws.on('error', () => handleDisconnect(conn));
@@ -1483,6 +1554,13 @@ wss.on('connection', (ws, req) => {
 server.listen(port, () => {
   console.log(`documine api listening on http://localhost:${port}`);
   console.log(`data: ${path.resolve(dataDir)}`);
+  void warmPdfPreviewEngine()
+    .then(() => {
+      console.log('[pdf-preview] warm worker ready');
+    })
+    .catch((error) => {
+      console.warn(`[pdf-preview] warm worker failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
 });
 
 function readJsonBody(c: Context) {
@@ -1493,6 +1571,45 @@ function isCollaborativeConn(conn: ClientConn, noteId: string) {
   return (conn.kind === 'editor' || conn.kind === 'public-editor') && conn.noteId === noteId;
 }
 
+function sharePermissionLabel(conn: ClientConn, note: NoteRecord): string {
+  if (conn.kind === 'public-editor') {
+    return 'Edit and comment';
+  }
+  if (conn.kind === 'public-viewer') {
+    if (note.shareAccess === 'comment') {
+      return 'View and comment';
+    }
+    return 'View only';
+  }
+  return 'Owner';
+}
+
+function broadcastShareParticipants(noteId: string) {
+  const note = notes.get(noteId);
+  if (!note) {
+    return;
+  }
+
+  const participants = clients
+    .filter((conn) => conn.noteId === noteId && conn.kind !== 'editor')
+    .map((conn) => ({
+      clientId: conn.clientId,
+      name: conn.name || 'Guest',
+      permissionLabel: sharePermissionLabel(conn, note),
+    }));
+
+  const outgoing: ShareParticipantMessage = {
+    type: 'participants',
+    participants,
+  };
+
+  for (const conn of clients) {
+    if (conn.noteId === noteId) {
+      sendServerMessage(conn.ws, outgoing);
+    }
+  }
+}
+
 function handleDisconnect(conn: ClientConn) {
   const index = clients.indexOf(conn);
   if (index !== -1) {
@@ -1501,6 +1618,7 @@ function handleDisconnect(conn: ClientConn) {
   if (conn.kind === 'editor' || conn.kind === 'public-editor') {
     broadcastPresenceLeave(conn);
   }
+  broadcastShareParticipants(conn.noteId);
 }
 
 function handleEditorMessage(conn: ClientConn, data: string) {
@@ -2267,13 +2385,17 @@ function makeShareUrl(c: Context, shareId: string) {
 }
 
 function isAllowedBrowserOrigin(origin: string) {
-  const allowedOrigins = new Set<string>([
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    `http://localhost:${port}`,
-    `http://127.0.0.1:${port}`,
-  ]);
-  return allowedOrigins.has(origin);
+  try {
+    const url = new URL(origin);
+    const isLocalHost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+    if (isLocalHost && url.protocol === 'http:') {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
 }
 
 function nowIso() {

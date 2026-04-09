@@ -20,6 +20,12 @@ const PRESENCE_STALE_MS = 60000;
 
 type UploadImageResult = { ok: true; asset: { url: string; markdown: string } };
 
+export type ShareParticipant = {
+  clientId: string;
+  name: string;
+  permissionLabel: string;
+};
+
 type CreateCollabEditorOptions = {
   noteId?: string;
   shareId?: string;
@@ -27,6 +33,7 @@ type CreateCollabEditorOptions = {
   onTextChange?: (markdown: string) => void;
   onConnectionChange?: (connected: boolean) => void;
   onThreadsUpdated?: () => void;
+  onParticipantsChange?: (participants: ShareParticipant[]) => void;
   onUploadImage?: (file: File) => Promise<UploadImageResult>;
 };
 
@@ -46,6 +53,13 @@ type PresenceCursor = {
 type CaretPosition = {
   top: number;
   left: number;
+};
+
+type BoxPosition = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 };
 
 type ServerHelloMessage = {
@@ -83,12 +97,18 @@ type ServerThreadsUpdatedMessage = {
   type: 'threads-updated';
 };
 
+type ServerParticipantsMessage = {
+  type: 'participants';
+  participants: ShareParticipant[];
+};
+
 type ServerMessage =
   | ServerHelloMessage
   | ServerMutationMessage
   | ServerPresenceMessage
   | ServerPresenceLeaveMessage
-  | ServerThreadsUpdatedMessage;
+  | ServerThreadsUpdatedMessage
+  | ServerParticipantsMessage;
 
 type ClientMutationEnvelope = {
   type: 'mutation';
@@ -131,9 +151,13 @@ function isWordChar(ch: string): boolean {
   return /[0-9A-Za-z_]/.test(ch || '');
 }
 
+function normalizeInsertedText(text: string): string {
+  return String(text || '').replace(/\r\n?/g, '\n');
+}
+
 function readInsertText(event: InputEvent): string {
-  if (typeof event.data === 'string') return event.data;
-  if (event.dataTransfer) return event.dataTransfer.getData('text/plain') || '';
+  if (typeof event.data === 'string') return normalizeInsertedText(event.data);
+  if (event.dataTransfer) return normalizeInsertedText(event.dataTransfer.getData('text/plain') || '');
   return '';
 }
 
@@ -203,6 +227,10 @@ function trimTrailingSlash(value: string): string {
   return value.replace(/\/$/, '');
 }
 
+function isLocalBrowserHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1';
+}
+
 function buildApiWsOrigin(): string {
   const envOrigin = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_DOCUMINE_API_WS_ORIGIN
     ? String(import.meta.env.VITE_DOCUMINE_API_WS_ORIGIN).trim()
@@ -212,14 +240,25 @@ function buildApiWsOrigin(): string {
   }
 
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  if (location.port === '5173') {
+  if (isLocalBrowserHost(location.hostname) && location.port && location.port !== '3120') {
     return `${protocol}//${location.hostname}:3120`;
   }
 
   return `${protocol}//${location.host}`;
 }
 
-function syncMirrorStyles(mirror: HTMLDivElement, textarea: HTMLTextAreaElement): void {
+function getBoxPosition(element: HTMLElement, relativeTo: HTMLElement): BoxPosition {
+  const elementRect = element.getBoundingClientRect();
+  const relativeRect = relativeTo.getBoundingClientRect();
+  return {
+    left: elementRect.left - relativeRect.left,
+    top: elementRect.top - relativeRect.top,
+    width: elementRect.width,
+    height: elementRect.height,
+  };
+}
+
+function syncMirrorStyles(mirror: HTMLDivElement, textarea: HTMLTextAreaElement, relativeTo: HTMLElement): BoxPosition {
   const cs = getComputedStyle(textarea);
   const props = [
     'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'textTransform',
@@ -228,11 +267,16 @@ function syncMirrorStyles(mirror: HTMLDivElement, textarea: HTMLTextAreaElement)
     'wordWrap', 'overflowWrap', 'whiteSpace', 'lineHeight', 'tabSize', 'boxSizing',
   ] as const;
   for (const prop of props) mirror.style[prop] = cs[prop];
-  mirror.style.width = `${textarea.offsetWidth}px`;
+  const box = getBoxPosition(textarea, relativeTo);
+  mirror.style.left = `${box.left}px`;
+  mirror.style.top = `${box.top}px`;
+  mirror.style.width = `${box.width}px`;
+  mirror.style.height = `${box.height}px`;
+  return box;
 }
 
-function measureCaretPositions(textarea: HTMLTextAreaElement, mirror: HTMLDivElement, indices: number[]): Map<number, CaretPosition> {
-  syncMirrorStyles(mirror, textarea);
+function measureCaretPositions(textarea: HTMLTextAreaElement, mirror: HTMLDivElement, relativeTo: HTMLElement, indices: number[]): { positions: Map<number, CaretPosition>; box: BoxPosition } {
+  const box = syncMirrorStyles(mirror, textarea, relativeTo);
   const text = textarea.value;
   const sorted = [...new Set(indices)].sort((a, b) => a - b);
   mirror.textContent = '';
@@ -250,11 +294,11 @@ function measureCaretPositions(textarea: HTMLTextAreaElement, mirror: HTMLDivEle
   if (last < text.length) mirror.appendChild(document.createTextNode(text.substring(last)));
   if (!mirror.childNodes.length) mirror.appendChild(document.createTextNode('\u200b'));
 
-  const result = new Map<number, CaretPosition>();
+  const positions = new Map<number, CaretPosition>();
   for (const [idx, span] of markers) {
-    result.set(idx, { top: span.offsetTop - textarea.scrollTop, left: span.offsetLeft - textarea.scrollLeft });
+    positions.set(idx, { top: span.offsetTop - textarea.scrollTop, left: span.offsetLeft - textarea.scrollLeft });
   }
-  return result;
+  return { positions, box };
 }
 
 function escapeHtml(text: string): string {
@@ -266,7 +310,7 @@ function isServerMessage(value: unknown): value is ServerMessage {
 }
 
 export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCollabEditorOptions): CollabEditorHandle {
-  const { noteId, shareId, onReady, onTextChange, onConnectionChange, onThreadsUpdated, onUploadImage } = opts;
+  const { noteId, shareId, onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onUploadImage } = opts;
   let nextBunchIdCounter = 0;
 
   let ws: WebSocket | null = null;
@@ -288,16 +332,17 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   if (!container) {
     throw new Error('Collab editor textarea must have a parent element.');
   }
-  container.style.position = 'relative';
+  const host = container;
+  host.style.position = 'relative';
 
   const overlay = document.createElement('div');
   overlay.className = 'cursor-overlay';
-  container.appendChild(overlay);
+  host.appendChild(overlay);
 
   const mirror = document.createElement('div');
   mirror.className = 'textarea-mirror';
   mirror.style.cssText = 'position:absolute;visibility:hidden;overflow:hidden;white-space:pre-wrap;word-wrap:break-word;pointer-events:none;';
-  container.appendChild(mirror);
+  host.appendChild(mirror);
 
   let resizeObserver: ResizeObserver | null = null;
   try {
@@ -368,7 +413,11 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
 
     if (!cursorData.length) return;
 
-    const positions = measureCaretPositions(textarea, mirror, indices);
+    const { positions, box } = measureCaretPositions(textarea, mirror, host, indices);
+    overlay.style.left = `${box.left}px`;
+    overlay.style.top = `${box.top}px`;
+    overlay.style.width = `${box.width}px`;
+    overlay.style.height = `${box.height}px`;
     const cs = getComputedStyle(textarea);
     const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4;
 
@@ -439,7 +488,8 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   }
 
   function replaceRangeWithText(start: number, end: number, nextContent: string): void {
-    const nextText = `${currentState.text.slice(0, start)}${nextContent}${currentState.text.slice(end)}`;
+    const normalizedContent = normalizeInsertedText(nextContent);
+    const nextText = `${currentState.text.slice(0, start)}${normalizedContent}${currentState.text.slice(end)}`;
     applyDiffFallback(nextText);
   }
 
@@ -661,13 +711,16 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   }
 
   function applyDiffFallback(nextText: string): void {
-    if (!initialized || nextText === currentState.text) return;
+    const normalizedNextText = normalizeInsertedText(nextText);
+    if (!initialized || normalizedNextText === currentState.text) return;
+
     const prev = currentState.text;
     let prefix = 0;
-    while (prefix < prev.length && prefix < nextText.length && prev[prefix] === nextText[prefix]) prefix++;
+    while (prefix < prev.length && prefix < normalizedNextText.length && prev[prefix] === normalizedNextText[prefix]) prefix++;
+
     let prevSuffix = prev.length;
-    let nextSuffix = nextText.length;
-    while (prevSuffix > prefix && nextSuffix > prefix && prev[prevSuffix - 1] === nextText[nextSuffix - 1]) {
+    let nextSuffix = normalizedNextText.length;
+    while (prevSuffix > prefix && nextSuffix > prefix && prev[prevSuffix - 1] === normalizedNextText[nextSuffix - 1]) {
       prevSuffix--;
       nextSuffix--;
     }
@@ -680,7 +733,8 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       mutations.push(deleteMutation);
       workingState = applyClientMutation(workingState, deleteMutation);
     }
-    const insertText = nextText.slice(prefix, nextSuffix);
+
+    const insertText = normalizedNextText.slice(prefix, nextSuffix);
     if (insertText) {
       const insertMutation = buildInsertMutation(workingState, prefix, insertText, nextClientCounter, newId);
       if (insertMutation) {
@@ -688,20 +742,30 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
         mutations.push(insertMutation);
       }
     }
+
     if (!mutations.length) {
       render({ start: prefix, end: prefix, direction: 'none' });
       return;
     }
+
     const cursor = prefix + insertText.length;
     applyLocalMutations(mutations, { start: cursor, end: cursor, direction: 'none' });
   }
 
   function connect(): void {
     const param = noteId ? `noteId=${encodeURIComponent(noteId)}` : `shareId=${encodeURIComponent(shareId || '')}`;
-    ws = new WebSocket(`${buildApiWsOrigin()}/ws?${param}`);
+    const socket = new WebSocket(`${buildApiWsOrigin()}/ws?${param}`);
+    ws = socket;
 
-    ws.addEventListener('open', () => {});
-    ws.addEventListener('message', (event) => {
+    socket.addEventListener('open', () => {
+      if (destroyed || ws !== socket) {
+        socket.close();
+      }
+    });
+    socket.addEventListener('message', (event) => {
+      if (destroyed || ws !== socket) {
+        return;
+      }
       let msg: unknown;
       try {
         msg = JSON.parse(String(event.data));
@@ -716,9 +780,13 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       else if (msg.type === 'presence') receivePresence(msg);
       else if (msg.type === 'presence-leave') receivePresenceLeave(msg);
       else if (msg.type === 'threads-updated') onThreadsUpdated?.();
+      else if (msg.type === 'participants') onParticipantsChange?.(msg.participants);
     });
-    ws.addEventListener('close', () => {
-      if (destroyed) return;
+    socket.addEventListener('close', () => {
+      if (ws === socket) {
+        ws = null;
+      }
+      if (destroyed || ws !== null && ws !== socket) return;
       setConnected(false);
       remoteCursors.clear();
       renderRemoteCursors();
@@ -729,7 +797,12 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
         }
       }, reconnectDelay);
     });
-    ws.addEventListener('error', () => { setConnected(false); });
+    socket.addEventListener('error', () => {
+      if (destroyed || ws !== socket) {
+        return;
+      }
+      setConnected(false);
+    });
   }
 
   function handlePaste(event: ClipboardEvent): void {
@@ -783,7 +856,16 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
         clearTimeout(presenceTimer);
       }
       if (resizeObserver) resizeObserver.disconnect();
-      if (ws) ws.close();
+      const socket = ws;
+      ws = null;
+      onParticipantsChange?.([]);
+      if (socket) {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.close();
+        } else if (socket.readyState === WebSocket.CONNECTING) {
+          socket.addEventListener('open', () => socket.close(), { once: true });
+        }
+      }
       overlay.remove();
       mirror.remove();
     },
