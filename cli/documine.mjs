@@ -58,6 +58,22 @@ async function request(instance, method, endpoint, body) {
   return payload;
 }
 
+function getCreatedThreadId(payload) {
+  const threadId = payload?.thread?.id;
+  if (typeof threadId === "string" && threadId) {
+    return threadId;
+  }
+
+  if (Array.isArray(payload?.threads) && payload.threads.length > 0) {
+    const lastThreadId = payload.threads[payload.threads.length - 1]?.id;
+    if (typeof lastThreadId === "string" && lastThreadId) {
+      return lastThreadId;
+    }
+  }
+
+  throw new Error("Comment succeeded but thread id was missing from the API response.");
+}
+
 function isShareInstance(instance) {
   return Boolean(instance.shareId && !instance.token);
 }
@@ -65,7 +81,7 @@ function isShareInstance(instance) {
 const args = process.argv.slice(2);
 const command = args[0];
 
-if (!command) {
+if (!command || command === "--help" || command === "-h" || command === "help") {
   printUsage();
   process.exit(0);
 }
@@ -215,7 +231,7 @@ if (isShareInstance(instance)) {
         process.exit(1);
       }
       const payload = await request(instance, "POST", `/api/share/${sid}/threads`, { anchor: { quote, prefix: "", suffix: "", start: 0, end: 0 }, body, name: agentName });
-      console.log("Comment added");
+      console.log(`Comment added (thread ${getCreatedThreadId(payload)})`);
       break;
     }
 
@@ -332,7 +348,7 @@ switch (subCommand) {
       process.exit(1);
     }
     const payload = await request(instance, "POST", `/api/notes/${noteId}/threads`, { quote, body });
-    console.log(`Comment added (thread ${payload.thread.id})`);
+    console.log(`Comment added (thread ${getCreatedThreadId(payload)})`);
     break;
   }
 

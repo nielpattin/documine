@@ -53,7 +53,7 @@ pnpm install
 pnpm dev
 ```
 
-The API runs on `http://localhost:3120`. The frontend runs on `http://localhost:5173`.
+The API runs on `http://localhost:3120`. The frontend runs on `http://localhost:5175`.
 
 The API is backend-only. It serves JSON and WebSocket endpoints, not the React app.
 
