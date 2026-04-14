@@ -183,6 +183,21 @@ input:focus, textarea:focus { border-color: var(--muted); }
 .auth-layout h1 { margin: 0 0 0.8rem; font-size: 2rem; font-weight: 700; }
 .auth-hint { margin: 0 0 1.5rem; color: var(--muted); line-height: 1.5; }
 .auth-error { margin: 0 0 1rem; color: var(--danger); }
+.auth-guard-toast {
+  position: fixed;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 120;
+  max-width: min(420px, calc(100vw - 1.5rem));
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 90%, var(--danger) 10%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+}
 .auth-form { display: grid; gap: 0.75rem; }
 .auth-form input { padding: 0.9rem 1rem; background: var(--input-bg); border-radius: 10px; }
 .auth-actions { padding-top: 0.4rem; }
@@ -720,7 +735,7 @@ input:focus, textarea:focus { border-color: var(--muted); }
   border-radius: 16px;
   background: white;
 }
-.pdf-preview-frame--document { background: #6b7280; }
+.pdf-preview-frame--document { background: #d1d5db; }
 
 .markdown-body { color: var(--text); line-height: 1.6; overflow-wrap: break-word; word-wrap: break-word; word-break: break-word; }
 .markdown-body > :first-child { margin-top: 0; }

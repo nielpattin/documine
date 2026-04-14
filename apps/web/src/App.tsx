@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type RefObject } from 'react';
 import {
+  ApiError,
   apiRequest,
   buildWsUrl,
   deleteNotePdf,
   formatDate,
   getApiHttpOrigin,
   listNotePdfExports,
-  requestRenderedPdfPreview,
+  requestRenderedHtmlPreview,
   saveNotePdf,
   type ApiKey,
   type NoteAsset,
@@ -27,7 +28,7 @@ import {
 } from './lib/api';
 import { createCollabEditor, type CollabEditorHandle, type ShareParticipant } from './lib/collab-editor';
 
-const FALLBACK_OWNER_TOKEN_KEY = 'documine_owner_token';
+const OWNER_TOKEN_KEY = 'documine_owner_token';
 
 type Route =
   | { kind: 'login' }
@@ -247,82 +248,228 @@ function setStoredEditorWrapEnabled(enabled: boolean) {
   window.localStorage.setItem('documine_editor_wrap', enabled ? 'on' : 'off');
 }
 
+type ViewerStoreSnapshot = {
+  payload: ViewerPayload | null;
+  loading: boolean;
+};
+
+type AuthGuardToastSnapshot = {
+  message: string | null;
+};
+
+const routeServerSnapshot: Route = { kind: 'list' };
+const viewerServerSnapshot: ViewerStoreSnapshot = { payload: null, loading: true };
+const authGuardToastServerSnapshot: AuthGuardToastSnapshot = { message: null };
+const routeStoreListeners = new Set<() => void>();
+const viewerStoreListeners = new Set<() => void>();
+const authGuardToastListeners = new Set<() => void>();
+let routeSnapshot: Route = typeof window !== 'undefined' ? parseRoute(window.location.pathname) : routeServerSnapshot;
+let viewerStoreSnapshot: ViewerStoreSnapshot = { payload: null, loading: true };
+let authGuardToastSnapshot: AuthGuardToastSnapshot = { message: null };
+let authGuardToastTimeoutId: number | null = null;
+let viewerStoreStarted = false;
+let viewerPollingIntervalId: number | null = null;
+let ownerSessionRestoreAttempted = false;
+let routeStoreListening = false;
+
+if (typeof window !== 'undefined') {
+  applyTheme(getStoredTheme());
+}
+
+function emitRouteChange() {
+  routeSnapshot = parseRoute(window.location.pathname);
+  for (const listener of routeStoreListeners) {
+    listener();
+  }
+}
+
+function ensureRouteStoreStarted() {
+  if (routeStoreListening || typeof window === 'undefined') {
+    return;
+  }
+  routeStoreListening = true;
+  window.addEventListener('popstate', emitRouteChange);
+}
+
+function subscribeRoute(listener: () => void) {
+  ensureRouteStoreStarted();
+  routeStoreListeners.add(listener);
+  return () => {
+    routeStoreListeners.delete(listener);
+    if (routeStoreListeners.size === 0 && routeStoreListening && typeof window !== 'undefined') {
+      window.removeEventListener('popstate', emitRouteChange);
+      routeStoreListening = false;
+    }
+  };
+}
+
+function getRouteSnapshot() {
+  return routeSnapshot;
+}
+
+function useRoute() {
+  return useSyncExternalStore(subscribeRoute, getRouteSnapshot, () => routeServerSnapshot);
+}
+
+function navigateTo(nextPath: string, replace = false) {
+  if (replace) {
+    window.history.replaceState({}, '', nextPath);
+  } else {
+    window.history.pushState({}, '', nextPath);
+  }
+  emitRouteChange();
+}
+
+function emitViewerStoreChange() {
+  for (const listener of viewerStoreListeners) {
+    listener();
+  }
+}
+
+function setAuthGuardToastMessage(message: string | null) {
+  if (authGuardToastTimeoutId != null) {
+    window.clearTimeout(authGuardToastTimeoutId);
+    authGuardToastTimeoutId = null;
+  }
+  authGuardToastSnapshot = { message };
+  for (const listener of authGuardToastListeners) {
+    listener();
+  }
+  if (!message) {
+    return;
+  }
+  authGuardToastTimeoutId = window.setTimeout(() => {
+    authGuardToastTimeoutId = null;
+    authGuardToastSnapshot = { message: null };
+    for (const listener of authGuardToastListeners) {
+      listener();
+    }
+  }, 5000);
+}
+
+function maybeShowAuthGuardToast(previousPayload: ViewerPayload | null, nextPayload: ViewerPayload) {
+  if (!previousPayload?.ownerAuthenticated || !nextPayload.ownerAuthenticated) {
+    return;
+  }
+  if (previousPayload.authGuard.loginEnabled && !nextPayload.authGuard.loginEnabled) {
+    setAuthGuardToastMessage(nextPayload.authGuard.globalLockActive
+      ? 'Owner login was locked due to suspicious activity.'
+      : 'Owner login was disabled.');
+  }
+}
+
+async function restoreOwnerSessionFromStorage() {
+  if (ownerSessionRestoreAttempted || typeof window === 'undefined') {
+    return;
+  }
+  ownerSessionRestoreAttempted = true;
+  const token = window.localStorage.getItem(OWNER_TOKEN_KEY);
+  if (!token) {
+    return;
+  }
+  try {
+    await apiRequest('/api/auth/token', { method: 'POST', body: { token } });
+  } catch {
+    window.localStorage.removeItem(OWNER_TOKEN_KEY);
+  }
+}
+
+async function refreshViewerStore(options?: { silent?: boolean }) {
+  if (!options?.silent) {
+    viewerStoreSnapshot = { ...viewerStoreSnapshot, loading: true };
+    emitViewerStoreChange();
+  }
+
+  const previousPayload = viewerStoreSnapshot.payload;
+  try {
+    const payload = await apiRequest<ViewerPayload>('/api/viewer');
+    viewerStoreSnapshot = { payload, loading: false };
+    maybeShowAuthGuardToast(previousPayload, payload);
+    emitViewerStoreChange();
+    if (payload.ownerAuthenticated && window.location.pathname === '/login') {
+      navigateTo('/', true);
+    }
+    return payload;
+  } catch (error) {
+    viewerStoreSnapshot = { ...viewerStoreSnapshot, loading: false };
+    emitViewerStoreChange();
+    throw error;
+  }
+}
+
+function ensureViewerStoreStarted() {
+  if (viewerStoreStarted || typeof window === 'undefined') {
+    return;
+  }
+  viewerStoreStarted = true;
+  void (async () => {
+    await restoreOwnerSessionFromStorage();
+    await refreshViewerStore().catch(() => undefined);
+  })();
+  viewerPollingIntervalId = window.setInterval(() => {
+    void refreshViewerStore({ silent: true }).catch(() => undefined);
+  }, 10000);
+}
+
+function subscribeViewerStore(listener: () => void) {
+  ensureViewerStoreStarted();
+  viewerStoreListeners.add(listener);
+  return () => {
+    viewerStoreListeners.delete(listener);
+    if (viewerStoreListeners.size === 0 && viewerPollingIntervalId != null) {
+      window.clearInterval(viewerPollingIntervalId);
+      viewerPollingIntervalId = null;
+      viewerStoreStarted = false;
+    }
+  };
+}
+
+function useViewerStore() {
+  return useSyncExternalStore(subscribeViewerStore, () => viewerStoreSnapshot, () => viewerServerSnapshot);
+}
+
+function subscribeAuthGuardToast(listener: () => void) {
+  authGuardToastListeners.add(listener);
+  return () => {
+    authGuardToastListeners.delete(listener);
+  };
+}
+
+function useAuthGuardToastStore() {
+  return useSyncExternalStore(subscribeAuthGuardToast, () => authGuardToastSnapshot, () => authGuardToastServerSnapshot);
+}
+
 function App() {
-  const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
-  const [viewerPayload, setViewerPayload] = useState<ViewerPayload | null>(null);
-  const [viewerLoading, setViewerLoading] = useState(true);
-  const [theme, setTheme] = useState(() => getStoredTheme());
+  const route = useRoute();
+  const { payload: viewerPayload, loading: viewerLoading } = useViewerStore();
+  const { message: authGuardToastMessage } = useAuthGuardToastStore();
+  const [, setTheme] = useState(() => getStoredTheme());
 
-  const navigate = useCallback((nextPath: string, replace = false) => {
-    if (replace) {
-      window.history.replaceState({}, '', nextPath);
-    } else {
-      window.history.pushState({}, '', nextPath);
-    }
-    setRoute(parseRoute(window.location.pathname));
+  const toggleTheme = useCallback(() => {
+    setTheme((current) => {
+      const next = current === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      return next;
+    });
   }, []);
 
-  const refreshViewer = useCallback(async () => {
-    setViewerLoading(true);
-    try {
-      const payload = await apiRequest<ViewerPayload>('/api/viewer');
-      setViewerPayload(payload);
-    } finally {
-      setViewerLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
-
-  useEffect(() => {
-    void refreshViewer();
-  }, [refreshViewer]);
-
-  useEffect(() => {
-    const handlePopState = () => setRoute(parseRoute(window.location.pathname));
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
-
-  useEffect(() => {
-    if (route.kind === 'login' || route.kind === 'share' || viewerLoading) {
-      return;
-    }
-
-    if (viewerPayload && !viewerPayload.ownerAuthenticated) {
-      navigate('/login', true);
-    }
-  }, [navigate, route.kind, viewerLoading, viewerPayload]);
-
-  const ownerTokenKey = viewerPayload?.ownerLocalStorageTokenKey || FALLBACK_OWNER_TOKEN_KEY;
+  const ownerTokenKey = viewerPayload?.ownerLocalStorageTokenKey ?? OWNER_TOKEN_KEY;
 
   const handleLogout = useCallback(async () => {
     await apiRequest('/api/auth/logout', { method: 'POST' });
     window.localStorage.removeItem(ownerTokenKey);
-    await refreshViewer();
-    navigate('/login', true);
-  }, [navigate, ownerTokenKey, refreshViewer]);
+    await refreshViewerStore();
+    navigateTo('/login', true);
+  }, [ownerTokenKey]);
 
-  const toggleTheme = useCallback(() => {
-    setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
-  }, []);
-
-  if (route.kind === 'login') {
-    return (
-      <LoginPage
-        ownerTokenKey={ownerTokenKey}
-        viewerPayload={viewerPayload}
-        viewerLoading={viewerLoading}
-        onAuthenticated={async () => {
-          await refreshViewer();
-          navigate('/', true);
-        }}
-        onToggleTheme={toggleTheme}
-      />
-    );
-  }
+  const handleAuthenticated = useCallback(async () => {
+    await refreshViewerStore();
+    if (route.kind === 'note') {
+      navigateTo(`/notes/${route.noteId}`, true);
+      return;
+    }
+    navigateTo('/', true);
+  }, [route]);
 
   if (route.kind === 'share') {
     return <SharedNotePage shareId={route.shareId} onToggleTheme={toggleTheme} />;
@@ -332,22 +479,37 @@ function App() {
     return <LoadingPage message="Loading" />;
   }
 
-  if (!viewerPayload.ownerAuthenticated) {
-    return <LoadingPage message="Redirecting" />;
-  }
-
-  if (route.kind === 'note') {
+  if (route.kind === 'login' || !viewerPayload.ownerAuthenticated) {
     return (
-      <OwnerNotePage
-        noteId={route.noteId}
-        onBack={() => navigate('/')}
-        onLogout={handleLogout}
+      <LoginPage
+        ownerTokenKey={ownerTokenKey}
+        viewerPayload={viewerPayload}
+        onAuthenticated={handleAuthenticated}
         onToggleTheme={toggleTheme}
       />
     );
   }
 
-  return <NotesListPage onOpenNote={(noteId) => navigate(`/notes/${noteId}`)} onLogout={handleLogout} onToggleTheme={toggleTheme} />;
+  if (route.kind === 'note') {
+    return (
+      <>
+        <OwnerAuthGuardToast message={authGuardToastMessage} onDismiss={() => setAuthGuardToastMessage(null)} />
+        <OwnerNotePage
+          noteId={route.noteId}
+          onBack={() => navigateTo('/')}
+          onLogout={handleLogout}
+          onToggleTheme={toggleTheme}
+        />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <OwnerAuthGuardToast message={authGuardToastMessage} onDismiss={() => setAuthGuardToastMessage(null)} />
+      <NotesListPage onOpenNote={(noteId) => navigateTo(`/notes/${noteId}`)} onLogout={handleLogout} onToggleTheme={toggleTheme} />
+    </>
+  );
 }
 
 function LoadingPage({ message }: { message: string }) {
@@ -360,16 +522,27 @@ function LoadingPage({ message }: { message: string }) {
   );
 }
 
+function OwnerAuthGuardToast({ message, onDismiss }: { message: string | null; onDismiss: () => void }) {
+  if (!message) {
+    return null;
+  }
+
+  return (
+    <div className="auth-guard-toast" role="status" aria-live="polite">
+      <span>{message}</span>
+      <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onDismiss}>Dismiss</button>
+    </div>
+  );
+}
+
 function LoginPage({
   ownerTokenKey,
   viewerPayload,
-  viewerLoading,
   onAuthenticated,
   onToggleTheme,
 }: {
   ownerTokenKey: string;
   viewerPayload: ViewerPayload | null;
-  viewerLoading: boolean;
   onAuthenticated: () => Promise<void>;
   onToggleTheme: () => void;
 }) {
@@ -379,26 +552,7 @@ function LoginPage({
   const [error, setError] = useState('');
 
   const mode = viewerPayload?.authConfigured ? 'login' : 'setup';
-
-  useEffect(() => {
-    async function restoreOwnerSession() {
-      const token = window.localStorage.getItem(ownerTokenKey);
-      if (!token) {
-        return;
-      }
-
-      try {
-        await apiRequest('/api/auth/token', { method: 'POST', body: { token } });
-        await onAuthenticated();
-      } catch {
-        window.localStorage.removeItem(ownerTokenKey);
-      }
-    }
-
-    if (!viewerLoading) {
-      void restoreOwnerSession();
-    }
-  }, [onAuthenticated, ownerTokenKey, viewerLoading]);
+  const loginDisabled = mode === 'login' && Boolean(viewerPayload && !viewerPayload.authGuard.loginEnabled);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -415,7 +569,11 @@ function LoginPage({
       await apiRequest('/api/auth/token', { method: 'POST', body: { token: payload.token } });
       await onAuthenticated();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Request failed.');
+      if (cause instanceof ApiError && (cause.status === 403 || cause.status === 423 || cause.status === 429)) {
+        setError('Owner sign-in is unavailable. Contact the owner.');
+      } else {
+        setError(cause instanceof Error ? cause.message : 'Request failed.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -433,7 +591,9 @@ function LoginPage({
             ? 'This password protects the owner workspace and API key management.'
             : 'Use the owner password for this Documine instance.'}
         </p>
-        <div className={`auth-error ${error ? '' : 'hidden'}`}>{error}</div>
+        <div className={`auth-error ${error || loginDisabled ? '' : 'hidden'}`}>
+          {error || (loginDisabled ? 'Owner sign-in is unavailable. Contact the owner.' : '')}
+        </div>
         <form className="auth-form" onSubmit={handleSubmit}>
           <input
             type="password"
@@ -454,7 +614,7 @@ function LoginPage({
             />
           ) : null}
           <div className="auth-actions">
-            <button type="submit" className="primary" disabled={submitting}>
+            <button type="submit" className="primary" disabled={submitting || loginDisabled}>
               {submitting ? 'Working...' : mode === 'setup' ? 'Save password' : 'Sign in'}
             </button>
           </div>
@@ -689,7 +849,6 @@ function OwnerNotePage({
   const [renderedPdfUrl, setRenderedPdfUrl] = useState('');
   const [renderedPdfLoading, setRenderedPdfLoading] = useState(false);
   const [renderedPdfError, setRenderedPdfError] = useState('');
-  const [renderedPdfVersion, setRenderedPdfVersion] = useState(0);
   const [renderedPdfDirty, setRenderedPdfDirty] = useState(false);
   const [renderedPdfElapsedMs, setRenderedPdfElapsedMs] = useState(0);
   const [renderedPdfLastDurationMs, setRenderedPdfLastDurationMs] = useState<number | null>(null);
@@ -783,13 +942,13 @@ function OwnerNotePage({
       return;
     }
 
-    const shouldRefresh = renderedPdfVersion > 0 || !renderedPdfUrl || renderedPdfDirty;
+    const shouldRefresh = !renderedPdfUrl || renderedPdfDirty;
     if (!shouldRefresh) {
       setRenderedPdfError('');
       return;
     }
 
-    const delayMs = renderedPdfVersion > 0 || !renderedPdfUrl ? 0 : 1200;
+    const delayMs = !renderedPdfUrl ? 0 : 150;
     const requestId = ++renderedPdfRequestIdRef.current;
     const timer = window.setTimeout(async () => {
       const startedAt = performance.now();
@@ -797,7 +956,7 @@ function OwnerNotePage({
       setRenderedPdfElapsedMs(0);
       setRenderedPdfError('');
       try {
-        const blob = await requestRenderedPdfPreview(noteId, markdown);
+        const blob = await requestRenderedHtmlPreview(noteId, markdown);
         if (renderedPdfRequestIdRef.current !== requestId) {
           return;
         }
@@ -812,7 +971,7 @@ function OwnerNotePage({
         setRenderedPdfLastDurationMs(Math.round(performance.now() - startedAt));
       } catch (cause) {
         if (renderedPdfRequestIdRef.current === requestId) {
-          setRenderedPdfError(cause instanceof Error ? cause.message : 'Failed to render PDF preview.');
+          setRenderedPdfError(cause instanceof Error ? cause.message : 'Failed to render preview.');
           setRenderedPdfLastDurationMs(Math.round(performance.now() - startedAt));
         }
       } finally {
@@ -823,7 +982,7 @@ function OwnerNotePage({
     }, delayMs);
 
     return () => window.clearTimeout(timer);
-  }, [markdown, noteId, previewMode, renderedPdfVersion, renderedPdfDirty, renderedPdfUrl]);
+  }, [markdown, noteId, previewMode, renderedPdfDirty, renderedPdfUrl]);
 
   useEffect(() => {
     if (!renderedPdfLoading) {
@@ -1103,13 +1262,13 @@ function OwnerNotePage({
                 Markdown
               </button>
               <button type="button" className={`documine-btn documine-btn--sm ${previewMode === 'rendered-pdf' ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => setPreviewMode('rendered-pdf')}>
-                Rendered PDF
+                Print preview
               </button>
             </div>
             {previewMode === 'rendered-pdf' ? (
               <span className="pdf-preview-note pdf-preview-note--inline">
                 {renderedPdfLoading
-                  ? `Refreshing PDF preview... ${formatDurationMs(renderedPdfElapsedMs)}`
+                  ? `Refreshing preview... ${formatDurationMs(renderedPdfElapsedMs)}`
                   : renderedPdfDirty
                     ? 'Waiting for typing to pause before refreshing.'
                     : renderedPdfLastDurationMs !== null
@@ -1122,7 +1281,7 @@ function OwnerNotePage({
             </button>
           </div>
           {previewMode === 'rendered-pdf' ? (
-            <RenderedPdfPreview url={renderedPdfUrl} loading={renderedPdfLoading} error={renderedPdfError} dirty={renderedPdfDirty} />
+            <RenderedPreview url={renderedPdfUrl} loading={renderedPdfLoading} error={renderedPdfError} dirty={renderedPdfDirty} />
           ) : (
             <AnchoredCommentCanvas
               renderedHtml={renderedHtml}
@@ -1150,7 +1309,7 @@ function OwnerNotePage({
       ) : null}
       {showExportModal ? <PdfExportModal noteId={noteId} onClose={() => {
         setShowExportModal(false);
-        setRenderedPdfVersion((value) => value + 1);
+        setRenderedPdfDirty(true);
       }} /> : null}
       {showAssetsModal ? (
         <ImageAssetsModal
@@ -1692,19 +1851,19 @@ function handleCommentTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>,
   }
 }
 
-function RenderedPdfPreview({ url, loading, error, dirty }: { url: string; loading: boolean; error: string; dirty: boolean }) {
+function RenderedPreview({ url, loading, error, dirty }: { url: string; loading: boolean; error: string; dirty: boolean }) {
   return (
     <div className="preview-scroll preview-scroll--pdf">
       <div className="pdf-preview-shell">
         {error ? <div className="inline-error">{error}</div> : null}
         {url ? (
           <iframe
-            title="Rendered PDF preview"
+            title="Rendered print preview"
             className="pdf-preview-frame pdf-preview-frame--document"
             src={url}
           />
         ) : !loading && !dirty ? (
-          <p className="pdf-preview-status">No rendered PDF preview available yet.</p>
+          <p className="pdf-preview-status">No rendered preview available yet.</p>
         ) : null}
       </div>
     </div>
@@ -2074,7 +2233,7 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
           </section>
 
           <div className="pdf-export-footer">
-            Engine: WeasyPrint · Defaults saved to instance data
+            Engine: Browser PDF · Defaults saved to instance data
           </div>
         </div>
       </div>

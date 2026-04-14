@@ -74,6 +74,20 @@ function getCreatedThreadId(payload) {
   throw new Error("Comment succeeded but thread id was missing from the API response.");
 }
 
+function printAuthGuardStatus(payload) {
+  const guard = payload.authGuard;
+  console.log(`loginEnabled\t${guard.loginEnabled ? "yes" : "no"}`);
+  console.log(`globalLock\t${guard.globalLockActive ? "active" : "inactive"}`);
+  if (guard.globalLockAt) {
+    console.log(`globalLockAt\t${guard.globalLockAt}`);
+  }
+  if (guard.globalLockReason) {
+    console.log(`globalLockReason\t${guard.globalLockReason}`);
+  }
+  console.log(`recentLoginRequests\t${guard.recentLoginRequestCount}`);
+  console.log(`activeIpBans\t${guard.bannedIpCount}`);
+}
+
 function isShareInstance(instance) {
   return Boolean(instance.shareId && !instance.token);
 }
@@ -172,7 +186,7 @@ const subCommand = args[1];
 
 if (!subCommand) {
   console.error(`Usage: documine <instance> <command> [args...]`);
-  console.error(`Commands: list, search, read, create, edit, delete, update`);
+  console.error(`Commands: list, search, read, create, edit, delete, update, auth-status, login-enable, login-disable, login-bans, login-unban`);
   process.exit(1);
 }
 
@@ -256,6 +270,47 @@ if (isShareInstance(instance)) {
 } else {
 
 switch (subCommand) {
+  case "auth-status": {
+    const payload = await request(instance, "GET", "/api/auth/guard");
+    printAuthGuardStatus(payload);
+    break;
+  }
+
+  case "login-enable": {
+    const payload = await request(instance, "PUT", "/api/auth/guard/login", { enabled: true });
+    printAuthGuardStatus(payload);
+    break;
+  }
+
+  case "login-disable": {
+    const payload = await request(instance, "PUT", "/api/auth/guard/login", { enabled: false });
+    printAuthGuardStatus(payload);
+    break;
+  }
+
+  case "login-bans": {
+    const payload = await request(instance, "GET", "/api/auth/guard");
+    if (!payload.bans || payload.bans.length === 0) {
+      console.log("No active IP bans.");
+      break;
+    }
+    for (const ban of payload.bans) {
+      console.log(`${ban.ip}\t${ban.bannedAt}\t${ban.expiresAt}\t${ban.reason}`);
+    }
+    break;
+  }
+
+  case "login-unban": {
+    const ip = args[2];
+    if (!ip) {
+      console.error("Usage: documine <instance> login-unban <ip>");
+      process.exit(1);
+    }
+    const payload = await request(instance, "DELETE", `/api/auth/guard/bans/${encodeURIComponent(ip)}`);
+    printAuthGuardStatus(payload);
+    break;
+  }
+
   case "list": {
     const payload = await request(instance, "GET", "/api/notes");
     for (const note of payload.notes) {
@@ -534,6 +589,11 @@ Instance management:
   documine instances                           List registered instances
 
 Owner commands:
+  documine <instance> auth-status              Show owner login guard status
+  documine <instance> login-enable             Re-enable owner password login
+  documine <instance> login-disable            Disable owner password login
+  documine <instance> login-bans               List active temporary IP bans
+  documine <instance> login-unban <ip>         Remove an IP from the temporary ban list
   documine <instance> list                     List all notes
   documine <instance> search <query>           Search notes
   documine <instance> read <id>                Read a note with comments

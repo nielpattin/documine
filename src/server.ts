@@ -17,7 +17,7 @@ import {
   detectPdfExportCapabilities,
   exportMarkdownToPdf,
   loadPdfExportSettings,
-  renderMarkdownToPdfPreview,
+  renderMarkdownToExportHtml,
   savePdfExportSettings,
   warmPdfPreviewEngine,
 } from './pdf-export.js';
@@ -147,6 +147,56 @@ type AuthData = {
   apiKeys?: ApiKey[];
 };
 
+type AuthGuardLoginRequest = {
+  ip: string;
+  timestamp: string;
+};
+
+type AuthGuardFailedLogin = {
+  ip: string;
+  timestamp: string;
+};
+
+type AuthGuardIpBan = {
+  ip: string;
+  bannedAt: string;
+  expiresAt: string;
+  reason: string;
+};
+
+type AuthGuardEvent = {
+  type: 'login-requested' | 'login-failed' | 'login-succeeded' | 'login-blocked' | 'ip-banned' | 'ip-unbanned' | 'login-enabled' | 'login-disabled' | 'login-locked';
+  ip: string;
+  timestamp: string;
+  detail: string;
+};
+
+type AuthGuardData = {
+  loginEnabled: boolean;
+  globalLock: {
+    active: boolean;
+    lockedAt: string | null;
+    expiresAt: string | null;
+    reason: string | null;
+  };
+  bannedIps: AuthGuardIpBan[];
+};
+
+type AuthGuardRuntime = {
+  loginRequests: AuthGuardLoginRequest[];
+  failedLogins: AuthGuardFailedLogin[];
+};
+
+type AuthGuardSummary = {
+  loginEnabled: boolean;
+  globalLockActive: boolean;
+  globalLockAt: string | null;
+  globalLockExpiresAt: string | null;
+  globalLockReason: string | null;
+  recentLoginRequestCount: number;
+  bannedIpCount: number;
+};
+
 type ViewerInfo = {
   isOwner: boolean;
   commenterName: string | null;
@@ -194,6 +244,8 @@ const notesDir = path.join(dataDir, 'notes');
 const noteAssetsDir = path.join(dataDir, 'assets');
 const noteExportsDir = path.join(dataDir, 'exports');
 const authFilePath = path.join(dataDir, 'auth.json');
+const authGuardFilePath = path.join(dataDir, 'auth-guard.json');
+const authGuardLogFilePath = path.join(dataDir, 'auth-guard.jsonl');
 const exportSettingsFilePath = path.join(dataDir, 'export-settings.json');
 const activePdfPreviewControllers = new Map<string, AbortController>();
 const ownerSessionCookieName = 'documine_owner_session';
@@ -202,6 +254,11 @@ const commenterIdCookieName = 'documine_commenter_id';
 const commenterNameCookieName = 'documine_commenter_name';
 const ownerCookieMaxAgeSeconds = 60 * 60 * 24 * 30;
 const commenterCookieMaxAgeSeconds = 60 * 60 * 24 * 365;
+const authIpBanDurationMs = 1000 * 60 * 15;
+const authFailedAttemptWindowMs = 1000 * 60 * 15;
+const authFailedAttemptBanThreshold = 3;
+const authGlobalLoginWindowMs = 1000 * 60 * 5;
+const authGlobalLoginThreshold = 10;
 const shareAccessLevels: Record<ShareAccess, number> = { none: 0, view: 1, comment: 2, edit: 3 };
 const maxImageUploadBytes = 10 * 1024 * 1024;
 const imageMimeExtensions: Record<string, string> = {
@@ -239,6 +296,7 @@ marked.setOptions({
 
 ensureDirectories();
 loadNotesIntoMemory();
+const authGuardRuntime = loadAuthGuardRuntime();
 
 const app = new Hono();
 
@@ -291,11 +349,17 @@ app.get('/assets/:noteId/:fileName', (c) => {
 });
 
 app.get('/api/viewer', (c) => {
+  const authGuard = loadAuthGuardData();
+  if (pruneAuthGuardData(authGuard)) {
+    saveAuthGuardData(authGuard);
+  }
+
   return c.json({
     ok: true,
     authConfigured: authConfigured(),
     ownerAuthenticated: isOwnerAuthenticated(c),
     ownerLocalStorageTokenKey,
+    authGuard: buildAuthGuardSummary(authGuard),
     viewer: buildViewerInfo(c),
   });
 });
@@ -326,11 +390,123 @@ app.post('/api/auth/login', async (c) => {
     return c.json({ ok: false, error: 'Password is not configured yet.' }, 400);
   }
 
+  const authGuard = loadAuthGuardData();
+  if (pruneAuthGuardData(authGuard)) {
+    saveAuthGuardData(authGuard);
+  }
+  const ip = getClientIp(c);
+
+  if (!authGuard.loginEnabled) {
+    appendAuthGuardEvent({
+      type: 'login-blocked',
+      ip,
+      timestamp: nowIso(),
+      detail: authGuard.globalLock.active
+        ? 'Owner login is locked due to suspicious activity.'
+        : 'Owner login is disabled.',
+    });
+    saveAuthGuardData(authGuard);
+    return c.json({
+      ok: false,
+      error: authGuard.globalLock.active
+        ? authGuard.globalLock.expiresAt
+          ? `Owner login is temporarily locked until ${authGuard.globalLock.expiresAt}.`
+          : 'Owner login is locked due to suspicious activity. Use the CLI or auth-guard.json to re-enable it.'
+        : 'Owner login is currently disabled.',
+    }, authGuard.globalLock.active ? 423 : 403);
+  }
+
+  const timestamp = nowIso();
+  recordAuthGuardLoginRequest(ip, timestamp);
+  if (authGuardRuntime.loginRequests.length > authGlobalLoginThreshold) {
+    authGuard.loginEnabled = false;
+    authGuard.globalLock = {
+      active: true,
+      lockedAt: timestamp,
+      expiresAt: null,
+      reason: `More than ${authGlobalLoginThreshold} login requests in ${Math.round(authGlobalLoginWindowMs / 60000)} minutes.`,
+    };
+    appendAuthGuardEvent({
+      type: 'login-locked',
+      ip,
+      timestamp,
+      detail: authGuard.globalLock.reason || 'Owner login locked due to suspicious activity.',
+    });
+    console.warn(`[auth-guard] login-locked ip=${ip} timestamp=${timestamp} reason=${authGuard.globalLock.reason}`);
+    saveAuthGuardData(authGuard);
+    return c.json({ ok: false, error: 'Owner login has been locked due to suspicious activity. The current owner can re-enable it from the CLI or auth-guard.json.' }, 423);
+  }
+
+  const activeBan = getActiveIpBan(authGuard, ip);
+  if (activeBan) {
+    appendAuthGuardEvent({
+      type: 'login-blocked',
+      ip,
+      timestamp,
+      detail: `Blocked by temporary IP ban until ${activeBan.expiresAt}.`,
+    });
+    saveAuthGuardData(authGuard);
+    return c.json({ ok: false, error: `Too many failed login attempts from this IP. Login is disabled until ${activeBan.expiresAt}.` }, 429);
+  }
+
   const body = await readJsonBody(c);
   const password = String(body.password || '');
   if (!passwordMatches(password)) {
-    return c.json({ ok: false, error: 'Wrong password.' }, 401);
+    recordAuthGuardFailedLogin(ip, timestamp);
+    const failedAttemptsForIp = authGuardRuntime.failedLogins.filter((attempt) => attempt.ip === ip).length;
+
+    if (failedAttemptsForIp >= authFailedAttemptBanThreshold) {
+      const expiresAt = new Date(Date.now() + authIpBanDurationMs).toISOString();
+      const existingBan = authGuard.bannedIps.find((item) => item.ip === ip);
+      if (existingBan) {
+        existingBan.bannedAt = timestamp;
+        existingBan.expiresAt = expiresAt;
+        existingBan.reason = `${authFailedAttemptBanThreshold} failed owner login attempts.`;
+      } else {
+        authGuard.bannedIps.push({
+          ip,
+          bannedAt: timestamp,
+          expiresAt,
+          reason: `${authFailedAttemptBanThreshold} failed owner login attempts.`,
+        });
+      }
+      authGuard.loginEnabled = false;
+      authGuard.globalLock = {
+        active: true,
+        lockedAt: timestamp,
+        expiresAt,
+        reason: `${authFailedAttemptBanThreshold} failed owner login attempts triggered a temporary login lock.`,
+      };
+      appendAuthGuardEvent({
+        type: 'ip-banned',
+        ip,
+        timestamp,
+        detail: `Temporary ban active until ${expiresAt}.`,
+      });
+      appendAuthGuardEvent({
+        type: 'login-locked',
+        ip,
+        timestamp,
+        detail: `Owner login temporarily locked until ${expiresAt} after ${authFailedAttemptBanThreshold} failed password attempts.`,
+      });
+      console.warn(`[auth-guard] ip-banned ip=${ip} timestamp=${timestamp} expiresAt=${expiresAt}`);
+      console.warn(`[auth-guard] login-locked ip=${ip} timestamp=${timestamp} expiresAt=${expiresAt} reason=${authGuard.globalLock.reason}`);
+      saveAuthGuardData(authGuard);
+      return c.json({ ok: false, error: `Owner login is temporarily locked until ${expiresAt}.` }, 423);
+    }
+
+    saveAuthGuardData(authGuard);
+    return c.json({ ok: false, error: 'Invalid credentials.' }, 401);
   }
+
+  clearAuthGuardFailedLoginsForIp(ip);
+  appendAuthGuardEvent({
+    type: 'login-succeeded',
+    ip,
+    timestamp,
+    detail: 'Owner login succeeded.',
+  });
+  saveAuthGuardData(authGuard);
 
   const token = issueOwnerToken();
   return c.json({ ok: true, token, ownerLocalStorageTokenKey });
@@ -355,6 +531,72 @@ app.post('/api/auth/logout', (c) => {
   }
   clearOwnerSessionCookie(c);
   return c.json({ ok: true });
+});
+
+app.get('/api/auth/guard', (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const authGuard = loadAuthGuardData();
+  if (pruneAuthGuardData(authGuard)) {
+    saveAuthGuardData(authGuard);
+  }
+  return c.json({ ok: true, authGuard: buildAuthGuardSummary(authGuard), bans: authGuard.bannedIps });
+});
+
+app.put('/api/auth/guard/login', async (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const body = await readJsonBody(c);
+  const enabled = body.enabled === true;
+  const authGuard = loadAuthGuardData();
+  pruneAuthGuardData(authGuard);
+  authGuard.loginEnabled = enabled;
+  authGuard.globalLock = {
+    active: false,
+    lockedAt: null,
+    expiresAt: null,
+    reason: null,
+  };
+  const timestamp = nowIso();
+  appendAuthGuardEvent({
+    type: enabled ? 'login-enabled' : 'login-disabled',
+    ip: getClientIp(c),
+    timestamp,
+    detail: enabled ? 'Owner login manually enabled.' : 'Owner login manually disabled.',
+  });
+  console.warn(`[auth-guard] ${enabled ? 'login-enabled' : 'login-disabled'} ip=${getClientIp(c)} timestamp=${timestamp}`);
+  saveAuthGuardData(authGuard);
+  return c.json({ ok: true, authGuard: buildAuthGuardSummary(authGuard), bans: authGuard.bannedIps });
+});
+
+app.delete('/api/auth/guard/bans/:ip', (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const authGuard = loadAuthGuardData();
+  pruneAuthGuardData(authGuard);
+  const ip = decodeURIComponent(c.req.param('ip'));
+  const before = authGuard.bannedIps.length;
+  authGuard.bannedIps = authGuard.bannedIps.filter((item) => item.ip !== ip);
+  clearAuthGuardFailedLoginsForIp(ip);
+  if (authGuard.bannedIps.length === before) {
+    return c.json({ ok: false, error: 'IP ban not found.' }, 404);
+  }
+  const timestamp = nowIso();
+  appendAuthGuardEvent({
+    type: 'ip-unbanned',
+    ip,
+    timestamp,
+    detail: 'Temporary IP ban removed by owner.',
+  });
+  console.warn(`[auth-guard] ip-unbanned ip=${ip} timestamp=${timestamp}`);
+  saveAuthGuardData(authGuard);
+  return c.json({ ok: true, authGuard: buildAuthGuardSummary(authGuard), bans: authGuard.bannedIps });
 });
 
 app.get('/api/keys', (c) => {
@@ -579,7 +821,7 @@ app.delete('/api/notes/:id/exports/:fileName', (c) => {
   return c.json({ ok: true, exports: collectNoteExports(note) });
 });
 
-app.post('/api/notes/:id/export/pdf-preview', async (c) => {
+app.post('/api/notes/:id/export/html-preview', async (c) => {
   if (!isOwnerAuthenticated(c)) {
     return c.json({ ok: false, error: 'Unauthorized.' }, 401);
   }
@@ -596,39 +838,36 @@ app.post('/api/notes/:id/export/pdf-preview', async (c) => {
   const controller = new AbortController();
   activePdfPreviewControllers.set(previewKey, controller);
   const requestStartedAt = performance.now();
-  const stageTimings: Partial<Record<'pandoc' | 'engine' | 'total', number>> = {};
 
   try {
-    const result = await renderMarkdownToPdfPreview({
+    const result = await renderMarkdownToExportHtml({
       noteId: note.id,
       noteTitle: note.title,
       markdown: typeof body.markdown === 'string' ? body.markdown : note.markdown,
       settings: body.settings === undefined ? savedSettings : body.settings,
       assetDirectory: noteAssetDirectory(note.id),
       signal: controller.signal,
-      onStageTiming: (stage, durationMs) => {
-        stageTimings[stage] = durationMs;
-      },
     });
     if (activePdfPreviewControllers.get(previewKey) === controller) {
       activePdfPreviewControllers.delete(previewKey);
     }
-    console.log(`[pdf-preview] note=${note.id} total=${Math.round(performance.now() - requestStartedAt)}ms pandoc=${Math.round(stageTimings.pandoc || 0)}ms engine=${Math.round(stageTimings.engine || 0)}ms`);
-    return c.body(new Uint8Array(result.pdf), 200, {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `inline; filename="${result.fileName}"`,
+    const baseHref = `${new URL(c.req.url).origin}/`;
+    const html = injectPreviewBaseHref(result.html, baseHref);
+    console.log(`[html-preview] note=${note.id} total=${Math.round(performance.now() - requestStartedAt)}ms`);
+    return c.body(html, 200, {
+      'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
     });
   } catch (error) {
     if (activePdfPreviewControllers.get(previewKey) === controller) {
       activePdfPreviewControllers.delete(previewKey);
     }
-    const message = error instanceof Error ? error.message : 'PDF preview failed.';
+    const message = error instanceof Error ? error.message : 'Preview failed.';
     if (controller.signal.aborted) {
-      console.log(`[pdf-preview] note=${note.id} cancelled after ${Math.round(performance.now() - requestStartedAt)}ms`);
-      return c.json({ ok: false, error: 'PDF preview superseded by a newer request.' }, 409);
+      console.log(`[html-preview] note=${note.id} cancelled after ${Math.round(performance.now() - requestStartedAt)}ms`);
+      return c.json({ ok: false, error: 'Preview superseded by a newer request.' }, 409);
     }
-    console.log(`[pdf-preview] note=${note.id} failed after ${Math.round(performance.now() - requestStartedAt)}ms pandoc=${Math.round(stageTimings.pandoc || 0)}ms engine=${Math.round(stageTimings.engine || 0)}ms error=${message}`);
+    console.log(`[html-preview] note=${note.id} failed after ${Math.round(performance.now() - requestStartedAt)}ms error=${message}`);
     return c.json({ ok: false, error: message }, 500);
   }
 });
@@ -1556,10 +1795,10 @@ server.listen(port, () => {
   console.log(`data: ${path.resolve(dataDir)}`);
   void warmPdfPreviewEngine()
     .then(() => {
-      console.log('[pdf-preview] warm worker ready');
+      console.log('[pdf-preview] browser engine ready');
     })
     .catch((error) => {
-      console.warn(`[pdf-preview] warm worker failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`[pdf-preview] browser engine failed: ${error instanceof Error ? error.message : String(error)}`);
     });
 });
 
@@ -2384,6 +2623,172 @@ function makeShareUrl(c: Context, shareId: string) {
   return `${url.protocol}//${url.host}/s/${shareId}`;
 }
 
+function buildPreviewPaginationScript(): string {
+  return `<script>
+(() => {
+  const root = document.documentElement;
+
+  const readPx = (name, fallback) => {
+    const raw = getComputedStyle(root).getPropertyValue(name).trim();
+    const parsed = Number.parseFloat(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  const debounce = (fn, delay) => {
+    let timer = 0;
+    return () => {
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+      timer = window.setTimeout(() => {
+        timer = 0;
+        fn();
+      }, delay);
+    };
+  };
+
+  const createPage = () => {
+    const page = document.createElement('section');
+    page.className = 'documine-preview-page';
+    page.innerHTML = '<div class="documine-preview-page-content"></div>';
+    return page;
+  };
+
+  const createMeasureBox = (pageWidth, margins) => {
+    const box = document.createElement('div');
+    box.className = 'documine-preview-measure';
+    box.style.width = pageWidth + 'px';
+    box.style.padding = margins.top + 'px ' + margins.right + 'px ' + margins.bottom + 'px ' + margins.left + 'px';
+    box.style.boxSizing = 'border-box';
+    box.style.position = 'absolute';
+    box.style.left = '-10000px';
+    box.style.top = '0';
+    box.style.visibility = 'hidden';
+    box.style.pointerEvents = 'none';
+    box.style.overflow = 'visible';
+    return box;
+  };
+
+  const state = {
+    source: null,
+    pages: null,
+    measure: null,
+  };
+
+  const paginate = () => {
+    if (!state.source || !state.pages || !state.measure) {
+      return;
+    }
+
+    const pageHeight = readPx('--documine-page-height', 1123);
+    const margins = {
+      top: readPx('--documine-page-margin-top', 96),
+      right: readPx('--documine-page-margin-right', 96),
+      bottom: readPx('--documine-page-margin-bottom', 96),
+      left: readPx('--documine-page-margin-left', 96),
+    };
+    const pageWidth = readPx('--documine-page-width', 794);
+    const availableHeight = Math.max(1, pageHeight);
+
+    state.pages.innerHTML = '';
+    state.measure.innerHTML = '';
+    state.measure.style.width = pageWidth + 'px';
+    state.measure.style.padding = margins.top + 'px ' + margins.right + 'px ' + margins.bottom + 'px ' + margins.left + 'px';
+
+    let currentPage = createPage();
+    let content = currentPage.querySelector('.documine-preview-page-content');
+    state.pages.appendChild(currentPage);
+
+    for (const originalNode of Array.from(state.source.children)) {
+      const node = originalNode.cloneNode(true);
+      state.measure.appendChild(node.cloneNode(true));
+
+      if (state.measure.scrollHeight > availableHeight && state.measure.children.length > 1) {
+        state.measure.removeChild(state.measure.lastElementChild);
+        currentPage = createPage();
+        content = currentPage.querySelector('.documine-preview-page-content');
+        state.pages.appendChild(currentPage);
+        state.measure.innerHTML = '';
+        state.measure.appendChild(node.cloneNode(true));
+      }
+
+      content.appendChild(node);
+
+      if (state.measure.scrollHeight > availableHeight && state.measure.children.length === 1) {
+        currentPage.classList.add('documine-preview-page--overflow');
+      }
+    }
+  };
+
+  const initialize = () => {
+    const body = document.body;
+    if (!body) {
+      return;
+    }
+
+    if (!state.source || !state.pages) {
+      const source = document.createElement('div');
+      source.id = 'documine-preview-source';
+      source.className = 'documine-preview-source';
+      for (const child of Array.from(body.children)) {
+        source.appendChild(child.cloneNode(true));
+      }
+
+      body.innerHTML = '';
+      body.appendChild(source);
+
+      const pages = document.createElement('div');
+      pages.id = 'documine-preview-pages';
+      pages.className = 'documine-preview-pages';
+      body.appendChild(pages);
+
+      state.source = source;
+      state.pages = pages;
+      state.measure = createMeasureBox(
+        readPx('--documine-page-width', 794),
+        {
+          top: readPx('--documine-page-margin-top', 96),
+          right: readPx('--documine-page-margin-right', 96),
+          bottom: readPx('--documine-page-margin-bottom', 96),
+          left: readPx('--documine-page-margin-left', 96),
+        },
+      );
+      body.appendChild(state.measure);
+    }
+
+    paginate();
+  };
+
+  const rerender = debounce(initialize, 50);
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    queueMicrotask(initialize);
+  } else {
+    window.addEventListener('load', initialize, { once: true });
+  }
+  window.addEventListener('resize', rerender);
+  document.addEventListener('load', (event) => {
+    if (event.target instanceof HTMLImageElement) {
+      rerender();
+    }
+  }, true);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(rerender).catch(() => {});
+  }
+})();
+</script>`;
+}
+
+function injectPreviewBaseHref(html: string, baseHref: string) {
+  const baseTag = `<base href="${escapeHtml(baseHref)}">`;
+  const previewScript = buildPreviewPaginationScript();
+
+  if (/<head\b[^>]*>/i.test(html)) {
+    return html.replace(/<head\b[^>]*>/i, (headTag) => `${headTag}\n    ${baseTag}\n    ${previewScript}`);
+  }
+
+  return html;
+}
+
 function isAllowedBrowserOrigin(origin: string) {
   try {
     const url = new URL(origin);
@@ -2440,6 +2845,187 @@ function saveAuthData(authData: AuthData) {
   writeJson(authFilePath, authData);
 }
 
+function defaultAuthGuardData(): AuthGuardData {
+  return {
+    loginEnabled: true,
+    globalLock: {
+      active: false,
+      lockedAt: null,
+      expiresAt: null,
+      reason: null,
+    },
+    bannedIps: [],
+  };
+}
+
+function defaultAuthGuardRuntime(): AuthGuardRuntime {
+  return {
+    loginRequests: [],
+    failedLogins: [],
+  };
+}
+
+function loadAuthGuardData(): AuthGuardData {
+  const raw = readJson<Record<string, unknown> | null>(authGuardFilePath, null);
+  const fallback = defaultAuthGuardData();
+  const authGuard: AuthGuardData = {
+    loginEnabled: typeof raw?.loginEnabled === 'boolean' ? raw.loginEnabled : fallback.loginEnabled,
+    globalLock: {
+      active: typeof raw?.globalLock === 'object' && raw?.globalLock !== null && typeof (raw.globalLock as { active?: unknown }).active === 'boolean'
+        ? Boolean((raw.globalLock as { active: boolean }).active)
+        : fallback.globalLock.active,
+      lockedAt: typeof raw?.globalLock === 'object' && raw?.globalLock !== null && typeof (raw.globalLock as { lockedAt?: unknown }).lockedAt === 'string'
+        ? String((raw.globalLock as { lockedAt: string }).lockedAt)
+        : fallback.globalLock.lockedAt,
+      expiresAt: typeof raw?.globalLock === 'object' && raw?.globalLock !== null && typeof (raw.globalLock as { expiresAt?: unknown }).expiresAt === 'string'
+        ? String((raw.globalLock as { expiresAt: string }).expiresAt)
+        : fallback.globalLock.expiresAt,
+      reason: typeof raw?.globalLock === 'object' && raw?.globalLock !== null && typeof (raw.globalLock as { reason?: unknown }).reason === 'string'
+        ? String((raw.globalLock as { reason: string }).reason)
+        : fallback.globalLock.reason,
+    },
+    bannedIps: Array.isArray(raw?.bannedIps) ? raw.bannedIps.filter((item): item is AuthGuardIpBan => Boolean(item && typeof item === 'object' && typeof (item as AuthGuardIpBan).ip === 'string' && typeof (item as AuthGuardIpBan).bannedAt === 'string' && typeof (item as AuthGuardIpBan).expiresAt === 'string' && typeof (item as AuthGuardIpBan).reason === 'string')) : [],
+  };
+  if (!fs.existsSync(authGuardFilePath)) {
+    saveAuthGuardData(authGuard);
+  }
+  return authGuard;
+}
+
+function loadAuthGuardRuntime(): AuthGuardRuntime {
+  const runtime = defaultAuthGuardRuntime();
+  const loginRequestCutoff = Date.now() - authGlobalLoginWindowMs;
+  const failedLoginCutoff = Date.now() - authFailedAttemptWindowMs;
+
+  if (!fs.existsSync(authGuardLogFilePath)) {
+    pruneAuthGuardRuntimeEntries(runtime);
+    return runtime;
+  }
+
+  const content = fs.readFileSync(authGuardLogFilePath, 'utf8');
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    try {
+      const event = JSON.parse(trimmed) as Partial<AuthGuardEvent>;
+      if (typeof event.ip !== 'string' || typeof event.timestamp !== 'string' || typeof event.type !== 'string') {
+        continue;
+      }
+      const timestamp = Date.parse(event.timestamp);
+      if (Number.isNaN(timestamp)) {
+        continue;
+      }
+      if (event.type === 'login-requested' && timestamp >= loginRequestCutoff) {
+        runtime.loginRequests.push({ ip: event.ip, timestamp: event.timestamp });
+      }
+      if (event.type === 'login-failed' && timestamp >= failedLoginCutoff) {
+        runtime.failedLogins.push({ ip: event.ip, timestamp: event.timestamp });
+      }
+    } catch {
+      continue;
+    }
+  }
+  pruneAuthGuardRuntimeEntries(runtime);
+  return runtime;
+}
+
+function saveAuthGuardData(authGuard: AuthGuardData) {
+  writeJson(authGuardFilePath, authGuard);
+}
+
+function pruneAuthGuardData(authGuard: AuthGuardData, now = Date.now()) {
+  const bannedIpCount = authGuard.bannedIps.length;
+  const previousLoginEnabled = authGuard.loginEnabled;
+  const previousGlobalLock = JSON.stringify(authGuard.globalLock);
+
+  authGuard.bannedIps = authGuard.bannedIps.filter((item) => {
+    const expiresAt = Date.parse(item.expiresAt);
+    return !Number.isNaN(expiresAt) && expiresAt > now;
+  });
+
+  const globalLockExpiresAt = authGuard.globalLock.expiresAt ? Date.parse(authGuard.globalLock.expiresAt) : Number.NaN;
+  if (authGuard.globalLock.active && !Number.isNaN(globalLockExpiresAt) && globalLockExpiresAt <= now) {
+    authGuard.loginEnabled = true;
+    authGuard.globalLock = {
+      active: false,
+      lockedAt: null,
+      expiresAt: null,
+      reason: null,
+    };
+  }
+
+  return authGuard.bannedIps.length !== bannedIpCount
+    || authGuard.loginEnabled !== previousLoginEnabled
+    || JSON.stringify(authGuard.globalLock) !== previousGlobalLock;
+}
+
+function pruneAuthGuardRuntimeEntries(runtime: AuthGuardRuntime, now = Date.now()) {
+  const loginRequestCutoff = now - authGlobalLoginWindowMs;
+  const failedLoginCutoff = now - authFailedAttemptWindowMs;
+  runtime.loginRequests = runtime.loginRequests.filter((item) => {
+    const timestamp = Date.parse(item.timestamp);
+    return !Number.isNaN(timestamp) && timestamp >= loginRequestCutoff;
+  });
+  runtime.failedLogins = runtime.failedLogins.filter((item) => {
+    const timestamp = Date.parse(item.timestamp);
+    return !Number.isNaN(timestamp) && timestamp >= failedLoginCutoff;
+  });
+}
+
+function pruneAuthGuardRuntime(now = Date.now()) {
+  pruneAuthGuardRuntimeEntries(authGuardRuntime, now);
+}
+
+function appendAuthGuardEvent(event: AuthGuardEvent) {
+  fs.appendFileSync(authGuardLogFilePath, `${JSON.stringify(event)}\n`, 'utf8');
+}
+
+function recordAuthGuardLoginRequest(ip: string, timestamp: string) {
+  pruneAuthGuardRuntime();
+  authGuardRuntime.loginRequests.push({ ip, timestamp });
+  appendAuthGuardEvent({
+    type: 'login-requested',
+    ip,
+    timestamp,
+    detail: 'Owner login request received.',
+  });
+}
+
+function recordAuthGuardFailedLogin(ip: string, timestamp: string) {
+  pruneAuthGuardRuntime();
+  authGuardRuntime.failedLogins.push({ ip, timestamp });
+  appendAuthGuardEvent({
+    type: 'login-failed',
+    ip,
+    timestamp,
+    detail: 'Invalid owner password.',
+  });
+}
+
+function clearAuthGuardFailedLoginsForIp(ip: string) {
+  authGuardRuntime.failedLogins = authGuardRuntime.failedLogins.filter((item) => item.ip !== ip);
+}
+
+function getActiveIpBan(authGuard: AuthGuardData, ip: string) {
+  const now = Date.now();
+  return authGuard.bannedIps.find((item) => item.ip === ip && Date.parse(item.expiresAt) > now) || null;
+}
+
+function buildAuthGuardSummary(authGuard: AuthGuardData): AuthGuardSummary {
+  pruneAuthGuardRuntime();
+  return {
+    loginEnabled: authGuard.loginEnabled,
+    globalLockActive: authGuard.globalLock.active,
+    globalLockAt: authGuard.globalLock.lockedAt,
+    globalLockExpiresAt: authGuard.globalLock.expiresAt,
+    globalLockReason: authGuard.globalLock.reason,
+    recentLoginRequestCount: authGuardRuntime.loginRequests.length,
+    bannedIpCount: authGuard.bannedIps.length,
+  };
+}
+
 function authConfigured() {
   const auth = loadAuthData();
   return Boolean(auth?.passwordSalt && auth?.passwordHash);
@@ -2461,6 +3047,7 @@ function initializeOwnerAuth(password: string) {
     tokens: [],
   };
   saveAuthData(auth);
+  saveAuthGuardData(defaultAuthGuardData());
   return issueOwnerToken();
 }
 
@@ -2544,6 +3131,29 @@ function headerValue(value: string | string[] | undefined) {
 
 function getOwnerSessionTokenFromHeaders(headers: http.IncomingHttpHeaders) {
   return parseCookies(headerValue(headers.cookie))[ownerSessionCookieName] || null;
+}
+
+function forwardedForToIp(value: string | null) {
+  if (!value) {
+    return null;
+  }
+  return value.split(',')[0]?.trim() || null;
+}
+
+function forwardedHeaderToIp(value: string | null) {
+  if (!value) {
+    return null;
+  }
+  const match = value.match(/for=(?:"?)(\[[^\]]+\]|[^;,"]+)/i);
+  return match?.[1]?.replace(/^\[/, '').replace(/\]$/, '').trim() || null;
+}
+
+function getClientIp(c: Context) {
+  return forwardedForToIp(c.req.header('cf-connecting-ip') || null)
+    || forwardedForToIp(c.req.header('x-real-ip') || null)
+    || forwardedForToIp(c.req.header('x-forwarded-for') || null)
+    || forwardedHeaderToIp(c.req.header('forwarded') || null)
+    || 'unknown';
 }
 
 function getBearerTokenFromHeaders(headers: http.IncomingHttpHeaders) {

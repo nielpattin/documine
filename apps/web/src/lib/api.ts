@@ -6,11 +6,21 @@ export type ViewerInfo = {
   hasCommenterIdentity: boolean;
 };
 
+export type AuthGuardSummary = {
+  loginEnabled: boolean;
+  globalLockActive: boolean;
+  globalLockAt: string | null;
+  globalLockReason: string | null;
+  recentLoginRequestCount: number;
+  bannedIpCount: number;
+};
+
 export type ViewerPayload = {
   ok: true;
   authConfigured: boolean;
   ownerAuthenticated: boolean;
   ownerLocalStorageTokenKey: string;
+  authGuard: AuthGuardSummary;
   viewer: ViewerInfo;
 };
 
@@ -110,7 +120,7 @@ export type NoteAsset = {
 export type PdfExportStylePreset = 'report' | 'academic' | 'clean' | 'compact';
 export type PdfExportPageSize = 'A4' | 'Letter' | 'Legal';
 export type PdfExportOrientation = 'portrait' | 'landscape';
-export type PdfExportEngine = 'weasyprint';
+export type PdfExportEngine = 'browser';
 export type PdfExportFontFamily = 'Times New Roman' | 'Georgia' | 'Arial' | 'Inter' | 'system-ui';
 export type PdfExportHeaderMode = 'none' | 'title' | 'date' | 'title-date';
 export type PdfExportCodeWrapMode = 'wrap' | 'scroll';
@@ -142,7 +152,7 @@ export type PdfExportSettings = {
 
 export type PdfExportCapabilities = {
   pandoc: boolean;
-  weasyprint: boolean;
+  browser: boolean;
   availableEngines: PdfExportEngine[];
   styles: PdfExportStylePreset[];
   pageSizes: PdfExportPageSize[];
@@ -322,8 +332,8 @@ export async function deleteNotePdf(noteId: string, fileName: string): Promise<D
   return parseApiResponse<DeleteNotePdfPayload>(response);
 }
 
-export async function requestRenderedPdfPreview(noteId: string, markdown: string, settings?: PdfExportSettings): Promise<Blob> {
-  const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/export/pdf-preview`), {
+export async function requestRenderedHtmlPreview(noteId: string, markdown: string, settings?: PdfExportSettings): Promise<Blob> {
+  const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/export/html-preview`), {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
