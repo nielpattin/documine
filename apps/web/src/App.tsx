@@ -36,6 +36,13 @@ type Route =
   | { kind: 'note'; noteId: string }
   | { kind: 'share'; shareId: string };
 
+type EditorHistoryState = {
+  canUndo: boolean;
+  canRedo: boolean;
+  undoLabel: string | null;
+  redoLabel: string | null;
+};
+
 type CollabTextareaProps = {
   noteId?: string;
   shareId?: string;
@@ -46,6 +53,7 @@ type CollabTextareaProps = {
   onConnectionChange: (connected: boolean) => void;
   onThreadsUpdated?: () => void;
   onParticipantsChange?: (participants: ShareParticipant[]) => void;
+  onHistoryChange?: (history: EditorHistoryState) => void;
   onScrollMetricsChange?: (metrics: ScrollMetrics) => void;
   onUploadImage?: (file: File) => Promise<{ ok: true; asset: { url: string; markdown: string } }>;
   onEditorMount?: (handle: CollabEditorHandle | null) => void;
@@ -73,6 +81,32 @@ type ScrollMetrics = {
 
 function hasScrolledToNewViewport(previous: ScrollMetrics | null, next: ScrollMetrics) {
   return !previous || previous.scrollTop !== next.scrollTop;
+}
+
+function summarizeHistoryStatus(history: EditorHistoryState): string {
+  if (!history.canUndo && !history.canRedo) {
+    return 'No local edits yet';
+  }
+
+  const parts: string[] = [];
+  if (history.canUndo) {
+    parts.push(`Undo: ${history.undoLabel || 'change'}`);
+  }
+  if (history.canRedo) {
+    parts.push(`Redo: ${history.redoLabel || 'change'}`);
+  }
+  return parts.join(' · ');
+}
+
+function renderHistoryBadge(history: EditorHistoryState) {
+  const summary = summarizeHistoryStatus(history);
+  const isIdle = !history.canUndo && !history.canRedo;
+  return (
+    <span className={`history-pill ${isIdle ? 'history-pill--idle' : 'history-pill--active'}`} aria-live="polite" title={summary}>
+      <span className="history-pill__dot" aria-hidden="true" />
+      <span className="history-pill__label">{summary}</span>
+    </span>
+  );
 }
 
 type PreviewScrollAnchor = ThreadAnchor & {
@@ -1219,6 +1253,7 @@ function OwnerNotePage({
   const [showResolved, setShowResolved] = useState(false);
   const [pendingThreadAnchor, setPendingThreadAnchor] = useState<ThreadAnchor | null>(null);
   const editorHandleRef = useRef<CollabEditorHandle | null>(null);
+  const [editorHistory, setEditorHistory] = useState<EditorHistoryState>({ canUndo: false, canRedo: false, undoLabel: null, redoLabel: null });
   const lastEditorScrollMetricsRef = useRef<ScrollMetrics | null>(null);
 
   const handleEditorScrollMetricsChange = useCallback((metrics: ScrollMetrics) => {
@@ -1539,6 +1574,7 @@ function OwnerNotePage({
             placeholder="Untitled"
           />
           <span className="status-text">{metaSaving ? 'Saving...' : saveStatus}</span>
+          {renderHistoryBadge(editorHistory)}
         </div>
         <div className="topbar-right">
           <div className="share-popover-wrap">
@@ -1581,6 +1617,14 @@ function OwnerNotePage({
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowResolved((current) => !current)} disabled={!showComments}>
             {showResolved ? 'Hide resolved' : 'Show resolved'}
           </button>
+          <div className="documine-segmented-control" role="group" aria-label="Edit history">
+            <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => editorHandleRef.current?.undo()} disabled={!editorHistory.canUndo} title="Undo (Ctrl+Z)">
+              Undo
+            </button>
+            <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => editorHandleRef.current?.redo()} disabled={!editorHistory.canRedo} title="Redo (Ctrl+Y or Ctrl+Shift+Z)">
+              Redo
+            </button>
+          </div>
           <div className="documine-segmented-control" role="group" aria-label="Editor line wrapping">
             <button type="button" className={`documine-btn documine-btn--md ${editorWrapEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => {
               setEditorWrapEnabled(true);
@@ -1660,6 +1704,7 @@ function OwnerNotePage({
             onConnectionChange={setConnected}
             onThreadsUpdated={() => void loadNote({ background: true })}
             onParticipantsChange={setShareParticipants}
+            onHistoryChange={setEditorHistory}
           />
         </div>
 
@@ -1765,6 +1810,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
   const [showIdentityModal, setShowIdentityModal] = useState(false);
   const [pendingThreadAnchor, setPendingThreadAnchor] = useState<ThreadAnchor | null>(null);
   const editorHandleRef = useRef<CollabEditorHandle | null>(null);
+  const [editorHistory, setEditorHistory] = useState<EditorHistoryState>({ canUndo: false, canRedo: false, undoLabel: null, redoLabel: null });
   const lastEditorScrollMetricsRef = useRef<ScrollMetrics | null>(null);
   const {
     scrollWithMarkdownEnabled,
@@ -1954,6 +2000,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
         <div className="topbar-left">
           <div className="topbar-title">{payload.note.title}</div>
           <span className="status-text">Updated {formatDate(payload.note.updatedAt)}</span>
+          {isEditable ? renderHistoryBadge(editorHistory) : null}
         </div>
         <div className="topbar-right">
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowComments((current) => !current)}>
@@ -1962,6 +2009,16 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowResolved((current) => !current)} disabled={!showComments}>
             {showResolved ? 'Hide resolved' : 'Show resolved'}
           </button>
+          {isEditable ? (
+            <div className="documine-segmented-control" role="group" aria-label="Edit history">
+              <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => editorHandleRef.current?.undo()} disabled={!editorHistory.canUndo} title="Undo (Ctrl+Z)">
+                Undo
+              </button>
+              <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => editorHandleRef.current?.redo()} disabled={!editorHistory.canRedo} title="Redo (Ctrl+Y or Ctrl+Shift+Z)">
+                Redo
+              </button>
+            </div>
+          ) : null}
           <div className="documine-segmented-control" role="group" aria-label="Editor line wrapping">
             <button type="button" className={`documine-btn documine-btn--md ${editorWrapEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => {
               setEditorWrapEnabled(true);
@@ -2021,6 +2078,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
               }}
               onConnectionChange={setConnected}
               onThreadsUpdated={() => void loadSharedNote({ background: true })}
+              onHistoryChange={setEditorHistory}
             />
           </div>
 
@@ -2101,6 +2159,7 @@ function CollabTextarea({
   onConnectionChange,
   onThreadsUpdated,
   onParticipantsChange,
+  onHistoryChange,
   onScrollMetricsChange,
   onUploadImage,
   onEditorMount,
@@ -2109,12 +2168,12 @@ function CollabTextarea({
   const horizontalScrollRef = useRef<HTMLDivElement | null>(null);
   const horizontalScrollSpacerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<CollabEditorHandle | null>(null);
-  const callbacksRef = useRef({ onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onScrollMetricsChange, onUploadImage });
+  const callbacksRef = useRef({ onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onHistoryChange, onScrollMetricsChange, onUploadImage });
   const onEditorMountRef = useRef(onEditorMount);
 
   useEffect(() => {
-    callbacksRef.current = { onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onScrollMetricsChange, onUploadImage };
-  }, [onConnectionChange, onParticipantsChange, onReady, onScrollMetricsChange, onTextChange, onThreadsUpdated, onUploadImage]);
+    callbacksRef.current = { onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onHistoryChange, onScrollMetricsChange, onUploadImage };
+  }, [onConnectionChange, onHistoryChange, onParticipantsChange, onReady, onScrollMetricsChange, onTextChange, onThreadsUpdated, onUploadImage]);
 
   useEffect(() => {
     onEditorMountRef.current = onEditorMount;
@@ -2154,6 +2213,7 @@ function CollabTextarea({
       onConnectionChange: (connected: boolean) => callbacksRef.current.onConnectionChange(connected),
       onThreadsUpdated: () => callbacksRef.current.onThreadsUpdated?.(),
       onParticipantsChange: (participants: ShareParticipant[]) => callbacksRef.current.onParticipantsChange?.(participants),
+      onHistoryChange: (history: EditorHistoryState) => callbacksRef.current.onHistoryChange?.(history),
       onUploadImage: callbacksRef.current.onUploadImage
         ? (file: File) => callbacksRef.current.onUploadImage!(file)
         : undefined,

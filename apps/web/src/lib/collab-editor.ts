@@ -34,6 +34,7 @@ type CreateCollabEditorOptions = {
   onConnectionChange?: (connected: boolean) => void;
   onThreadsUpdated?: () => void;
   onParticipantsChange?: (participants: ShareParticipant[]) => void;
+  onHistoryChange?: (history: { canUndo: boolean; canRedo: boolean; undoLabel: string | null; redoLabel: string | null }) => void;
   onUploadImage?: (file: File) => Promise<UploadImageResult>;
 };
 
@@ -42,6 +43,10 @@ export type CollabEditorHandle = {
   getText: () => string;
   getScrollAnchor: () => { quote: string; prefix: string; suffix: string; start: number; end: number; heading: { text: string; level: number } | null } | null;
   insertText: (text: string) => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: () => boolean;
+  canRedo: () => boolean;
 };
 
 type PresenceCursor = {
@@ -145,6 +150,19 @@ type PendingUpload = {
   placeholder: string;
 };
 
+type HistorySegment = {
+  before: ElementId | null;
+  after: ElementId | null;
+  indexHint: number;
+  content: string;
+  activeIds: ElementId[];
+};
+
+type HistoryTransaction = {
+  segments: HistorySegment[];
+  label: string;
+};
+
 function escapeMarkdownAlt(text: string): string {
   return String(text || 'image').replace(/[\[\]\\]/g, '').trim() || 'image';
 }
@@ -203,6 +221,37 @@ function lineBackward(text: string, cursor: number): number {
   let i = cursor - 1;
   while (i > 0 && text[i - 1] !== '\n') i--;
   return Math.max(0, i);
+}
+
+function historyLabelForInput(inputType: string, hasSelection: boolean, insertedText: string, deletedLength: number): string {
+  if (inputType === 'insertText' || inputType === 'insertReplacementText') {
+    return hasSelection ? 'Replace text' : 'Insert text';
+  }
+  if (inputType === 'insertFromPaste' || inputType === 'insertFromDrop') {
+    return hasSelection ? 'Paste and replace' : 'Paste text';
+  }
+  if (inputType === 'insertLineBreak' || inputType === 'insertParagraph') {
+    return 'Insert line break';
+  }
+  if (inputType === 'deleteWordBackward' || inputType === 'deleteWordForward') {
+    return hasSelection ? 'Delete selection' : 'Delete word';
+  }
+  if (inputType === 'deleteSoftLineBackward' || inputType === 'deleteHardLineBackward') {
+    return hasSelection ? 'Delete selection' : 'Delete line';
+  }
+  if (inputType === 'deleteContentBackward' || inputType === 'deleteContentForward') {
+    return hasSelection ? 'Delete selection' : 'Delete character';
+  }
+  if (deletedLength > 0 && insertedText.length > 0) {
+    return 'Edit text';
+  }
+  if (insertedText.length > 0) {
+    return 'Insert text';
+  }
+  if (deletedLength > 0) {
+    return 'Delete text';
+  }
+  return 'Edit text';
 }
 
 function buildDeleteMutation(state: EditorState, start: number, endExcl: number, counter: number): ClientMutation | null {
@@ -440,7 +489,7 @@ function isServerMessage(value: unknown): value is ServerMessage {
 }
 
 export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCollabEditorOptions): CollabEditorHandle {
-  const { noteId, shareId, onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onUploadImage } = opts;
+  const { noteId, shareId, onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onHistoryChange, onUploadImage } = opts;
   let nextBunchIdCounter = 0;
 
   let ws: WebSocket | null = null;
@@ -455,6 +504,8 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   let serverState: EditorState = { text: '', idList: new SimpleIdList() };
   let currentState: EditorState = { text: '', idList: new SimpleIdList() };
   let pendingMutations: ClientMutation[] = [];
+  let undoStack: HistoryTransaction[] = [];
+  let redoStack: HistoryTransaction[] = [];
 
   const remoteCursors = new Map<string, PresenceCursor>();
 
@@ -604,8 +655,125 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     }
   }
 
-  function applyLocalMutations(mutations: ClientMutation[], sel: TextSelection): void {
-    if (!mutations.length) return;
+  function emitHistoryChange(): void {
+    onHistoryChange?.({
+      canUndo: undoStack.length > 0,
+      canRedo: redoStack.length > 0,
+      undoLabel: undoStack.at(-1)?.label ?? null,
+      redoLabel: redoStack.at(-1)?.label ?? null,
+    });
+  }
+
+  function buildIdRange(startId: ElementId, count: number): ElementId[] {
+    const ids: ElementId[] = [];
+    for (let offset = 0; offset < count; offset++) {
+      ids.push({ bunchId: startId.bunchId, counter: startId.counter + offset });
+    }
+    return ids;
+  }
+
+  function resolveInsertPoint(state: EditorState, segment: HistorySegment): { before: ElementId | null; index: number } {
+    if (segment.before !== null && state.idList.isKnown(segment.before)) {
+      return {
+        before: segment.before,
+        index: state.idList.cursorIndex(segment.before, 'left'),
+      };
+    }
+
+    if (segment.after !== null && state.idList.isKnown(segment.after)) {
+      const index = state.idList.cursorIndex(segment.after, 'left');
+      return {
+        before: index === 0 ? null : state.idList.at(index - 1),
+        index,
+      };
+    }
+
+    const index = Math.max(0, Math.min(segment.indexHint, state.idList.length));
+    return {
+      before: index === 0 ? null : state.idList.at(index - 1),
+      index,
+    };
+  }
+
+  function buildDeleteHistorySegment(state: EditorState, start: number, endExcl: number): HistorySegment | null {
+    if (start < 0 || endExcl <= start || endExcl > state.text.length) {
+      return null;
+    }
+
+    return {
+      before: start === 0 ? null : state.idList.at(start - 1),
+      after: endExcl < state.idList.length ? state.idList.at(endExcl) : null,
+      indexHint: start,
+      content: state.text.slice(start, endExcl),
+      activeIds: [],
+    };
+  }
+
+  function buildInsertHistorySegment(state: EditorState, index: number, content: string, mutation: ClientMutation): HistorySegment | null {
+    if (!content || mutation.name !== 'insert') {
+      return null;
+    }
+
+    return {
+      before: index === 0 ? null : state.idList.at(index - 1),
+      after: index < state.idList.length ? state.idList.at(index) : null,
+      indexHint: index,
+      content,
+      activeIds: buildIdRange(mutation.args.id, content.length),
+    };
+  }
+
+  function buildDeleteMutationFromIds(state: EditorState, ids: ElementId[], counter: number): ClientMutation | null {
+    if (!ids.length) {
+      return null;
+    }
+
+    try {
+      const startIndex = state.idList.indexOf(ids[0], 'right');
+      const endIndex = state.idList.indexOf(ids[ids.length - 1], 'left');
+      return buildDeleteMutation(state, startIndex, endIndex + 1, counter);
+    } catch {
+      return null;
+    }
+  }
+
+  function planSegmentToggle(state: EditorState, segment: HistorySegment, counter: number): { mutation: ClientMutation; selection: TextSelection; nextActiveIds: ElementId[]; nextState: EditorState } | null {
+    if (segment.activeIds.length > 0) {
+      const mutation = buildDeleteMutationFromIds(state, segment.activeIds, counter);
+      if (!mutation) {
+        return null;
+      }
+
+      const startIndex = state.idList.indexOf(segment.activeIds[0], 'right');
+      const nextState = applyClientMutation(state, mutation);
+      return {
+        mutation,
+        selection: { start: startIndex, end: startIndex, direction: 'none' },
+        nextActiveIds: [],
+        nextState,
+      };
+    }
+
+    const { index } = resolveInsertPoint(state, segment);
+    const mutation = buildInsertMutation(state, index, segment.content, counter, newId);
+    if (!mutation || mutation.name !== 'insert') {
+      return null;
+    }
+
+    const nextState = applyClientMutation(state, mutation);
+    return {
+      mutation,
+      selection: { start: index + segment.content.length, end: index + segment.content.length, direction: 'none' },
+      nextActiveIds: buildIdRange(mutation.args.id, segment.content.length),
+      nextState,
+    };
+  }
+
+  function applyMutationBatch(mutations: ClientMutation[], sel: TextSelection): void {
+    if (!mutations.length) {
+      return;
+    }
+
     for (const mutation of mutations) {
       currentState = applyClientMutation(currentState, mutation);
       pendingMutations.push(mutation);
@@ -615,6 +783,80 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       sendJson({ type: 'mutation', clientId, mutations });
     }
     throttledPresence();
+  }
+
+  function commitLocalMutations(mutations: ClientMutation[], sel: TextSelection, segments: HistorySegment[], label: string): void {
+    if (!mutations.length) {
+      return;
+    }
+
+    applyMutationBatch(mutations, sel);
+    if (segments.length > 0) {
+      undoStack.push({ segments, label });
+      redoStack = [];
+      emitHistoryChange();
+    }
+  }
+
+  function applyHistoryTransaction(entry: HistoryTransaction, direction: 'undo' | 'redo'): boolean {
+    const segments = direction === 'undo' ? [...entry.segments].reverse() : [...entry.segments];
+    const plannedMutations: ClientMutation[] = [];
+    const segmentUpdates: Array<{ segment: HistorySegment; activeIds: ElementId[] }> = [];
+    let workingState: EditorState = { text: currentState.text, idList: currentState.idList.clone() };
+    let selection: TextSelection = { start: textarea.selectionStart, end: textarea.selectionEnd, direction: textarea.selectionDirection || 'none' };
+    let counter = nextClientCounter;
+
+    for (const segment of segments) {
+      const plan = planSegmentToggle(workingState, segment, counter);
+      if (!plan) {
+        return false;
+      }
+
+      counter += 1;
+      plannedMutations.push(plan.mutation);
+      segmentUpdates.push({ segment, activeIds: plan.nextActiveIds });
+      workingState = plan.nextState;
+      selection = plan.selection;
+    }
+
+    nextClientCounter = counter;
+    applyMutationBatch(plannedMutations, selection);
+    for (const update of segmentUpdates) {
+      update.segment.activeIds = update.activeIds;
+    }
+    return true;
+  }
+
+  function undoHistory(): boolean {
+    const entry = undoStack.at(-1);
+    if (!entry) {
+      return false;
+    }
+
+    if (!applyHistoryTransaction(entry, 'undo')) {
+      return false;
+    }
+
+    undoStack.pop();
+    redoStack.push(entry);
+    emitHistoryChange();
+    return true;
+  }
+
+  function redoHistory(): boolean {
+    const entry = redoStack.at(-1);
+    if (!entry) {
+      return false;
+    }
+
+    if (!applyHistoryTransaction(entry, 'redo')) {
+      return false;
+    }
+
+    redoStack.pop();
+    undoStack.push(entry);
+    emitHistoryChange();
+    return true;
   }
 
   function replaceRangeWithText(start: number, end: number, nextContent: string): void {
@@ -741,16 +983,33 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     if (event.isComposing || event.inputType.includes('Composition')) return;
 
     const inputType = event.inputType;
+    if (inputType === 'historyUndo') {
+      event.preventDefault();
+      undoHistory();
+      return;
+    }
+    if (inputType === 'historyRedo') {
+      event.preventDefault();
+      redoHistory();
+      return;
+    }
+
     const selectionStart = textarea.selectionStart;
     const selectionEnd = textarea.selectionEnd;
     const hasSelection = selectionStart !== selectionEnd;
+    const inputContent = readInsertText(event);
+    const historyLabel = historyLabelForInput(inputType, hasSelection, inputContent, Math.max(0, selectionEnd - selectionStart));
     const mutations: ClientMutation[] = [];
+    const historySegments: HistorySegment[] = [];
     let workingState: EditorState = { text: currentState.text, idList: currentState.idList.clone() };
 
     function pushDel(start: number, end: number): boolean {
       const mutation = buildDeleteMutation(workingState, start, end, nextClientCounter++);
       if (!mutation) return false;
+      const segment = buildDeleteHistorySegment(workingState, start, end);
+      if (!segment) return false;
       mutations.push(mutation);
+      historySegments.push(segment);
       workingState = applyClientMutation(workingState, mutation);
       return true;
     }
@@ -758,32 +1017,35 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     function pushIns(index: number, content: string): boolean {
       const mutation = buildInsertMutation(workingState, index, content, nextClientCounter++, newId);
       if (!mutation) return false;
+      const segment = buildInsertHistorySegment(workingState, index, content, mutation);
+      if (!segment) return false;
       mutations.push(mutation);
+      historySegments.push(segment);
       workingState = applyClientMutation(workingState, mutation);
       return true;
     }
 
     let sel: TextSelection = { start: selectionStart, end: selectionEnd, direction: 'none' };
 
-    if (hasSelection && inputType !== 'historyUndo' && inputType !== 'historyRedo') {
+    if (hasSelection) {
       pushDel(selectionStart, selectionEnd);
       sel = { start: selectionStart, end: selectionStart, direction: 'none' };
     }
 
     if (inputType === 'insertText' || inputType === 'insertReplacementText' || inputType === 'insertFromPaste' || inputType === 'insertFromDrop') {
-      const content = readInsertText(event);
+      const content = inputContent;
       if (!content) return;
       event.preventDefault();
       pushIns(sel.start, content);
       sel = { start: sel.start + content.length, end: sel.start + content.length, direction: 'none' };
-      applyLocalMutations(mutations, sel);
+      commitLocalMutations(mutations, sel, historySegments, historyLabel);
       return;
     }
     if (inputType === 'insertLineBreak' || inputType === 'insertParagraph') {
       event.preventDefault();
       pushIns(sel.start, '\n');
       sel = { start: sel.start + 1, end: sel.start + 1, direction: 'none' };
-      applyLocalMutations(mutations, sel);
+      commitLocalMutations(mutations, sel, historySegments, historyLabel);
       return;
     }
     if (inputType === 'deleteContentBackward') {
@@ -792,7 +1054,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
         pushDel(selectionStart - 1, selectionStart);
         sel = { start: selectionStart - 1, end: selectionStart - 1, direction: 'none' };
       }
-      applyLocalMutations(mutations, sel);
+      commitLocalMutations(mutations, sel, historySegments, historyLabel);
       return;
     }
     if (inputType === 'deleteContentForward') {
@@ -801,7 +1063,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
         pushDel(selectionStart, selectionStart + 1);
         sel = { start: selectionStart, end: selectionStart, direction: 'none' };
       }
-      applyLocalMutations(mutations, sel);
+      commitLocalMutations(mutations, sel, historySegments, historyLabel);
       return;
     }
     if (inputType === 'deleteWordBackward') {
@@ -811,7 +1073,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
         pushDel(start, selectionStart);
         sel = { start, end: start, direction: 'none' };
       }
-      applyLocalMutations(mutations, sel);
+      commitLocalMutations(mutations, sel, historySegments, historyLabel);
       return;
     }
     if (inputType === 'deleteWordForward') {
@@ -821,7 +1083,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
         pushDel(selectionStart, end);
         sel = { start: selectionStart, end: selectionStart, direction: 'none' };
       }
-      applyLocalMutations(mutations, sel);
+      commitLocalMutations(mutations, sel, historySegments, historyLabel);
       return;
     }
     if (inputType === 'deleteSoftLineBackward' || inputType === 'deleteHardLineBackward') {
@@ -831,7 +1093,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
         pushDel(start, selectionStart);
         sel = { start, end: start, direction: 'none' };
       }
-      applyLocalMutations(mutations, sel);
+      commitLocalMutations(mutations, sel, historySegments, historyLabel);
     }
   }
 
@@ -856,11 +1118,16 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     }
 
     const mutations: ClientMutation[] = [];
+    const historySegments: HistorySegment[] = [];
     let workingState: EditorState = { text: currentState.text, idList: currentState.idList.clone() };
     const deleteMutation = buildDeleteMutation(workingState, prefix, prevSuffix, nextClientCounter);
     if (deleteMutation) {
       nextClientCounter++;
       mutations.push(deleteMutation);
+      const segment = buildDeleteHistorySegment(workingState, prefix, prevSuffix);
+      if (segment) {
+        historySegments.push(segment);
+      }
       workingState = applyClientMutation(workingState, deleteMutation);
     }
 
@@ -870,6 +1137,11 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       if (insertMutation) {
         nextClientCounter++;
         mutations.push(insertMutation);
+        const segment = buildInsertHistorySegment(workingState, prefix, insertText, insertMutation);
+        if (segment) {
+          historySegments.push(segment);
+        }
+        workingState = applyClientMutation(workingState, insertMutation);
       }
     }
 
@@ -879,7 +1151,8 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     }
 
     const cursor = prefix + insertText.length;
-    applyLocalMutations(mutations, { start: cursor, end: cursor, direction: 'none' });
+    const historyLabel = deleteMutation && insertText ? 'Edit text' : insertText ? 'Insert text' : deleteMutation ? 'Delete text' : 'Edit text';
+    commitLocalMutations(mutations, { start: cursor, end: cursor, direction: 'none' }, historySegments, historyLabel);
   }
 
   function connect(): void {
@@ -956,8 +1229,26 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     if (document.activeElement === textarea) throttledPresence();
   };
 
+  const handleKeyDown = (event: KeyboardEvent): void => {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey) {
+      return;
+    }
+
+    const key = event.key.toLowerCase();
+    if (key === 'z' && !event.shiftKey) {
+      event.preventDefault();
+      undoHistory();
+      return;
+    }
+    if ((key === 'z' && event.shiftKey) || key === 'y') {
+      event.preventDefault();
+      redoHistory();
+    }
+  };
+
   textarea.addEventListener('beforeinput', handleBeforeInput);
   textarea.addEventListener('input', handleInput);
+  textarea.addEventListener('keydown', handleKeyDown);
   textarea.addEventListener('paste', handlePaste);
   textarea.addEventListener('dragover', handleDragOver);
   textarea.addEventListener('drop', handleDrop);
@@ -967,6 +1258,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   textarea.addEventListener('blur', throttledPresence);
   textarea.addEventListener('scroll', renderRemoteCursors);
 
+  emitHistoryChange();
   connect();
 
   return {
@@ -974,6 +1266,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       destroyed = true;
       textarea.removeEventListener('beforeinput', handleBeforeInput);
       textarea.removeEventListener('input', handleInput);
+      textarea.removeEventListener('keydown', handleKeyDown);
       textarea.removeEventListener('paste', handlePaste);
       textarea.removeEventListener('dragover', handleDragOver);
       textarea.removeEventListener('drop', handleDrop);
@@ -988,6 +1281,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       if (resizeObserver) resizeObserver.disconnect();
       const socket = ws;
       ws = null;
+      onHistoryChange?.({ canUndo: false, canRedo: false, undoLabel: null, redoLabel: null });
       onParticipantsChange?.([]);
       if (socket) {
         if (socket.readyState === WebSocket.OPEN) {
@@ -1010,6 +1304,18 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       const end = textarea.selectionEnd;
       replaceRangeWithText(start, end, text);
       textarea.focus();
+    },
+    undo() {
+      undoHistory();
+    },
+    redo() {
+      redoHistory();
+    },
+    canUndo() {
+      return undoStack.length > 0;
+    },
+    canRedo() {
+      return redoStack.length > 0;
     },
   };
 }
