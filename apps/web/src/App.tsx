@@ -412,6 +412,16 @@ function usePreviewScrollSyncController(previewMode: PreviewMode) {
 
     const nextContext = context ?? currentScrollContextRef.current;
     previewProgrammaticScrollRef.current = true;
+
+    if (nextContext?.metrics.scrollTop === 0) {
+      manualMarkdownScrollTopRef.current = 0;
+      preview.scrollTop = 0;
+      requestAnimationFrame(() => {
+        previewProgrammaticScrollRef.current = false;
+      });
+      return;
+    }
+
     if (scrollWithMarkdownEnabledRef.current && !markdownPreviewLockedRef.current && nextContext?.anchor) {
       const root = preview.querySelector<HTMLElement>('.markdown-body');
       if (root && scrollAnchorIntoView(root, nextContext.anchor)) {
@@ -466,6 +476,17 @@ function usePreviewScrollSyncController(previewMode: PreviewMode) {
     const nextContext = context ?? currentScrollContextRef.current;
     const pdfRoot = contentDocument.body || contentDocument.documentElement;
     previewProgrammaticScrollRef.current = true;
+
+    if (nextContext?.metrics.scrollTop === 0) {
+      manualPdfScrollTopRef.current = 0;
+      scroller.scrollTop = 0;
+      contentWindow.scrollTo(0, 0);
+      requestAnimationFrame(() => {
+        previewProgrammaticScrollRef.current = false;
+      });
+      return;
+    }
+
     if (scrollWithMarkdownEnabledRef.current && !pdfPreviewLockedRef.current && nextContext?.anchor && pdfRoot) {
       if (scrollAnchorIntoView(pdfRoot, nextContext.anchor)) {
         manualPdfScrollTopRef.current = scroller.scrollTop;
