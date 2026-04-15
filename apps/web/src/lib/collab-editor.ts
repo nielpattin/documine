@@ -40,6 +40,7 @@ type CreateCollabEditorOptions = {
 export type CollabEditorHandle = {
   destroy: () => void;
   getText: () => string;
+  getScrollAnchor: () => { quote: string; prefix: string; suffix: string; start: number; end: number; heading: { text: string; level: number } | null } | null;
   insertText: (text: string) => void;
 };
 
@@ -53,6 +54,21 @@ type PresenceCursor = {
 type CaretPosition = {
   top: number;
   left: number;
+};
+
+type ScrollAnchor = {
+  quote: string;
+  prefix: string;
+  suffix: string;
+  start: number;
+  end: number;
+  heading: { text: string; level: number } | null;
+};
+
+type HeadingAnchor = {
+  start: number;
+  level: number;
+  text: string;
 };
 
 type BoxPosition = {
@@ -299,6 +315,120 @@ function measureCaretPositions(textarea: HTMLTextAreaElement, mirror: HTMLDivEle
     positions.set(idx, { top: span.offsetTop - textarea.scrollTop, left: span.offsetLeft - textarea.scrollLeft });
   }
   return { positions, box };
+}
+
+function trimLeftToBoundary(text: string, start: number, lowerBound: number) {
+  let index = start;
+  while (index > lowerBound && isWordChar(text[index - 1] || '')) {
+    index--;
+  }
+  return index;
+}
+
+function trimRightToBoundary(text: string, end: number, upperBound: number) {
+  let index = end;
+  while (index < upperBound && isWordChar(text[index] || '')) {
+    index++;
+  }
+  return index;
+}
+
+function buildHeadingAnchors(text: string): HeadingAnchor[] {
+  if (!text) {
+    return [];
+  }
+
+  const headings: HeadingAnchor[] = [];
+  const lines = text.split('\n');
+  let offset = 0;
+  let inFence = false;
+
+  for (const line of lines) {
+    const fenceMatch = line.trimStart().match(/^(```+|~~~+)/);
+    if (fenceMatch) {
+      inFence = !inFence;
+    } else if (!inFence) {
+      const match = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
+      if (match) {
+        const headingText = match[2].replace(/\s+#+$/, '').trim();
+        if (headingText) {
+          headings.push({
+            start: offset,
+            level: match[1].length,
+            text: headingText,
+          });
+        }
+      }
+    }
+    offset += line.length + 1;
+  }
+
+  return headings;
+}
+
+function buildScrollAnchor(text: string, index: number, headings: HeadingAnchor[]): ScrollAnchor | null {
+  if (!text) {
+    return null;
+  }
+  const safeIndex = Math.max(0, Math.min(index, text.length - 1));
+  const windowStart = Math.max(0, safeIndex - 48);
+  const windowEnd = Math.min(text.length, safeIndex + 120);
+  const start = trimLeftToBoundary(text, windowStart, Math.max(0, safeIndex - 120));
+  const end = trimRightToBoundary(text, windowEnd, Math.min(text.length, safeIndex + 240));
+  const quote = text.slice(start, end).trim();
+  if (!quote) {
+    return null;
+  }
+
+  let heading: HeadingAnchor | null = null;
+  let low = 0;
+  let high = headings.length - 1;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    if (headings[mid].start <= safeIndex) {
+      heading = headings[mid];
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return {
+    quote,
+    prefix: text.slice(Math.max(0, start - 40), start),
+    suffix: text.slice(end, Math.min(text.length, end + 40)),
+    start,
+    end,
+    heading: heading ? { text: heading.text, level: heading.level } : null,
+  };
+}
+
+function getVisibleScrollAnchor(textarea: HTMLTextAreaElement, mirror: HTMLDivElement, relativeTo: HTMLElement): ScrollAnchor | null {
+  const text = textarea.value;
+  if (!text) {
+    return null;
+  }
+
+  const measureIndexTop = (index: number) => {
+    const { positions } = measureCaretPositions(textarea, mirror, relativeTo, [index]);
+    return positions.get(index)?.top ?? 0;
+  };
+
+  let low = 0;
+  let high = text.length - 1;
+  let candidate = 0;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const top = measureIndexTop(mid);
+    if (top < 0) {
+      low = mid + 1;
+    } else {
+      candidate = mid;
+      high = mid - 1;
+    }
+  }
+
+  return buildScrollAnchor(text, candidate, buildHeadingAnchors(text));
 }
 
 function escapeHtml(text: string): string {
@@ -871,6 +1001,9 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     },
     getText() {
       return currentState.text;
+    },
+    getScrollAnchor() {
+      return getVisibleScrollAnchor(textarea, mirror, host);
     },
     insertText(text: string) {
       const start = textarea.selectionStart;

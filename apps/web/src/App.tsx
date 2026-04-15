@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type RefCallback, type RefObject } from 'react';
 import {
   ApiError,
   apiRequest,
@@ -46,6 +46,7 @@ type CollabTextareaProps = {
   onConnectionChange: (connected: boolean) => void;
   onThreadsUpdated?: () => void;
   onParticipantsChange?: (participants: ShareParticipant[]) => void;
+  onScrollMetricsChange?: (metrics: ScrollMetrics) => void;
   onUploadImage?: (file: File) => Promise<{ ok: true; asset: { url: string; markdown: string } }>;
   onEditorMount?: (handle: CollabEditorHandle | null) => void;
 };
@@ -58,6 +59,25 @@ type AgentModalConfig = {
 };
 
 type PreviewMode = 'markdown' | 'rendered-pdf';
+
+type ScrollMetrics = {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+};
+
+function hasScrolledToNewViewport(previous: ScrollMetrics | null, next: ScrollMetrics) {
+  return !previous || previous.scrollTop !== next.scrollTop;
+}
+
+type PreviewScrollAnchor = ThreadAnchor & {
+  heading: { text: string; level: number } | null;
+};
+
+type ScrollSyncContext = {
+  metrics: ScrollMetrics;
+  anchor: PreviewScrollAnchor | null;
+};
 
 function buildOwnerAgentModal(noteId: string): AgentModalConfig {
   const apiBaseUrl = getApiHttpOrigin();
@@ -246,6 +266,298 @@ function getStoredEditorWrapEnabled() {
 
 function setStoredEditorWrapEnabled(enabled: boolean) {
   window.localStorage.setItem('documine_editor_wrap', enabled ? 'on' : 'off');
+}
+
+function getStoredPreviewScrollSyncEnabled() {
+  const value = window.localStorage.getItem('documine_preview_scroll_sync');
+  return value == null ? true : value !== 'off';
+}
+
+function setStoredPreviewScrollSyncEnabled(enabled: boolean) {
+  window.localStorage.setItem('documine_preview_scroll_sync', enabled ? 'on' : 'off');
+}
+
+function getRangeScrollTarget(range: Range) {
+  const startNode = range.startContainer;
+  if (startNode.nodeType === Node.TEXT_NODE) {
+    return startNode.parentElement;
+  }
+  return startNode.nodeType === Node.ELEMENT_NODE ? (startNode as Element) : null;
+}
+
+function normalizePreviewText(value: string) {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function getVisiblePreviewSearchRoot(root: HTMLElement) {
+  return root.querySelector<HTMLElement>('.documine-preview-pages') || root;
+}
+
+function scrollAnchorIntoView(root: HTMLElement, anchor: PreviewScrollAnchor): boolean {
+  const searchRoot = getVisiblePreviewSearchRoot(root);
+  const headingText = normalizePreviewText(anchor.heading?.text || '');
+  if (headingText) {
+    const headingLevels = anchor.heading?.level ? [anchor.heading.level] : [];
+    for (const level of headingLevels) {
+      const matches = Array.from(searchRoot.querySelectorAll<HTMLElement>(`h${level}`));
+      const target = matches.find((element) => normalizePreviewText(element.textContent || '') === headingText);
+      if (target) {
+        target.scrollIntoView({ block: 'start', inline: 'nearest' });
+        return true;
+      }
+    }
+
+    for (const level of [1, 2, 3, 4, 5, 6]) {
+      const matches = Array.from(searchRoot.querySelectorAll<HTMLElement>(`h${level}`));
+      const target = matches.find((element) => normalizePreviewText(element.textContent || '') === headingText);
+      if (target) {
+        target.scrollIntoView({ block: 'start', inline: 'nearest' });
+        return true;
+      }
+    }
+  }
+
+  const match = locateAnchor(anchor, searchRoot);
+  if (!match) {
+    return false;
+  }
+  const target = getRangeScrollTarget(match.range);
+  if (!target) {
+    return false;
+  }
+  target.scrollIntoView({ block: 'start', inline: 'nearest' });
+  return true;
+}
+
+function usePreviewScrollSyncController(previewMode: PreviewMode) {
+  const [scrollWithMarkdownEnabled, setScrollWithMarkdownEnabled] = useState(() => getStoredPreviewScrollSyncEnabled());
+  const scrollWithMarkdownEnabledRef = useRef(scrollWithMarkdownEnabled);
+  const previewModeRef = useRef(previewMode);
+  const markdownPreviewNodeRef = useRef<HTMLDivElement | null>(null);
+  const pdfFrameNodeRef = useRef<HTMLIFrameElement | null>(null);
+  const pdfFrameLoadCleanupRef = useRef<(() => void) | null>(null);
+  const pdfFrameScrollCleanupRef = useRef<(() => void) | null>(null);
+  const pdfFrameHasLoadedRef = useRef(false);
+  const currentScrollContextRef = useRef<ScrollSyncContext | null>(null);
+  const markdownPreviewLockedRef = useRef(false);
+  const pdfPreviewLockedRef = useRef(false);
+  const previewProgrammaticScrollRef = useRef(false);
+  const manualMarkdownScrollTopRef = useRef(0);
+  const manualPdfScrollTopRef = useRef(0);
+
+  scrollWithMarkdownEnabledRef.current = scrollWithMarkdownEnabled;
+  previewModeRef.current = previewMode;
+
+  const detachPdfFrameScrollTracking = useCallback(() => {
+    pdfFrameScrollCleanupRef.current?.();
+    pdfFrameScrollCleanupRef.current = null;
+  }, []);
+
+  const attachPdfFrameScrollTracking = useCallback((frame: HTMLIFrameElement) => {
+    const contentWindow = frame.contentWindow;
+    const contentDocument = frame.contentDocument;
+    const scroller = contentDocument?.scrollingElement || contentDocument?.documentElement || contentDocument?.body || null;
+    if (!contentWindow || !contentDocument || !scroller) {
+      return;
+    }
+
+    const handleScroll = () => {
+      if (previewProgrammaticScrollRef.current) {
+        return;
+      }
+      pdfPreviewLockedRef.current = true;
+      manualPdfScrollTopRef.current = scroller.scrollTop;
+    };
+
+    contentWindow.addEventListener('scroll', handleScroll, { passive: true });
+    contentDocument.addEventListener('scroll', handleScroll, { passive: true });
+    scroller.addEventListener('scroll', handleScroll, { passive: true });
+    pdfFrameScrollCleanupRef.current = () => {
+      contentWindow.removeEventListener('scroll', handleScroll);
+      contentDocument.removeEventListener('scroll', handleScroll);
+      scroller.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
+
+  const handleMarkdownPreviewScroll = useCallback(() => {
+    if (previewProgrammaticScrollRef.current) {
+      return;
+    }
+    const preview = markdownPreviewNodeRef.current;
+    if (preview) {
+      markdownPreviewLockedRef.current = true;
+      manualMarkdownScrollTopRef.current = preview.scrollTop;
+    }
+  }, []);
+
+  const syncMarkdownPreviewScroll = useCallback((context?: ScrollSyncContext | null) => {
+    const preview = markdownPreviewNodeRef.current;
+    if (!preview) {
+      return;
+    }
+
+    const nextContext = context ?? currentScrollContextRef.current;
+    previewProgrammaticScrollRef.current = true;
+    if (scrollWithMarkdownEnabledRef.current && !markdownPreviewLockedRef.current && nextContext?.anchor) {
+      const root = preview.querySelector<HTMLElement>('.markdown-body');
+      if (root && scrollAnchorIntoView(root, nextContext.anchor)) {
+        manualMarkdownScrollTopRef.current = preview.scrollTop;
+        requestAnimationFrame(() => {
+          previewProgrammaticScrollRef.current = false;
+        });
+        return;
+      }
+    }
+
+    preview.scrollTop = manualMarkdownScrollTopRef.current;
+    requestAnimationFrame(() => {
+      previewProgrammaticScrollRef.current = false;
+    });
+  }, []);
+
+  const restorePdfPreviewScroll = useCallback(() => {
+    const frame = pdfFrameNodeRef.current;
+    if (!frame) {
+      return;
+    }
+
+    const contentDocument = frame.contentDocument;
+    const contentWindow = frame.contentWindow;
+    const scroller = contentDocument?.scrollingElement || contentDocument?.documentElement || contentDocument?.body || null;
+    if (!contentDocument || !contentWindow || !scroller) {
+      return;
+    }
+
+    previewProgrammaticScrollRef.current = true;
+    scroller.scrollTop = manualPdfScrollTopRef.current;
+    contentWindow.scrollTo(0, manualPdfScrollTopRef.current);
+    requestAnimationFrame(() => {
+      previewProgrammaticScrollRef.current = false;
+    });
+  }, []);
+
+  const syncPdfPreviewScroll = useCallback((context?: ScrollSyncContext | null) => {
+    const frame = pdfFrameNodeRef.current;
+    if (!frame) {
+      return;
+    }
+
+    const contentDocument = frame.contentDocument;
+    const contentWindow = frame.contentWindow;
+    const scroller = contentDocument?.scrollingElement || contentDocument?.documentElement || contentDocument?.body || null;
+    if (!contentDocument || !contentWindow || !scroller) {
+      return;
+    }
+
+    const nextContext = context ?? currentScrollContextRef.current;
+    const pdfRoot = contentDocument.body || contentDocument.documentElement;
+    previewProgrammaticScrollRef.current = true;
+    if (scrollWithMarkdownEnabledRef.current && !pdfPreviewLockedRef.current && nextContext?.anchor && pdfRoot) {
+      if (scrollAnchorIntoView(pdfRoot, nextContext.anchor)) {
+        manualPdfScrollTopRef.current = scroller.scrollTop;
+        requestAnimationFrame(() => {
+          previewProgrammaticScrollRef.current = false;
+        });
+        return;
+      }
+    }
+
+    scroller.scrollTop = manualPdfScrollTopRef.current;
+    contentWindow.scrollTo(0, manualPdfScrollTopRef.current);
+    requestAnimationFrame(() => {
+      previewProgrammaticScrollRef.current = false;
+    });
+  }, []);
+
+  const syncPreviewScroll = useCallback((context?: ScrollSyncContext | null, targetMode: PreviewMode = previewModeRef.current) => {
+    if (targetMode === 'rendered-pdf') {
+      syncPdfPreviewScroll(context);
+      return;
+    }
+    syncMarkdownPreviewScroll(context);
+  }, [syncMarkdownPreviewScroll, syncPdfPreviewScroll]);
+
+  const previewScrollRef = useCallback((node: HTMLDivElement | null) => {
+    const current = markdownPreviewNodeRef.current;
+    if (current) {
+      current.removeEventListener('scroll', handleMarkdownPreviewScroll);
+    }
+    markdownPreviewNodeRef.current = node;
+    if (node) {
+      manualMarkdownScrollTopRef.current = node.scrollTop;
+      node.addEventListener('scroll', handleMarkdownPreviewScroll, { passive: true });
+      syncMarkdownPreviewScroll();
+    }
+  }, [handleMarkdownPreviewScroll, syncMarkdownPreviewScroll]);
+
+  const pdfPreviewFrameRef = useCallback((node: HTMLIFrameElement | null) => {
+    pdfFrameLoadCleanupRef.current?.();
+    pdfFrameLoadCleanupRef.current = null;
+    detachPdfFrameScrollTracking();
+    pdfFrameNodeRef.current = node;
+    if (!node) {
+      return;
+    }
+
+    const handleLoad = () => {
+      const shouldRestoreScroll = pdfFrameHasLoadedRef.current;
+      pdfFrameHasLoadedRef.current = true;
+      detachPdfFrameScrollTracking();
+      attachPdfFrameScrollTracking(node);
+      if (shouldRestoreScroll) {
+        restorePdfPreviewScroll();
+      } else {
+        syncPdfPreviewScroll();
+      }
+    };
+
+    node.addEventListener('load', handleLoad);
+    pdfFrameLoadCleanupRef.current = () => node.removeEventListener('load', handleLoad);
+
+    if (node.contentDocument?.readyState === 'complete') {
+      handleLoad();
+    }
+  }, [attachPdfFrameScrollTracking, detachPdfFrameScrollTracking, restorePdfPreviewScroll, syncPdfPreviewScroll]);
+
+  const handleEditorScrollChange = useCallback((context: ScrollSyncContext) => {
+    currentScrollContextRef.current = context;
+    if (scrollWithMarkdownEnabledRef.current) {
+      if (previewModeRef.current === 'rendered-pdf') {
+        pdfPreviewLockedRef.current = false;
+      } else {
+        markdownPreviewLockedRef.current = false;
+      }
+      syncPreviewScroll(context);
+    }
+  }, [syncPreviewScroll]);
+
+  const toggleScrollWithMarkdown = useCallback(() => {
+    const nextEnabled = !scrollWithMarkdownEnabledRef.current;
+    scrollWithMarkdownEnabledRef.current = nextEnabled;
+    setScrollWithMarkdownEnabled(nextEnabled);
+    setStoredPreviewScrollSyncEnabled(nextEnabled);
+    if (nextEnabled) {
+      if (previewModeRef.current === 'rendered-pdf') {
+        pdfPreviewLockedRef.current = false;
+      } else {
+        markdownPreviewLockedRef.current = false;
+      }
+      requestAnimationFrame(() => syncPreviewScroll());
+    }
+  }, [syncPreviewScroll]);
+
+  useEffect(() => {
+    syncPreviewScroll(currentScrollContextRef.current);
+  }, [previewMode, syncPreviewScroll]);
+
+  return {
+    scrollWithMarkdownEnabled,
+    previewScrollRef,
+    pdfPreviewFrameRef,
+    handleEditorScrollChange,
+    toggleScrollWithMarkdown,
+    syncPreviewScroll,
+  };
 }
 
 type ViewerStoreSnapshot = {
@@ -846,6 +1158,14 @@ function OwnerNotePage({
   const [showPreview, setShowPreview] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>('markdown');
   const [editorWrapEnabled, setEditorWrapEnabled] = useState(() => getStoredEditorWrapEnabled());
+  const {
+    scrollWithMarkdownEnabled,
+    previewScrollRef,
+    pdfPreviewFrameRef,
+    handleEditorScrollChange,
+    toggleScrollWithMarkdown,
+    syncPreviewScroll,
+  } = usePreviewScrollSyncController(previewMode);
   const [renderedPdfUrl, setRenderedPdfUrl] = useState('');
   const [renderedPdfLoading, setRenderedPdfLoading] = useState(false);
   const [renderedPdfError, setRenderedPdfError] = useState('');
@@ -863,6 +1183,31 @@ function OwnerNotePage({
   const [showResolved, setShowResolved] = useState(false);
   const [pendingThreadAnchor, setPendingThreadAnchor] = useState<ThreadAnchor | null>(null);
   const editorHandleRef = useRef<CollabEditorHandle | null>(null);
+  const lastEditorScrollMetricsRef = useRef<ScrollMetrics | null>(null);
+
+  const handleEditorScrollMetricsChange = useCallback((metrics: ScrollMetrics) => {
+    const previousMetrics = lastEditorScrollMetricsRef.current;
+    lastEditorScrollMetricsRef.current = metrics;
+    if (!hasScrolledToNewViewport(previousMetrics, metrics)) {
+      return;
+    }
+
+    handleEditorScrollChange({
+      metrics,
+      anchor: scrollWithMarkdownEnabled ? editorHandleRef.current?.getScrollAnchor() ?? null : null,
+    });
+  }, [handleEditorScrollChange, scrollWithMarkdownEnabled]);
+
+  const handleToggleScrollWithMarkdown = useCallback(() => {
+    const nextEnabled = !scrollWithMarkdownEnabled;
+    toggleScrollWithMarkdown();
+    if (nextEnabled && lastEditorScrollMetricsRef.current) {
+      handleEditorScrollChange({
+        metrics: lastEditorScrollMetricsRef.current,
+        anchor: editorHandleRef.current?.getScrollAnchor() ?? null,
+      });
+    }
+  }, [handleEditorScrollChange, scrollWithMarkdownEnabled, toggleScrollWithMarkdown]);
 
   const loadAssets = useCallback(async () => {
     setAssetsLoading(true);
@@ -948,7 +1293,8 @@ function OwnerNotePage({
       return;
     }
 
-    const delayMs = !renderedPdfUrl ? 0 : 150;
+    // Let typing settle before re-rendering the PDF preview.
+    const delayMs = !renderedPdfUrl ? 0 : 600;
     const requestId = ++renderedPdfRequestIdRef.current;
     const timer = window.setTimeout(async () => {
       const startedAt = performance.now();
@@ -1126,7 +1472,7 @@ function OwnerNotePage({
   const agentModalConfig = buildOwnerAgentModal(noteId);
 
   return (
-    <div className="app-root">
+    <div className="app-root" data-page="editor">
       <header className="topbar">
         <div className="topbar-left">
           <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onBack}>
@@ -1196,6 +1542,14 @@ function OwnerNotePage({
               No wrap
             </button>
           </div>
+          <button
+            type="button"
+            className={`documine-btn documine-btn--md ${scrollWithMarkdownEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`}
+            aria-pressed={scrollWithMarkdownEnabled}
+            onClick={handleToggleScrollWithMarkdown}
+          >
+            {scrollWithMarkdownEnabled ? 'Following markdown' : 'Follow markdown'}
+          </button>
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowAgentModal(true)}>
             Agent
           </button>
@@ -1232,6 +1586,7 @@ function OwnerNotePage({
             noteId={noteId}
             initialValue={markdown}
             wrapEnabled={editorWrapEnabled}
+            onScrollMetricsChange={handleEditorScrollMetricsChange}
             onUploadImage={async (file) => {
               const response = await uploadImage(file, { noteId });
               if (showAssetsModal) {
@@ -1281,10 +1636,12 @@ function OwnerNotePage({
             </button>
           </div>
           {previewMode === 'rendered-pdf' ? (
-            <RenderedPreview url={renderedPdfUrl} loading={renderedPdfLoading} error={renderedPdfError} dirty={renderedPdfDirty} />
+            <RenderedPreview url={renderedPdfUrl} loading={renderedPdfLoading} error={renderedPdfError} dirty={renderedPdfDirty} iframeRef={pdfPreviewFrameRef} />
           ) : (
             <AnchoredCommentCanvas
               renderedHtml={renderedHtml}
+              previewScrollRef={previewScrollRef}
+              syncPreviewScroll={syncPreviewScroll}
               threads={payload.threads}
               canCreateThread={showComments}
               commentsVisible={showComments}
@@ -1341,6 +1698,39 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
   const [showResolved, setShowResolved] = useState(false);
   const [showIdentityModal, setShowIdentityModal] = useState(false);
   const [pendingThreadAnchor, setPendingThreadAnchor] = useState<ThreadAnchor | null>(null);
+  const editorHandleRef = useRef<CollabEditorHandle | null>(null);
+  const lastEditorScrollMetricsRef = useRef<ScrollMetrics | null>(null);
+  const {
+    scrollWithMarkdownEnabled,
+    previewScrollRef,
+    handleEditorScrollChange,
+    toggleScrollWithMarkdown,
+    syncPreviewScroll,
+  } = usePreviewScrollSyncController('markdown');
+
+  const handleEditorScrollMetricsChange = useCallback((metrics: ScrollMetrics) => {
+    const previousMetrics = lastEditorScrollMetricsRef.current;
+    lastEditorScrollMetricsRef.current = metrics;
+    if (!hasScrolledToNewViewport(previousMetrics, metrics)) {
+      return;
+    }
+
+    handleEditorScrollChange({
+      metrics,
+      anchor: scrollWithMarkdownEnabled ? editorHandleRef.current?.getScrollAnchor() ?? null : null,
+    });
+  }, [handleEditorScrollChange, scrollWithMarkdownEnabled]);
+
+  const handleToggleScrollWithMarkdown = useCallback(() => {
+    const nextEnabled = !scrollWithMarkdownEnabled;
+    toggleScrollWithMarkdown();
+    if (nextEnabled && lastEditorScrollMetricsRef.current) {
+      handleEditorScrollChange({
+        metrics: lastEditorScrollMetricsRef.current,
+        anchor: editorHandleRef.current?.getScrollAnchor() ?? null,
+      });
+    }
+  }, [handleEditorScrollChange, scrollWithMarkdownEnabled, toggleScrollWithMarkdown]);
 
   const loadSharedNote = useCallback(async (options?: { background?: boolean }) => {
     if (!options?.background) {
@@ -1493,7 +1883,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
   const agentModalConfig = buildSharedAgentModal(shareId);
 
   return (
-    <div className="app-root">
+    <div className="app-root" data-page="public">
       <header className="topbar">
         <div className="topbar-left">
           <div className="topbar-title">{payload.note.title}</div>
@@ -1520,6 +1910,16 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
               No wrap
             </button>
           </div>
+          {isEditable ? (
+            <button
+              type="button"
+              className={`documine-btn documine-btn--md ${scrollWithMarkdownEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`}
+              aria-pressed={scrollWithMarkdownEnabled}
+              onClick={handleToggleScrollWithMarkdown}
+            >
+              {scrollWithMarkdownEnabled ? 'Following markdown' : 'Follow markdown'}
+            </button>
+          ) : null}
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowAgentModal(true)}>
             Agent
           </button>
@@ -1542,7 +1942,11 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
               shareId={shareId}
               initialValue={markdown}
               wrapEnabled={editorWrapEnabled}
+              onScrollMetricsChange={handleEditorScrollMetricsChange}
               onUploadImage={(file) => uploadImage(file, { shareId })}
+              onEditorMount={(handle) => {
+                editorHandleRef.current = handle;
+              }}
               onReady={(next) => {
                 setMarkdown(next.markdown);
               }}
@@ -1562,6 +1966,8 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
             </div>
             <AnchoredCommentCanvas
               renderedHtml={renderedHtml}
+              previewScrollRef={previewScrollRef}
+              syncPreviewScroll={syncPreviewScroll}
               threads={payload.threads}
               canCreateThread={showComments && canComment}
               commentsVisible={showComments}
@@ -1580,6 +1986,8 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
         <section className="preview-stage public">
           <AnchoredCommentCanvas
             renderedHtml={renderedHtml}
+            previewScrollRef={previewScrollRef}
+            syncPreviewScroll={syncPreviewScroll}
             threads={payload.threads}
             canCreateThread={showComments && canComment}
             commentsVisible={showComments}
@@ -1627,6 +2035,7 @@ function CollabTextarea({
   onConnectionChange,
   onThreadsUpdated,
   onParticipantsChange,
+  onScrollMetricsChange,
   onUploadImage,
   onEditorMount,
 }: CollabTextareaProps) {
@@ -1634,12 +2043,12 @@ function CollabTextarea({
   const horizontalScrollRef = useRef<HTMLDivElement | null>(null);
   const horizontalScrollSpacerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<CollabEditorHandle | null>(null);
-  const callbacksRef = useRef({ onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onUploadImage });
+  const callbacksRef = useRef({ onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onScrollMetricsChange, onUploadImage });
   const onEditorMountRef = useRef(onEditorMount);
 
   useEffect(() => {
-    callbacksRef.current = { onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onUploadImage };
-  }, [onConnectionChange, onParticipantsChange, onReady, onTextChange, onThreadsUpdated, onUploadImage]);
+    callbacksRef.current = { onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onScrollMetricsChange, onUploadImage };
+  }, [onConnectionChange, onParticipantsChange, onReady, onScrollMetricsChange, onTextChange, onThreadsUpdated, onUploadImage]);
 
   useEffect(() => {
     onEditorMountRef.current = onEditorMount;
@@ -1668,7 +2077,14 @@ function CollabTextarea({
       noteId,
       shareId,
       onReady: (payload: { markdown: string; title: string; shareId: string }) => callbacksRef.current.onReady?.(payload),
-      onTextChange: (nextMarkdown: string) => callbacksRef.current.onTextChange(nextMarkdown),
+      onTextChange: (nextMarkdown: string) => {
+        callbacksRef.current.onTextChange(nextMarkdown);
+        callbacksRef.current.onScrollMetricsChange?.({
+          scrollTop: textarea.scrollTop,
+          scrollHeight: textarea.scrollHeight,
+          clientHeight: textarea.clientHeight,
+        });
+      },
       onConnectionChange: (connected: boolean) => callbacksRef.current.onConnectionChange(connected),
       onThreadsUpdated: () => callbacksRef.current.onThreadsUpdated?.(),
       onParticipantsChange: (participants: ShareParticipant[]) => callbacksRef.current.onParticipantsChange?.(participants),
@@ -1693,9 +2109,17 @@ function CollabTextarea({
       return;
     }
 
+    const emitScrollMetrics = () => {
+      callbacksRef.current.onScrollMetricsChange?.({
+        scrollTop: textarea.scrollTop,
+        scrollHeight: textarea.scrollHeight,
+        clientHeight: textarea.clientHeight,
+      });
+    };
     const syncMetrics = () => {
       spacer.style.width = `${Math.max(textarea.scrollWidth, textarea.clientWidth)}px`;
       horizontalScroll.scrollLeft = textarea.scrollLeft;
+      emitScrollMetrics();
     };
     const syncFromTextarea = () => {
       horizontalScroll.scrollLeft = textarea.scrollLeft;
@@ -1851,13 +2275,14 @@ function handleCommentTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>,
   }
 }
 
-function RenderedPreview({ url, loading, error, dirty }: { url: string; loading: boolean; error: string; dirty: boolean }) {
+function RenderedPreview({ url, loading, error, dirty, iframeRef }: { url: string; loading: boolean; error: string; dirty: boolean; iframeRef: RefCallback<HTMLIFrameElement> }) {
   return (
     <div className="preview-scroll preview-scroll--pdf">
       <div className="pdf-preview-shell">
         {error ? <div className="inline-error">{error}</div> : null}
         {url ? (
           <iframe
+            ref={iframeRef}
             title="Rendered print preview"
             className="pdf-preview-frame pdf-preview-frame--document"
             src={url}
@@ -2678,8 +3103,16 @@ function findAnchorAtPoint(x: number, y: number, layer: HTMLElement | null) {
   return null;
 }
 
+function usePreviewScrollHtmlSync(renderedHtml: string, syncPreviewScroll: () => void) {
+  useEffect(() => {
+    syncPreviewScroll();
+  }, [renderedHtml, syncPreviewScroll]);
+}
+
 function AnchoredCommentCanvas({
   renderedHtml,
+  previewScrollRef,
+  syncPreviewScroll,
   threads,
   canCreateThread,
   commentsVisible,
@@ -2693,6 +3126,8 @@ function AnchoredCommentCanvas({
   onDeleteMessage,
 }: {
   renderedHtml: string;
+  previewScrollRef: RefCallback<HTMLDivElement>;
+  syncPreviewScroll: () => void;
   threads: Thread[];
   canCreateThread: boolean;
   commentsVisible: boolean;
@@ -2720,6 +3155,8 @@ function AnchoredCommentCanvas({
     fabRef: commentFabRef,
     enabled: commentsVisible && canCreateThread,
   });
+
+  usePreviewScrollHtmlSync(renderedHtml, syncPreviewScroll);
 
   const computeLayout = useCallback(() => {
     if (!commentsVisible) {
@@ -2838,7 +3275,7 @@ function AnchoredCommentCanvas({
 
   return (
     <>
-      <div className="preview-scroll">
+      <div ref={previewScrollRef} className="preview-scroll">
         <div className="preview-canvas" ref={previewCanvasRef} onClick={handleCanvasClick}>
           <button
             ref={selectionBubbleRef}
