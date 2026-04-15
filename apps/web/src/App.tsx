@@ -282,6 +282,15 @@ function setStoredPreviewScrollSyncEnabled(enabled: boolean) {
   window.localStorage.setItem('documine_preview_scroll_sync', enabled ? 'on' : 'off');
 }
 
+function getStoredPreviewMode(): PreviewMode {
+  const value = window.localStorage.getItem('documine_preview_mode');
+  return value === 'rendered-pdf' ? 'rendered-pdf' : 'markdown';
+}
+
+function setStoredPreviewMode(mode: PreviewMode) {
+  window.localStorage.setItem('documine_preview_mode', mode);
+}
+
 function getRangeScrollTarget(range: Range) {
   const startNode = range.startContainer;
   if (startNode.nodeType === Node.TEXT_NODE) {
@@ -1161,7 +1170,7 @@ function OwnerNotePage({
   const [connected, setConnected] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const [previewMode, setPreviewMode] = useState<PreviewMode>('markdown');
+  const [previewMode, setPreviewMode] = useState<PreviewMode>(() => getStoredPreviewMode());
   const [editorWrapEnabled, setEditorWrapEnabled] = useState(() => getStoredEditorWrapEnabled());
   const {
     scrollWithMarkdownEnabled,
@@ -1214,6 +1223,11 @@ function OwnerNotePage({
       });
     }
   }, [handleEditorScrollChange, scrollWithMarkdownEnabled, toggleScrollWithMarkdown]);
+
+  const handlePreviewModeChange = useCallback((mode: PreviewMode) => {
+    setPreviewMode(mode);
+    setStoredPreviewMode(mode);
+  }, []);
 
   const loadAssets = useCallback(async () => {
     setAssetsLoading(true);
@@ -1631,10 +1645,10 @@ function OwnerNotePage({
         <section className={`preview-stage ${showPreview ? 'preview-open' : ''}`}>
           <div className="preview-controls">
             <div className="preview-mode-toggle">
-              <button type="button" className={`documine-btn documine-btn--sm ${previewMode === 'markdown' ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => setPreviewMode('markdown')}>
+              <button type="button" className={`documine-btn documine-btn--sm ${previewMode === 'markdown' ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => handlePreviewModeChange('markdown')}>
                 Markdown
               </button>
-              <button type="button" className={`documine-btn documine-btn--sm ${previewMode === 'rendered-pdf' ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => setPreviewMode('rendered-pdf')}>
+              <button type="button" className={`documine-btn documine-btn--sm ${previewMode === 'rendered-pdf' ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => handlePreviewModeChange('rendered-pdf')}>
                 Print preview
               </button>
             </div>
