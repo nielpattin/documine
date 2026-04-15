@@ -729,6 +729,14 @@ input:focus, textarea:focus { border-color: var(--muted); }
   border: 1px solid var(--line);
   white-space: nowrap;
 }
+.pdf-preview-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.pdf-preview-zoom-value {
+  min-width: 4.1rem;
+}
 .pdf-preview-frame {
   width: 100%;
   flex: 1 1 auto;

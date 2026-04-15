@@ -290,7 +290,7 @@ codeRenderer.code = ({ text, lang }: Tokens.Code) => {
 
 marked.setOptions({
   gfm: true,
-  breaks: true,
+  breaks: false,
   renderer: codeRenderer,
 });
 
@@ -882,14 +882,14 @@ app.post('/api/notes/:id/export/pdf', async (c) => {
     return c.json({ ok: false, error: 'Note not found.' }, 404);
   }
 
-  const body = await readJsonBody(c) as { settings?: unknown };
+  const body = await readJsonBody(c) as { markdown?: unknown; settings?: unknown };
   const savedSettings = await loadPdfExportSettings(exportSettingsFilePath);
 
   try {
     const result = await exportMarkdownToPdf({
       noteId: note.id,
       noteTitle: note.title,
-      markdown: note.markdown,
+      markdown: typeof body.markdown === 'string' ? body.markdown : note.markdown,
       settings: body.settings === undefined ? savedSettings : body.settings,
       assetDirectory: noteAssetDirectory(note.id),
     });
@@ -2627,6 +2627,7 @@ function buildPreviewPaginationScript(): string {
   return `<script>
 (() => {
   const root = document.documentElement;
+  const UNSPLITTABLE_TAGS = new Set(['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'NAV', 'PRE', 'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD', 'UL', 'OL', 'DL', 'DT', 'DD']);
 
   const readPx = (name, fallback) => {
     const raw = getComputedStyle(root).getPropertyValue(name).trim();
@@ -2675,6 +2676,119 @@ function buildPreviewPaginationScript(): string {
     measure: null,
   };
 
+  const collectTextSegments = (node) => {
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    const segments = [];
+    let total = 0;
+    let current = walker.nextNode();
+    while (current) {
+      const text = current.nodeValue || '';
+      if (text.length > 0) {
+        segments.push({ node: current, start: total, end: total + text.length });
+        total += text.length;
+      }
+      current = walker.nextNode();
+    }
+    return { segments, length: total };
+  };
+
+  const pointAtOffset = (textInfo, offset) => {
+    if (!textInfo.segments.length) {
+      return null;
+    }
+    if (offset <= 0) {
+      return { node: textInfo.segments[0].node, offset: 0 };
+    }
+    for (const segment of textInfo.segments) {
+      if (offset <= segment.end) {
+        return { node: segment.node, offset: offset - segment.start };
+      }
+    }
+    const last = textInfo.segments[textInfo.segments.length - 1];
+    return { node: last.node, offset: (last.node.nodeValue || '').length };
+  };
+
+  const cloneFragment = (node, textInfo, startOffset, endOffset) => {
+    const startPoint = pointAtOffset(textInfo, startOffset);
+    const endPoint = pointAtOffset(textInfo, endOffset);
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    if (startPoint) {
+      range.setStart(startPoint.node, startPoint.offset);
+    }
+    if (endPoint) {
+      range.setEnd(endPoint.node, endPoint.offset);
+    }
+    return range.cloneContents();
+  };
+
+  const setSplitMargins = (element, kind) => {
+    if (!(element instanceof HTMLElement)) {
+      return;
+    }
+    if (kind === 'start') {
+      element.style.marginBottom = '0';
+    } else if (kind === 'continue') {
+      element.style.marginTop = '0';
+    }
+  };
+
+  const buildSplitNode = (node, fragment, kind) => {
+    const clone = node.cloneNode(false);
+    clone.appendChild(fragment);
+    setSplitMargins(clone, kind);
+    return clone;
+  };
+
+  const measureNode = (node) => {
+    state.measure.innerHTML = '';
+    state.measure.appendChild(node.cloneNode(true));
+    return state.measure.scrollHeight;
+  };
+
+  const splitNodeToFit = (node, availableHeight) => {
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return null;
+    }
+
+    if (UNSPLITTABLE_TAGS.has(node.tagName)) {
+      return null;
+    }
+
+    const textInfo = collectTextSegments(node);
+    if (!textInfo.length) {
+      return null;
+    }
+
+    let low = 1;
+    let high = textInfo.length;
+    let best = 0;
+
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const firstFragment = cloneFragment(node, textInfo, 0, mid);
+      const firstNode = buildSplitNode(node, firstFragment, 'start');
+      const height = measureNode(firstNode);
+      if (height <= availableHeight) {
+        best = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+
+    if (!best || best >= textInfo.length) {
+      return null;
+    }
+
+    const firstFragment = cloneFragment(node, textInfo, 0, best);
+    const secondFragment = cloneFragment(node, textInfo, best, textInfo.length);
+    return {
+      first: buildSplitNode(node, firstFragment, 'start'),
+      second: buildSplitNode(node, secondFragment, 'continue'),
+    };
+  };
+
   const paginate = () => {
     if (!state.source || !state.pages || !state.measure) {
       return;
@@ -2688,7 +2802,8 @@ function buildPreviewPaginationScript(): string {
       left: readPx('--documine-page-margin-left', 96),
     };
     const pageWidth = readPx('--documine-page-width', 794);
-    const availableHeight = Math.max(1, pageHeight);
+    // Leave a tiny safety buffer so the preview matches Chromium's print pagination.
+    const availableHeight = Math.max(1, pageHeight - 4);
 
     state.pages.innerHTML = '';
     state.measure.innerHTML = '';
@@ -2700,22 +2815,38 @@ function buildPreviewPaginationScript(): string {
     state.pages.appendChild(currentPage);
 
     for (const originalNode of Array.from(state.source.children)) {
-      const node = originalNode.cloneNode(true);
-      state.measure.appendChild(node.cloneNode(true));
+      let pending = originalNode.cloneNode(true);
 
-      if (state.measure.scrollHeight > availableHeight && state.measure.children.length > 1) {
+      while (pending) {
+        state.measure.appendChild(pending.cloneNode(true));
+
+        if (state.measure.scrollHeight <= availableHeight) {
+          content.appendChild(pending);
+          pending = null;
+          continue;
+        }
+
         state.measure.removeChild(state.measure.lastElementChild);
-        currentPage = createPage();
-        content = currentPage.querySelector('.documine-preview-page-content');
-        state.pages.appendChild(currentPage);
-        state.measure.innerHTML = '';
-        state.measure.appendChild(node.cloneNode(true));
-      }
 
-      content.appendChild(node);
+        if (content.childNodes.length > 0) {
+          currentPage = createPage();
+          content = currentPage.querySelector('.documine-preview-page-content');
+          state.pages.appendChild(currentPage);
+          state.measure.innerHTML = '';
+          continue;
+        }
 
-      if (state.measure.scrollHeight > availableHeight && state.measure.children.length === 1) {
-        currentPage.classList.add('documine-preview-page--overflow');
+        const split = splitNodeToFit(pending, availableHeight);
+        if (!split) {
+          content.appendChild(pending);
+          state.measure.appendChild(pending.cloneNode(true));
+          pending = null;
+          continue;
+        }
+
+        content.appendChild(split.first);
+        state.measure.appendChild(split.first.cloneNode(true));
+        pending = split.second;
       }
     }
   };

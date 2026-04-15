@@ -303,12 +303,12 @@ export function formatDate(iso: string) {
   return new Date(iso).toLocaleString();
 }
 
-export async function saveNotePdf(noteId: string, settings: PdfExportSettings): Promise<SaveNotePdfPayload> {
+export async function saveNotePdf(noteId: string, markdown: string, settings: PdfExportSettings): Promise<SaveNotePdfPayload> {
   const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/export/pdf`), {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ settings }),
+    body: JSON.stringify({ markdown, settings }),
   });
 
   return parseApiResponse<SaveNotePdfPayload>(response);

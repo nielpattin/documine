@@ -60,6 +60,11 @@ type AgentModalConfig = {
 
 type PreviewMode = 'markdown' | 'rendered-pdf';
 
+const RENDERED_PDF_ZOOM_MIN = 50;
+const RENDERED_PDF_ZOOM_MAX = 200;
+const RENDERED_PDF_ZOOM_STEP = 5;
+const RENDERED_PDF_ZOOM_DEFAULT = 80;
+
 type ScrollMetrics = {
   scrollTop: number;
   scrollHeight: number;
@@ -1167,6 +1172,7 @@ function OwnerNotePage({
     syncPreviewScroll,
   } = usePreviewScrollSyncController(previewMode);
   const [renderedPdfUrl, setRenderedPdfUrl] = useState('');
+  const [renderedPdfZoom, setRenderedPdfZoom] = useState(RENDERED_PDF_ZOOM_DEFAULT);
   const [renderedPdfLoading, setRenderedPdfLoading] = useState(false);
   const [renderedPdfError, setRenderedPdfError] = useState('');
   const [renderedPdfDirty, setRenderedPdfDirty] = useState(false);
@@ -1329,6 +1335,18 @@ function OwnerNotePage({
 
     return () => window.clearTimeout(timer);
   }, [markdown, noteId, previewMode, renderedPdfDirty, renderedPdfUrl]);
+
+  const handleRenderedPdfZoomOut = useCallback(() => {
+    setRenderedPdfZoom((current) => Math.max(RENDERED_PDF_ZOOM_MIN, current - RENDERED_PDF_ZOOM_STEP));
+  }, []);
+
+  const handleRenderedPdfZoomIn = useCallback(() => {
+    setRenderedPdfZoom((current) => Math.min(RENDERED_PDF_ZOOM_MAX, current + RENDERED_PDF_ZOOM_STEP));
+  }, []);
+
+  const handleRenderedPdfZoomReset = useCallback(() => {
+    setRenderedPdfZoom(RENDERED_PDF_ZOOM_DEFAULT);
+  }, []);
 
   useEffect(() => {
     if (!renderedPdfLoading) {
@@ -1621,22 +1639,35 @@ function OwnerNotePage({
               </button>
             </div>
             {previewMode === 'rendered-pdf' ? (
-              <span className="pdf-preview-note pdf-preview-note--inline">
-                {renderedPdfLoading
-                  ? `Refreshing preview... ${formatDurationMs(renderedPdfElapsedMs)}`
-                  : renderedPdfDirty
-                    ? 'Waiting for typing to pause before refreshing.'
-                    : renderedPdfLastDurationMs !== null
-                      ? `Last refresh: ${formatDurationMs(renderedPdfLastDurationMs)}`
-                      : 'Auto-refreshes after a short idle delay.'}
-              </span>
+              <>
+                <span className="pdf-preview-note pdf-preview-note--inline">
+                  {renderedPdfLoading
+                    ? `Refreshing preview... ${formatDurationMs(renderedPdfElapsedMs)}`
+                    : renderedPdfDirty
+                      ? 'Waiting for typing to pause before refreshing.'
+                      : renderedPdfLastDurationMs !== null
+                        ? `Last refresh: ${formatDurationMs(renderedPdfLastDurationMs)}`
+                        : 'Auto-refreshes after a short idle delay.'}
+                </span>
+                <div className="pdf-preview-zoom-controls" aria-label="Preview zoom controls">
+                  <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={handleRenderedPdfZoomOut} disabled={renderedPdfZoom <= RENDERED_PDF_ZOOM_MIN} aria-label="Zoom out preview">
+                    -
+                  </button>
+                  <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost pdf-preview-zoom-value" onClick={handleRenderedPdfZoomReset} aria-label="Reset preview zoom">
+                    {renderedPdfZoom}%
+                  </button>
+                  <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={handleRenderedPdfZoomIn} disabled={renderedPdfZoom >= RENDERED_PDF_ZOOM_MAX} aria-label="Zoom in preview">
+                    +
+                  </button>
+                </div>
+              </>
             ) : null}
             <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost preview-close-btn" onClick={() => setShowPreview(false)}>
               Close
             </button>
           </div>
           {previewMode === 'rendered-pdf' ? (
-            <RenderedPreview url={renderedPdfUrl} loading={renderedPdfLoading} error={renderedPdfError} dirty={renderedPdfDirty} iframeRef={pdfPreviewFrameRef} />
+            <RenderedPreview url={renderedPdfUrl} zoom={renderedPdfZoom} loading={renderedPdfLoading} error={renderedPdfError} dirty={renderedPdfDirty} iframeRef={pdfPreviewFrameRef} />
           ) : (
             <AnchoredCommentCanvas
               renderedHtml={renderedHtml}
@@ -1664,7 +1695,7 @@ function OwnerNotePage({
           onClose={() => setPendingThreadAnchor(null)}
         />
       ) : null}
-      {showExportModal ? <PdfExportModal noteId={noteId} onClose={() => {
+      {showExportModal ? <PdfExportModal noteId={noteId} markdown={markdown} onClose={() => {
         setShowExportModal(false);
         setRenderedPdfDirty(true);
       }} /> : null}
@@ -2275,7 +2306,7 @@ function handleCommentTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>,
   }
 }
 
-function RenderedPreview({ url, loading, error, dirty, iframeRef }: { url: string; loading: boolean; error: string; dirty: boolean; iframeRef: RefCallback<HTMLIFrameElement> }) {
+function RenderedPreview({ url, zoom, loading, error, dirty, iframeRef }: { url: string; zoom: number; loading: boolean; error: string; dirty: boolean; iframeRef: RefCallback<HTMLIFrameElement> }) {
   return (
     <div className="preview-scroll preview-scroll--pdf">
       <div className="pdf-preview-shell">
@@ -2286,6 +2317,7 @@ function RenderedPreview({ url, loading, error, dirty, iframeRef }: { url: strin
             title="Rendered print preview"
             className="pdf-preview-frame pdf-preview-frame--document"
             src={url}
+            style={{ zoom: zoom / 100 }}
           />
         ) : !loading && !dirty ? (
           <p className="pdf-preview-status">No rendered preview available yet.</p>
@@ -2295,7 +2327,7 @@ function RenderedPreview({ url, loading, error, dirty, iframeRef }: { url: strin
   );
 }
 
-function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => void }) {
+function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; markdown: string; onClose: () => void }) {
   const [payload, setPayload] = useState<PdfExportSettingsPayload | null>(null);
   const [settings, setSettings] = useState<PdfExportSettings | null>(null);
   const [exportsList, setExportsList] = useState<NotePdfExport[]>([]);
@@ -2382,7 +2414,7 @@ function PdfExportModal({ noteId, onClose }: { noteId: string; onClose: () => vo
     setExporting(true);
     setError('');
     try {
-      const response = await saveNotePdf(noteId, settings);
+      const response = await saveNotePdf(noteId, markdown, settings);
       setExportsList(response.exports);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Failed to export PDF.');

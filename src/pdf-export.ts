@@ -9,7 +9,7 @@ import puppeteer from 'puppeteer';
 
 const execFileAsync = promisify(execFile);
 
-const MARKDOWN_FROM = 'markdown+raw_attribute+link_attributes+fenced_divs+bracketed_spans+grid_tables+pipe_tables+simple_tables+multiline_tables';
+const MARKDOWN_FROM = 'markdown+hard_line_breaks+raw_attribute+link_attributes+fenced_divs+bracketed_spans+grid_tables+pipe_tables+simple_tables+multiline_tables';
 const PDF_STYLE_PRESETS = ['report', 'academic', 'clean', 'compact'] as const;
 const PDF_PAGE_SIZES = ['A4', 'Letter', 'Legal'] as const;
 const PDF_ENGINES = ['browser'] as const;
