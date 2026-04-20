@@ -354,6 +354,28 @@ export async function requestRenderedHtmlPreview(noteId: string, markdown: strin
   return response.blob();
 }
 
+export async function requestSharedRenderedHtmlPreview(shareId: string, markdown: string): Promise<Blob> {
+  const response = await fetch(buildApiUrl(`/api/share/${encodeURIComponent(shareId)}/export/html-preview`), {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ markdown }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    let payload: { error?: string; errors?: string[] } | null = null;
+    try {
+      payload = text ? JSON.parse(text) as { error?: string; errors?: string[] } : null;
+    } catch {
+      payload = null;
+    }
+    throw new ApiError(payload?.error || payload?.errors?.join(', ') || 'Request failed.', response.status, payload?.errors);
+  }
+
+  return response.blob();
+}
+
 export function buildWsUrl(pathAndQuery: string) {
   const envOrigin = (import.meta.env.VITE_DOCUMINE_API_WS_ORIGIN as string | undefined)?.trim();
   if (envOrigin) {

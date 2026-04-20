@@ -1419,6 +1419,28 @@ app.post('/api/share/:shareId/render', async (c) => {
   return c.json({ ok: true, html: renderMarkdown(String(body.markdown || '')) });
 });
 
+app.post('/api/share/:shareId/export/html-preview', async (c) => {
+  const note = requireShareAccess(c, 'view');
+  if (!note) {
+    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
+  }
+
+  const body = await readJsonBody(c) as { markdown?: unknown; settings?: unknown };
+  const result = await renderMarkdownToExportHtml({
+    noteId: note.id,
+    noteTitle: note.title,
+    markdown: typeof body.markdown === 'string' ? body.markdown : note.markdown,
+    settings: body.settings === undefined ? defaultPdfExportSettings : body.settings,
+    assetDirectory: noteAssetDirectory(note.id),
+  });
+  const baseHref = `${new URL(c.req.url).origin}/`;
+  const html = injectPreviewBaseHref(result.html, baseHref);
+  return c.body(html, 200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
+});
+
 app.post('/api/share/:shareId/identity', async (c) => {
   const note = requireShareAccess(c, 'comment');
   if (!note) {

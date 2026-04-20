@@ -8,6 +8,7 @@ import {
   getApiHttpOrigin,
   listNotePdfExports,
   requestRenderedHtmlPreview,
+  requestSharedRenderedHtmlPreview,
   saveNotePdf,
   type ApiKey,
   type NoteAsset,
@@ -1802,8 +1803,24 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
   const [markdown, setMarkdown] = useState('');
   const [renderedHtml, setRenderedHtml] = useState('');
   const [connected, setConnected] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
   const [editorWrapEnabled, setEditorWrapEnabled] = useState(() => getStoredEditorWrapEnabled());
+  const [previewMode, setPreviewMode] = useState<PreviewMode>(() => getStoredPreviewMode());
+  const {
+    scrollWithMarkdownEnabled,
+    previewScrollRef,
+    pdfPreviewFrameRef,
+    handleEditorScrollChange,
+    toggleScrollWithMarkdown,
+    syncPreviewScroll,
+  } = usePreviewScrollSyncController(previewMode);
+  const [renderedPdfUrl, setRenderedPdfUrl] = useState('');
+  const [renderedPdfZoom, setRenderedPdfZoom] = useState(RENDERED_PDF_ZOOM_DEFAULT);
+  const [renderedPdfLoading, setRenderedPdfLoading] = useState(false);
+  const [renderedPdfError, setRenderedPdfError] = useState('');
+  const [renderedPdfDirty, setRenderedPdfDirty] = useState(false);
+  const [renderedPdfElapsedMs, setRenderedPdfElapsedMs] = useState(0);
+  const [renderedPdfLastDurationMs, setRenderedPdfLastDurationMs] = useState<number | null>(null);
+  const renderedPdfRequestIdRef = useRef(0);
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [showComments, setShowComments] = useState(true);
   const [showResolved, setShowResolved] = useState(false);
@@ -1812,13 +1829,6 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
   const editorHandleRef = useRef<CollabEditorHandle | null>(null);
   const [editorHistory, setEditorHistory] = useState<EditorHistoryState>({ canUndo: false, canRedo: false, undoLabel: null, redoLabel: null });
   const lastEditorScrollMetricsRef = useRef<ScrollMetrics | null>(null);
-  const {
-    scrollWithMarkdownEnabled,
-    previewScrollRef,
-    handleEditorScrollChange,
-    toggleScrollWithMarkdown,
-    syncPreviewScroll,
-  } = usePreviewScrollSyncController('markdown');
 
   const handleEditorScrollMetricsChange = useCallback((metrics: ScrollMetrics) => {
     const previousMetrics = lastEditorScrollMetricsRef.current;
@@ -1843,6 +1853,23 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
       });
     }
   }, [handleEditorScrollChange, scrollWithMarkdownEnabled, toggleScrollWithMarkdown]);
+
+  const handlePreviewModeChange = useCallback((mode: PreviewMode) => {
+    setPreviewMode(mode);
+    setStoredPreviewMode(mode);
+  }, []);
+
+  const handleRenderedPdfZoomOut = useCallback(() => {
+    setRenderedPdfZoom((current) => Math.max(RENDERED_PDF_ZOOM_MIN, current - RENDERED_PDF_ZOOM_STEP));
+  }, []);
+
+  const handleRenderedPdfZoomIn = useCallback(() => {
+    setRenderedPdfZoom((current) => Math.min(RENDERED_PDF_ZOOM_MAX, current + RENDERED_PDF_ZOOM_STEP));
+  }, []);
+
+  const handleRenderedPdfZoomReset = useCallback(() => {
+    setRenderedPdfZoom(RENDERED_PDF_ZOOM_DEFAULT);
+  }, []);
 
   const loadSharedNote = useCallback(async (options?: { background?: boolean }) => {
     if (!options?.background) {
@@ -1911,6 +1938,87 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
 
     return () => window.clearTimeout(timer);
   }, [markdown, payload, shareId]);
+
+  useEffect(() => {
+    setRenderedPdfDirty(true);
+  }, [markdown, shareId]);
+
+  useEffect(() => {
+    if (previewMode !== 'rendered-pdf') {
+      setRenderedPdfLoading(false);
+      setRenderedPdfError('');
+      return;
+    }
+
+    const shouldRefresh = !renderedPdfUrl || renderedPdfDirty;
+    if (!shouldRefresh) {
+      setRenderedPdfError('');
+      return;
+    }
+
+    const delayMs = !renderedPdfUrl ? 0 : 600;
+    const requestId = ++renderedPdfRequestIdRef.current;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      if (cancelled) {
+        return;
+      }
+      const startedAt = performance.now();
+      setRenderedPdfLoading(true);
+      setRenderedPdfElapsedMs(0);
+      setRenderedPdfError('');
+      try {
+        const blob = await requestSharedRenderedHtmlPreview(shareId, markdown);
+        if (cancelled || renderedPdfRequestIdRef.current !== requestId) {
+          return;
+        }
+        const nextUrl = URL.createObjectURL(blob);
+        setRenderedPdfUrl((current) => {
+          if (current) {
+            URL.revokeObjectURL(current);
+          }
+          return nextUrl;
+        });
+        setRenderedPdfDirty(false);
+        setRenderedPdfLastDurationMs(Math.round(performance.now() - startedAt));
+      } catch (cause) {
+        if (!cancelled && renderedPdfRequestIdRef.current === requestId) {
+          setRenderedPdfError(cause instanceof Error ? cause.message : 'Failed to render preview.');
+          setRenderedPdfLastDurationMs(Math.round(performance.now() - startedAt));
+        }
+      } finally {
+        if (!cancelled && renderedPdfRequestIdRef.current === requestId) {
+          setRenderedPdfLoading(false);
+        }
+      }
+    }, delayMs);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [markdown, previewMode, renderedPdfDirty, renderedPdfUrl, shareId]);
+
+  useEffect(() => {
+    if (!renderedPdfLoading) {
+      return;
+    }
+
+    const startedAt = performance.now();
+    const interval = window.setInterval(() => {
+      setRenderedPdfElapsedMs(Math.round(performance.now() - startedAt));
+    }, 100);
+
+    return () => window.clearInterval(interval);
+  }, [renderedPdfLoading]);
+
+  useEffect(() => {
+    return () => {
+      if (renderedPdfUrl) {
+        URL.revokeObjectURL(renderedPdfUrl);
+      }
+    };
+  }, [renderedPdfUrl]);
 
   async function setIdentity() {
     const response = await apiRequest<{ ok: true; viewer: NotePayload['viewer'] }>(`/api/share/${shareId}/identity`, {
@@ -2046,11 +2154,6 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowAgentModal(true)}>
             Agent
           </button>
-          {isEditable ? (
-            <button type="button" id="previewFab" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowPreview(true)}>
-              Preview
-            </button>
-          ) : null}
           <button type="button" className="documine-btn documine-btn--md documine-btn--ghost theme-toggle" onClick={onToggleTheme}>
             Theme
           </button>
@@ -2082,28 +2185,61 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
             />
           </div>
 
-          <section className={`preview-stage ${showPreview ? 'preview-open' : ''}`}>
+          <section className="preview-stage preview-open">
             <div className="preview-controls">
-              <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost preview-close-btn" onClick={() => setShowPreview(false)}>
-                Close
-              </button>
+              <div className="preview-mode-toggle">
+                <button type="button" className={`documine-btn documine-btn--sm ${previewMode === 'markdown' ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => handlePreviewModeChange('markdown')}>
+                  Markdown
+                </button>
+                <button type="button" className={`documine-btn documine-btn--sm ${previewMode === 'rendered-pdf' ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => handlePreviewModeChange('rendered-pdf')}>
+                  Print preview
+                </button>
+              </div>
+              {previewMode === 'rendered-pdf' ? (
+                <>
+                  <span className="pdf-preview-note pdf-preview-note--inline">
+                    {renderedPdfLoading
+                      ? `Refreshing preview... ${formatDurationMs(renderedPdfElapsedMs)}`
+                      : renderedPdfDirty
+                        ? 'Waiting for typing to pause before refreshing.'
+                        : renderedPdfLastDurationMs !== null
+                          ? `Last refresh: ${formatDurationMs(renderedPdfLastDurationMs)}`
+                          : 'Auto-refreshes after a short idle delay.'}
+                  </span>
+                  <div className="pdf-preview-zoom-controls" aria-label="Preview zoom controls">
+                    <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={handleRenderedPdfZoomOut} disabled={renderedPdfZoom <= RENDERED_PDF_ZOOM_MIN} aria-label="Zoom out preview">
+                      -
+                    </button>
+                    <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost pdf-preview-zoom-value" onClick={handleRenderedPdfZoomReset} aria-label="Reset preview zoom">
+                      {renderedPdfZoom}%
+                    </button>
+                    <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={handleRenderedPdfZoomIn} disabled={renderedPdfZoom >= RENDERED_PDF_ZOOM_MAX} aria-label="Zoom in preview">
+                      +
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </div>
-            <AnchoredCommentCanvas
-              renderedHtml={renderedHtml}
-              previewScrollRef={previewScrollRef}
-              syncPreviewScroll={syncPreviewScroll}
-              threads={payload.threads}
-              canCreateThread={showComments && canComment}
-              commentsVisible={showComments}
-              showResolved={showResolved}
-              emptyMessage={canComment ? 'No comment threads yet. Select text in the preview to add one.' : 'No comment threads yet.'}
-              onRequestCreateThread={requestCreateThread}
-              onReply={replyToThread}
-              onResolve={setThreadResolved}
-              onDeleteThread={deleteThread}
-              onEditMessage={editMessage}
-              onDeleteMessage={deleteMessage}
-            />
+            {previewMode === 'rendered-pdf' ? (
+              <RenderedPreview url={renderedPdfUrl} zoom={renderedPdfZoom} loading={renderedPdfLoading} error={renderedPdfError} dirty={renderedPdfDirty} iframeRef={pdfPreviewFrameRef} />
+            ) : (
+              <AnchoredCommentCanvas
+                renderedHtml={renderedHtml}
+                previewScrollRef={previewScrollRef}
+                syncPreviewScroll={syncPreviewScroll}
+                threads={payload.threads}
+                canCreateThread={showComments && canComment}
+                commentsVisible={showComments}
+                showResolved={showResolved}
+                emptyMessage={canComment ? 'No comment threads yet. Select text in the preview to add one.' : 'No comment threads yet.'}
+                onRequestCreateThread={requestCreateThread}
+                onReply={replyToThread}
+                onResolve={setThreadResolved}
+                onDeleteThread={deleteThread}
+                onEditMessage={editMessage}
+                onDeleteMessage={deleteMessage}
+              />
+            )}
           </section>
         </div>
       ) : (
