@@ -114,6 +114,10 @@ type PreviewScrollAnchor = ThreadAnchor & {
   heading: { text: string; level: number } | null;
 };
 
+type AnchorWithOptionalHeading = ThreadAnchor & {
+  heading?: { text: string; level: number } | null;
+};
+
 type ScrollSyncContext = {
   metrics: ScrollMetrics;
   anchor: PreviewScrollAnchor | null;
@@ -127,7 +131,7 @@ function buildOwnerAgentModal(noteId: string): AgentModalConfig {
     requiresApiKey: true,
     buildInstructions: (apiKey) => [
       '# Install the CLI globally',
-      'pnpm add -g documine',
+      'npm install -g documine',
       '',
       '# Register this Documine instance using the generated owner API key',
       `documine register my-documine ${apiBaseUrl} ${apiKey || '<generate-api-key-first>'}`,
@@ -167,7 +171,7 @@ function buildSharedAgentModal(shareId: string): AgentModalConfig {
     hint: 'This shared note does not need an API key. Copy these instructions directly.',
     buildInstructions: () => [
       '# Install the CLI globally',
-      'pnpm add -g documine',
+      'npm install -g documine',
       '',
       '# Register the shared note',
       `documine register shared-note ${shareUrl}`,
@@ -221,8 +225,18 @@ function preparePreviewHtml(html: string) {
   return document.body.innerHTML;
 }
 
-function AgentSetupModal({ config, onClose }: { config: AgentModalConfig; onClose: () => void }) {
-  const [apiKey, setApiKey] = useState<string | null>(null);
+function AgentSetupModal({
+  config,
+  onClose,
+  initialApiKey = null,
+  onApiKeyGenerated,
+}: {
+  config: AgentModalConfig;
+  onClose: () => void;
+  initialApiKey?: string | null;
+  onApiKeyGenerated?: (apiKey: string) => void;
+}) {
+  const [apiKey, setApiKey] = useState<string | null>(initialApiKey);
   const [isGenerating, setIsGenerating] = useState(false);
   const instructions = config.buildInstructions(apiKey);
 
@@ -234,6 +248,7 @@ function AgentSetupModal({ config, onClose }: { config: AgentModalConfig; onClos
         body: { label: 'agent-cli' },
       });
       setApiKey(payload.key);
+      onApiKeyGenerated?.(payload.key);
     } finally {
       setIsGenerating(false);
     }
@@ -326,56 +341,32 @@ function setStoredPreviewMode(mode: PreviewMode) {
   window.localStorage.setItem('documine_preview_mode', mode);
 }
 
-function getRangeScrollTarget(range: Range) {
-  const startNode = range.startContainer;
-  if (startNode.nodeType === Node.TEXT_NODE) {
-    return startNode.parentElement;
-  }
-  return startNode.nodeType === Node.ELEMENT_NODE ? (startNode as Element) : null;
-}
-
 function normalizePreviewText(value: string) {
   return value.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-function getVisiblePreviewSearchRoot(root: HTMLElement) {
-  return root.querySelector<HTMLElement>('.documine-preview-pages') || root;
+function findTextOccurrences(text: string, pattern: string) {
+  const indices: number[] = [];
+  if (!text || !pattern) {
+    return indices;
+  }
+
+  let index = text.indexOf(pattern);
+  while (index !== -1) {
+    indices.push(index);
+    index = text.indexOf(pattern, index + Math.max(1, pattern.length));
+  }
+  return indices;
 }
 
-function scrollAnchorIntoView(root: HTMLElement, anchor: PreviewScrollAnchor): boolean {
-  const searchRoot = getVisiblePreviewSearchRoot(root);
-  const headingText = normalizePreviewText(anchor.heading?.text || '');
-  if (headingText) {
-    const headingLevels = anchor.heading?.level ? [anchor.heading.level] : [];
-    for (const level of headingLevels) {
-      const matches = Array.from(searchRoot.querySelectorAll<HTMLElement>(`h${level}`));
-      const target = matches.find((element) => normalizePreviewText(element.textContent || '') === headingText);
-      if (target) {
-        target.scrollIntoView({ block: 'start', inline: 'nearest' });
-        return true;
-      }
-    }
-
-    for (const level of [1, 2, 3, 4, 5, 6]) {
-      const matches = Array.from(searchRoot.querySelectorAll<HTMLElement>(`h${level}`));
-      const target = matches.find((element) => normalizePreviewText(element.textContent || '') === headingText);
-      if (target) {
-        target.scrollIntoView({ block: 'start', inline: 'nearest' });
-        return true;
-      }
-    }
+function getSyncedScrollTop(metrics: ScrollMetrics, targetScrollHeight: number, targetClientHeight: number) {
+  const sourceScrollable = Math.max(1, metrics.scrollHeight - metrics.clientHeight);
+  const targetScrollable = Math.max(0, targetScrollHeight - targetClientHeight);
+  if (targetScrollable === 0) {
+    return 0;
   }
-
-  const match = locateAnchor(anchor, searchRoot);
-  if (!match) {
-    return false;
-  }
-  const target = getRangeScrollTarget(match.range);
-  if (!target) {
-    return false;
-  }
-  target.scrollIntoView({ block: 'start', inline: 'nearest' });
-  return true;
+  const ratio = Math.min(1, Math.max(0, metrics.scrollTop / sourceScrollable));
+  return Math.round(ratio * targetScrollable);
 }
 
 function usePreviewScrollSyncController(previewMode: PreviewMode) {
@@ -386,7 +377,6 @@ function usePreviewScrollSyncController(previewMode: PreviewMode) {
   const pdfFrameNodeRef = useRef<HTMLIFrameElement | null>(null);
   const pdfFrameLoadCleanupRef = useRef<(() => void) | null>(null);
   const pdfFrameScrollCleanupRef = useRef<(() => void) | null>(null);
-  const pdfFrameHasLoadedRef = useRef(false);
   const currentScrollContextRef = useRef<ScrollSyncContext | null>(null);
   const markdownPreviewLockedRef = useRef(false);
   const pdfPreviewLockedRef = useRef(false);
@@ -457,39 +447,17 @@ function usePreviewScrollSyncController(previewMode: PreviewMode) {
       return;
     }
 
-    if (scrollWithMarkdownEnabledRef.current && !markdownPreviewLockedRef.current && nextContext?.anchor) {
-      const root = preview.querySelector<HTMLElement>('.markdown-body');
-      if (root && scrollAnchorIntoView(root, nextContext.anchor)) {
-        manualMarkdownScrollTopRef.current = preview.scrollTop;
-        requestAnimationFrame(() => {
-          previewProgrammaticScrollRef.current = false;
-        });
-        return;
-      }
+    if (scrollWithMarkdownEnabledRef.current && !markdownPreviewLockedRef.current && nextContext) {
+      const targetScrollTop = getSyncedScrollTop(nextContext.metrics, preview.scrollHeight, preview.clientHeight);
+      manualMarkdownScrollTopRef.current = targetScrollTop;
+      preview.scrollTop = targetScrollTop;
+      requestAnimationFrame(() => {
+        previewProgrammaticScrollRef.current = false;
+      });
+      return;
     }
 
     preview.scrollTop = manualMarkdownScrollTopRef.current;
-    requestAnimationFrame(() => {
-      previewProgrammaticScrollRef.current = false;
-    });
-  }, []);
-
-  const restorePdfPreviewScroll = useCallback(() => {
-    const frame = pdfFrameNodeRef.current;
-    if (!frame) {
-      return;
-    }
-
-    const contentDocument = frame.contentDocument;
-    const contentWindow = frame.contentWindow;
-    const scroller = contentDocument?.scrollingElement || contentDocument?.documentElement || contentDocument?.body || null;
-    if (!contentDocument || !contentWindow || !scroller) {
-      return;
-    }
-
-    previewProgrammaticScrollRef.current = true;
-    scroller.scrollTop = manualPdfScrollTopRef.current;
-    contentWindow.scrollTo(0, manualPdfScrollTopRef.current);
     requestAnimationFrame(() => {
       previewProgrammaticScrollRef.current = false;
     });
@@ -509,7 +477,6 @@ function usePreviewScrollSyncController(previewMode: PreviewMode) {
     }
 
     const nextContext = context ?? currentScrollContextRef.current;
-    const pdfRoot = contentDocument.body || contentDocument.documentElement;
     previewProgrammaticScrollRef.current = true;
 
     if (nextContext?.metrics.scrollTop === 0) {
@@ -522,14 +489,15 @@ function usePreviewScrollSyncController(previewMode: PreviewMode) {
       return;
     }
 
-    if (scrollWithMarkdownEnabledRef.current && !pdfPreviewLockedRef.current && nextContext?.anchor && pdfRoot) {
-      if (scrollAnchorIntoView(pdfRoot, nextContext.anchor)) {
-        manualPdfScrollTopRef.current = scroller.scrollTop;
-        requestAnimationFrame(() => {
-          previewProgrammaticScrollRef.current = false;
-        });
-        return;
-      }
+    if (scrollWithMarkdownEnabledRef.current && !pdfPreviewLockedRef.current && nextContext) {
+      const targetScrollTop = getSyncedScrollTop(nextContext.metrics, scroller.scrollHeight, scroller.clientHeight);
+      manualPdfScrollTopRef.current = targetScrollTop;
+      scroller.scrollTop = targetScrollTop;
+      contentWindow.scrollTo(0, targetScrollTop);
+      requestAnimationFrame(() => {
+        previewProgrammaticScrollRef.current = false;
+      });
+      return;
     }
 
     scroller.scrollTop = manualPdfScrollTopRef.current;
@@ -570,15 +538,9 @@ function usePreviewScrollSyncController(previewMode: PreviewMode) {
     }
 
     const handleLoad = () => {
-      const shouldRestoreScroll = pdfFrameHasLoadedRef.current;
-      pdfFrameHasLoadedRef.current = true;
       detachPdfFrameScrollTracking();
       attachPdfFrameScrollTracking(node);
-      if (shouldRestoreScroll) {
-        restorePdfPreviewScroll();
-      } else {
-        syncPdfPreviewScroll();
-      }
+      syncPdfPreviewScroll(currentScrollContextRef.current);
     };
 
     node.addEventListener('load', handleLoad);
@@ -587,7 +549,7 @@ function usePreviewScrollSyncController(previewMode: PreviewMode) {
     if (node.contentDocument?.readyState === 'complete') {
       handleLoad();
     }
-  }, [attachPdfFrameScrollTracking, detachPdfFrameScrollTracking, restorePdfPreviewScroll, syncPdfPreviewScroll]);
+  }, [attachPdfFrameScrollTracking, detachPdfFrameScrollTracking, syncPdfPreviewScroll]);
 
   const handleEditorScrollChange = useCallback((context: ScrollSyncContext) => {
     currentScrollContextRef.current = context;
@@ -1245,6 +1207,7 @@ function OwnerNotePage({
   const [renderedPdfLastDurationMs, setRenderedPdfLastDurationMs] = useState<number | null>(null);
   const renderedPdfRequestIdRef = useRef(0);
   const [showAgentModal, setShowAgentModal] = useState(false);
+  const [agentApiKey, setAgentApiKey] = useState<string | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showAssetsModal, setShowAssetsModal] = useState(false);
   const [shareParticipants, setShareParticipants] = useState<ShareParticipant[]>([]);
@@ -1373,14 +1336,18 @@ function OwnerNotePage({
     // Let typing settle before re-rendering the PDF preview.
     const delayMs = !renderedPdfUrl ? 0 : 600;
     const requestId = ++renderedPdfRequestIdRef.current;
+    let cancelled = false;
     const timer = window.setTimeout(async () => {
+      if (cancelled) {
+        return;
+      }
       const startedAt = performance.now();
       setRenderedPdfLoading(true);
       setRenderedPdfElapsedMs(0);
       setRenderedPdfError('');
       try {
         const blob = await requestRenderedHtmlPreview(noteId, markdown);
-        if (renderedPdfRequestIdRef.current !== requestId) {
+        if (cancelled || renderedPdfRequestIdRef.current !== requestId) {
           return;
         }
         const nextUrl = URL.createObjectURL(blob);
@@ -1393,18 +1360,21 @@ function OwnerNotePage({
         setRenderedPdfDirty(false);
         setRenderedPdfLastDurationMs(Math.round(performance.now() - startedAt));
       } catch (cause) {
-        if (renderedPdfRequestIdRef.current === requestId) {
+        if (!cancelled && renderedPdfRequestIdRef.current === requestId) {
           setRenderedPdfError(cause instanceof Error ? cause.message : 'Failed to render preview.');
           setRenderedPdfLastDurationMs(Math.round(performance.now() - startedAt));
         }
       } finally {
-        if (renderedPdfRequestIdRef.current === requestId) {
+        if (!cancelled && renderedPdfRequestIdRef.current === requestId) {
           setRenderedPdfLoading(false);
         }
       }
     }, delayMs);
 
-    return () => window.clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [markdown, noteId, previewMode, renderedPdfDirty, renderedPdfUrl]);
 
   const handleRenderedPdfZoomOut = useCallback(() => {
@@ -1790,7 +1760,14 @@ function OwnerNotePage({
           onClose={() => setShowAssetsModal(false)}
         />
       ) : null}
-      {showAgentModal ? <AgentSetupModal config={agentModalConfig} onClose={() => setShowAgentModal(false)} /> : null}
+      {showAgentModal ? (
+        <AgentSetupModal
+          config={agentModalConfig}
+          initialApiKey={agentApiKey}
+          onApiKeyGenerated={setAgentApiKey}
+          onClose={() => setShowAgentModal(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -3259,18 +3236,13 @@ function offsetsToRange(mapping: ReturnType<typeof collectTextNodes>, start: num
   return range;
 }
 
-function locateAnchor(anchor: ThreadAnchor, root: HTMLElement) {
+function locateAnchor(anchor: AnchorWithOptionalHeading, root: HTMLElement) {
   const mapping = collectTextNodes(root);
   if (!mapping.fullText || !anchor.quote) {
     return null;
   }
 
   const candidates: number[] = [];
-  const exactSlice = mapping.fullText.slice(anchor.start, anchor.end);
-  if (exactSlice === anchor.quote) {
-    candidates.push(anchor.start);
-  }
-
   let index = mapping.fullText.indexOf(anchor.quote);
   while (index !== -1) {
     if (!candidates.includes(index)) {
@@ -3283,6 +3255,9 @@ function locateAnchor(anchor: ThreadAnchor, root: HTMLElement) {
     return null;
   }
 
+  const headingText = normalizePreviewText(anchor.heading?.text || '');
+  const headingOccurrences = headingText ? findTextOccurrences(normalizePreviewText(mapping.fullText), headingText) : [];
+
   let best: number | null = null;
   let bestScore = -Infinity;
   for (const candidate of candidates) {
@@ -3294,7 +3269,22 @@ function locateAnchor(anchor: ThreadAnchor, root: HTMLElement) {
     if (suffix === anchor.suffix) {
       score += 12;
     }
-    score -= Math.abs(candidate - anchor.start) / 8;
+
+    if (headingOccurrences.length) {
+      let nearestHeadingDistance = Infinity;
+      for (const headingIndex of headingOccurrences) {
+        if (headingIndex <= candidate) {
+          nearestHeadingDistance = Math.min(nearestHeadingDistance, candidate - headingIndex);
+        }
+      }
+      if (nearestHeadingDistance !== Infinity) {
+        score += 10;
+        score -= Math.min(nearestHeadingDistance / 10, 10);
+      } else {
+        score -= 10;
+      }
+    }
+
     if (score > bestScore) {
       bestScore = score;
       best = candidate;

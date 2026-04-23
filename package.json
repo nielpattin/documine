@@ -9,14 +9,17 @@
     "apps/web/dist",
     "cli"
   ],
+  "workspaces": [
+    "apps/web"
+  ],
   "description": "Self-hosted collaborative markdown editor with inline comment threads",
   "scripts": {
-    "dev": "concurrently \"pnpm dev:api\" \"pnpm dev:web\"",
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "tsx watch src/server.ts",
-    "dev:web": "pnpm --dir apps/web dev",
-    "build": "pnpm build:web && pnpm build:api",
+    "dev:web": "npm run dev --workspace @documine/web",
+    "build": "npm run build:web && npm run build:api",
     "build:api": "tsc",
-    "build:web": "pnpm --dir apps/web build",
+    "build:web": "npm run build --workspace @documine/web",
     "start": "node dist/server.js"
   },
   "dependencies": {

@@ -16,8 +16,8 @@ Minimal self-hosted collaborative markdown editor with inline comment threads. B
 Run the full local stack:
 
 ```bash
-pnpm install
-pnpm dev
+npm install
+npm run dev
 ```
 
 Open `http://localhost:5173` for the frontend and `http://localhost:3120` for the API.
@@ -38,7 +38,7 @@ Open `http://localhost:5173` for the frontend and `http://localhost:3120` for th
 ## API Server
 
 ```bash
-pnpm install -g documine
+npm install -g documine
 documine serve                    # port 3120, data in ./data
 documine serve --port=8080        # custom port
 documine serve --data=/var/documine  # custom data dir
@@ -49,8 +49,8 @@ This starts the backend API only.
 ## Development
 
 ```bash
-pnpm install
-pnpm dev
+npm install
+npm run dev
 ```
 
 The API runs on `http://localhost:3120`. The frontend runs on `http://localhost:5175`.
@@ -62,13 +62,13 @@ The API is backend-only. It serves JSON and WebSocket endpoints, not the React a
 For local development of this repo:
 
 ```bash
-pnpm link --global
+npm link
 ```
 
 For a global install from a published package:
 
 ```bash
-pnpm add -g documine
+npm install -g documine
 ```
 
 ## Docker

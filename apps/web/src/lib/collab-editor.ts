@@ -203,24 +203,28 @@ function clampSel(text: string, sel: TextSelection): TextSelection {
   };
 }
 
-function wordBackward(text: string, cursor: number): number {
-  let i = cursor;
-  while (i > 0 && /\s/.test(text[i - 1])) i--;
-  while (i > 0 && !/\s/.test(text[i - 1])) i--;
-  return i;
-}
+export function diffTextChange(previousText: string, nextText: string): {
+  prefix: number;
+  previousEnd: number;
+  nextEnd: number;
+  insertedText: string;
+} {
+  let prefix = 0;
+  while (prefix < previousText.length && prefix < nextText.length && previousText[prefix] === nextText[prefix]) prefix++;
 
-function wordForward(text: string, cursor: number): number {
-  let i = cursor;
-  while (i < text.length && /\s/.test(text[i])) i++;
-  while (i < text.length && !/\s/.test(text[i])) i++;
-  return i;
-}
+  let previousEnd = previousText.length;
+  let nextEnd = nextText.length;
+  while (previousEnd > prefix && nextEnd > prefix && previousText[previousEnd - 1] === nextText[nextEnd - 1]) {
+    previousEnd--;
+    nextEnd--;
+  }
 
-function lineBackward(text: string, cursor: number): number {
-  let i = cursor - 1;
-  while (i > 0 && text[i - 1] !== '\n') i--;
-  return Math.max(0, i);
+  return {
+    prefix,
+    previousEnd,
+    nextEnd,
+    insertedText: nextText.slice(prefix, nextEnd),
+  };
 }
 
 function historyLabelForInput(inputType: string, hasSelection: boolean, insertedText: string, deletedLength: number): string {
@@ -862,7 +866,8 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   function replaceRangeWithText(start: number, end: number, nextContent: string): void {
     const normalizedContent = normalizeInsertedText(nextContent);
     const nextText = `${currentState.text.slice(0, start)}${normalizedContent}${currentState.text.slice(end)}`;
-    applyDiffFallback(nextText);
+    const cursor = start + normalizedContent.length;
+    applyDiffFallback(nextText, { start: cursor, end: cursor, direction: 'none' });
   }
 
   function replaceFirstOccurrence(oldText: string, newText: string): boolean {
@@ -982,162 +987,49 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     }
     if (event.isComposing || event.inputType.includes('Composition')) return;
 
-    const inputType = event.inputType;
-    if (inputType === 'historyUndo') {
+    if (event.inputType === 'historyUndo') {
       event.preventDefault();
       undoHistory();
       return;
     }
-    if (inputType === 'historyRedo') {
+    if (event.inputType === 'historyRedo') {
       event.preventDefault();
       redoHistory();
-      return;
-    }
-
-    const selectionStart = textarea.selectionStart;
-    const selectionEnd = textarea.selectionEnd;
-    const hasSelection = selectionStart !== selectionEnd;
-    const inputContent = readInsertText(event);
-    const historyLabel = historyLabelForInput(inputType, hasSelection, inputContent, Math.max(0, selectionEnd - selectionStart));
-    const mutations: ClientMutation[] = [];
-    const historySegments: HistorySegment[] = [];
-    let workingState: EditorState = { text: currentState.text, idList: currentState.idList.clone() };
-
-    function pushDel(start: number, end: number): boolean {
-      const mutation = buildDeleteMutation(workingState, start, end, nextClientCounter++);
-      if (!mutation) return false;
-      const segment = buildDeleteHistorySegment(workingState, start, end);
-      if (!segment) return false;
-      mutations.push(mutation);
-      historySegments.push(segment);
-      workingState = applyClientMutation(workingState, mutation);
-      return true;
-    }
-
-    function pushIns(index: number, content: string): boolean {
-      const mutation = buildInsertMutation(workingState, index, content, nextClientCounter++, newId);
-      if (!mutation) return false;
-      const segment = buildInsertHistorySegment(workingState, index, content, mutation);
-      if (!segment) return false;
-      mutations.push(mutation);
-      historySegments.push(segment);
-      workingState = applyClientMutation(workingState, mutation);
-      return true;
-    }
-
-    let sel: TextSelection = { start: selectionStart, end: selectionEnd, direction: 'none' };
-
-    if (hasSelection) {
-      pushDel(selectionStart, selectionEnd);
-      sel = { start: selectionStart, end: selectionStart, direction: 'none' };
-    }
-
-    if (inputType === 'insertText' || inputType === 'insertReplacementText' || inputType === 'insertFromPaste' || inputType === 'insertFromDrop') {
-      const content = inputContent;
-      if (!content) return;
-      event.preventDefault();
-      pushIns(sel.start, content);
-      sel = { start: sel.start + content.length, end: sel.start + content.length, direction: 'none' };
-      commitLocalMutations(mutations, sel, historySegments, historyLabel);
-      return;
-    }
-    if (inputType === 'insertLineBreak' || inputType === 'insertParagraph') {
-      event.preventDefault();
-      pushIns(sel.start, '\n');
-      sel = { start: sel.start + 1, end: sel.start + 1, direction: 'none' };
-      commitLocalMutations(mutations, sel, historySegments, historyLabel);
-      return;
-    }
-    if (inputType === 'deleteContentBackward') {
-      event.preventDefault();
-      if (!hasSelection && selectionStart > 0) {
-        pushDel(selectionStart - 1, selectionStart);
-        sel = { start: selectionStart - 1, end: selectionStart - 1, direction: 'none' };
-      }
-      commitLocalMutations(mutations, sel, historySegments, historyLabel);
-      return;
-    }
-    if (inputType === 'deleteContentForward') {
-      event.preventDefault();
-      if (!hasSelection && selectionStart < currentState.text.length) {
-        pushDel(selectionStart, selectionStart + 1);
-        sel = { start: selectionStart, end: selectionStart, direction: 'none' };
-      }
-      commitLocalMutations(mutations, sel, historySegments, historyLabel);
-      return;
-    }
-    if (inputType === 'deleteWordBackward') {
-      event.preventDefault();
-      if (!hasSelection && selectionStart > 0) {
-        const start = wordBackward(currentState.text, selectionStart);
-        pushDel(start, selectionStart);
-        sel = { start, end: start, direction: 'none' };
-      }
-      commitLocalMutations(mutations, sel, historySegments, historyLabel);
-      return;
-    }
-    if (inputType === 'deleteWordForward') {
-      event.preventDefault();
-      if (!hasSelection && selectionStart < currentState.text.length) {
-        const end = wordForward(currentState.text, selectionStart);
-        pushDel(selectionStart, end);
-        sel = { start: selectionStart, end: selectionStart, direction: 'none' };
-      }
-      commitLocalMutations(mutations, sel, historySegments, historyLabel);
-      return;
-    }
-    if (inputType === 'deleteSoftLineBackward' || inputType === 'deleteHardLineBackward') {
-      event.preventDefault();
-      if (!hasSelection && selectionStart > 0) {
-        const start = lineBackward(currentState.text, selectionStart);
-        pushDel(start, selectionStart);
-        sel = { start, end: start, direction: 'none' };
-      }
-      commitLocalMutations(mutations, sel, historySegments, historyLabel);
     }
   }
 
-  function handleInput(): void {
+  function handleInput(event?: Event): void {
     if (programmatic || !initialized) return;
-    applyDiffFallback(textarea.value);
+    const nativeEvent = event instanceof InputEvent ? event : null;
+    applyDiffFallback(textarea.value, currentDomSelection(), nativeEvent ? nativeEvent.inputType : undefined, nativeEvent ? readInsertText(nativeEvent) : '');
   }
 
-  function applyDiffFallback(nextText: string): void {
+  function applyDiffFallback(nextText: string, selectionOverride?: TextSelection, inputType?: string, insertedTextOverride?: string): void {
     const normalizedNextText = normalizeInsertedText(nextText);
     if (!initialized || normalizedNextText === currentState.text) return;
 
-    const prev = currentState.text;
-    let prefix = 0;
-    while (prefix < prev.length && prefix < normalizedNextText.length && prev[prefix] === normalizedNextText[prefix]) prefix++;
-
-    let prevSuffix = prev.length;
-    let nextSuffix = normalizedNextText.length;
-    while (prevSuffix > prefix && nextSuffix > prefix && prev[prevSuffix - 1] === normalizedNextText[nextSuffix - 1]) {
-      prevSuffix--;
-      nextSuffix--;
-    }
-
+    const previousText = currentState.text;
+    const diff = diffTextChange(previousText, normalizedNextText);
     const mutations: ClientMutation[] = [];
     const historySegments: HistorySegment[] = [];
     let workingState: EditorState = { text: currentState.text, idList: currentState.idList.clone() };
-    const deleteMutation = buildDeleteMutation(workingState, prefix, prevSuffix, nextClientCounter);
+    const deleteMutation = buildDeleteMutation(workingState, diff.prefix, diff.previousEnd, nextClientCounter);
     if (deleteMutation) {
       nextClientCounter++;
       mutations.push(deleteMutation);
-      const segment = buildDeleteHistorySegment(workingState, prefix, prevSuffix);
+      const segment = buildDeleteHistorySegment(workingState, diff.prefix, diff.previousEnd);
       if (segment) {
         historySegments.push(segment);
       }
       workingState = applyClientMutation(workingState, deleteMutation);
     }
 
-    const insertText = normalizedNextText.slice(prefix, nextSuffix);
-    if (insertText) {
-      const insertMutation = buildInsertMutation(workingState, prefix, insertText, nextClientCounter, newId);
+    if (diff.insertedText) {
+      const insertMutation = buildInsertMutation(workingState, diff.prefix, diff.insertedText, nextClientCounter, newId);
       if (insertMutation) {
         nextClientCounter++;
         mutations.push(insertMutation);
-        const segment = buildInsertHistorySegment(workingState, prefix, insertText, insertMutation);
+        const segment = buildInsertHistorySegment(workingState, diff.prefix, diff.insertedText, insertMutation);
         if (segment) {
           historySegments.push(segment);
         }
@@ -1145,14 +1037,20 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       }
     }
 
+    const nextSelection = clampSel(normalizedNextText, selectionOverride || {
+      start: diff.prefix + diff.insertedText.length,
+      end: diff.prefix + diff.insertedText.length,
+      direction: 'none',
+    });
+
     if (!mutations.length) {
-      render({ start: prefix, end: prefix, direction: 'none' });
+      render(nextSelection);
       return;
     }
 
-    const cursor = prefix + insertText.length;
-    const historyLabel = deleteMutation && insertText ? 'Edit text' : insertText ? 'Insert text' : deleteMutation ? 'Delete text' : 'Edit text';
-    commitLocalMutations(mutations, { start: cursor, end: cursor, direction: 'none' }, historySegments, historyLabel);
+    const deletedLength = Math.max(0, diff.previousEnd - diff.prefix);
+    const historyLabel = historyLabelForInput(inputType || '', nextSelection.start !== nextSelection.end, insertedTextOverride ?? diff.insertedText, deletedLength);
+    commitLocalMutations(mutations, nextSelection, historySegments, historyLabel);
   }
 
   function connect(): void {

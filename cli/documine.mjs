@@ -106,7 +106,7 @@ if (command === "serve") {
   const cliDir = path.dirname(new URL(import.meta.url).pathname);
   const serverPath = path.join(cliDir, "..", "dist", "server.js");
   if (!fs.existsSync(serverPath)) {
-    console.error(`Server not found at ${serverPath}. Run 'pnpm build' first.`);
+    console.error(`Server not found at ${serverPath}. Run 'npm run build' first.`);
     process.exit(1);
   }
   const serverArgs = [serverPath];
