@@ -1331,10 +1331,28 @@ app.post('/api/render', async (c) => {
   return c.json({ ok: true, html: renderMarkdown(String(body.markdown || '')) });
 });
 
+app.get('/api/share/:shareId/meta', (c) => {
+  const note = requireShareAccess(c, 'view');
+  if (!note) {
+    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
+  }
+
+  return c.json({
+    ok: true,
+    title: note.title,
+    shareId: note.shareId,
+    shareUrl: makeShareUrl(c, note.shareId),
+    updatedAt: note.updatedAt,
+  });
+});
+
 app.get('/api/share/:shareId', (c) => {
   const note = requireShareAccess(c, 'view');
   if (!note) {
     return c.json({ ok: false, error: 'Shared note not found.' }, 404);
+  }
+  if (!requireSharedIdentity(c)) {
+    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
   }
 
   return c.json({ ok: true, ...serializeNoteForClient(note, c) });
@@ -1344,6 +1362,9 @@ app.get('/api/share/:shareId/note', (c) => {
   const note = requireShareAccess(c, 'view');
   if (!note) {
     return c.json({ ok: false, error: 'Shared note not found.' }, 404);
+  }
+  if (!requireSharedIdentity(c)) {
+    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
   }
 
   return c.json({
@@ -1364,6 +1385,9 @@ app.get('/api/share/:shareId/collab', (c) => {
   if (!note) {
     return c.json({ ok: false, error: 'Shared note not found.' }, 404);
   }
+  if (!requireSharedIdentity(c)) {
+    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
+  }
 
   return c.json({
     ok: true,
@@ -1380,6 +1404,9 @@ app.post('/api/share/:shareId/edit', async (c) => {
   const note = requireShareAccess(c, 'edit');
   if (!note) {
     return c.json({ ok: false, error: 'Shared note not found.' }, 404);
+  }
+  if (!requireSharedIdentity(c)) {
+    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
   }
 
   const body = await readJsonBody(c);
@@ -1414,6 +1441,9 @@ app.post('/api/share/:shareId/render', async (c) => {
   if (!note) {
     return c.json({ ok: false, error: 'Shared note not found.' }, 404);
   }
+  if (!requireSharedIdentity(c)) {
+    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
+  }
 
   const body = await readJsonBody(c);
   return c.json({ ok: true, html: renderMarkdown(String(body.markdown || '')) });
@@ -1423,6 +1453,9 @@ app.post('/api/share/:shareId/export/html-preview', async (c) => {
   const note = requireShareAccess(c, 'view');
   if (!note) {
     return c.json({ ok: false, error: 'Shared note not found.' }, 404);
+  }
+  if (!requireSharedIdentity(c)) {
+    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
   }
 
   const body = await readJsonBody(c) as { markdown?: unknown; settings?: unknown };
@@ -1442,7 +1475,7 @@ app.post('/api/share/:shareId/export/html-preview', async (c) => {
 });
 
 app.post('/api/share/:shareId/identity', async (c) => {
-  const note = requireShareAccess(c, 'comment');
+  const note = requireShareAccess(c, 'view');
   if (!note) {
     return c.json({ ok: false, error: 'Shared note not found.' }, 404);
   }
@@ -1473,6 +1506,9 @@ app.post(
     if (!note) {
       return c.json({ ok: false, error: 'Shared note not found.' }, 404);
     }
+    if (!requireSharedIdentity(c)) {
+      return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
+    }
 
     return handleImageUpload(c, note);
   },
@@ -1482,6 +1518,9 @@ app.post('/api/share/:shareId/threads', async (c) => {
   const note = requireShareAccess(c, 'comment');
   if (!note) {
     return c.json({ ok: false, error: 'Shared note not found.' }, 404);
+  }
+  if (!requireSharedIdentity(c)) {
+    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
   }
 
   const body = await readJsonBody(c);
@@ -1525,6 +1564,9 @@ app.post('/api/share/:shareId/threads/:threadId/replies', async (c) => {
   const note = requireShareAccess(c, 'comment');
   if (!note) {
     return c.json({ ok: false, error: 'Shared note not found.' }, 404);
+  }
+  if (!requireSharedIdentity(c)) {
+    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
   }
 
   const thread = note.threads.find((item) => item.id === c.req.param('threadId'));
@@ -1571,6 +1613,9 @@ app.patch('/api/share/:shareId/threads/:threadId', async (c) => {
   if (!note) {
     return c.json({ ok: false, error: 'Shared note not found.' }, 404);
   }
+  if (!requireSharedIdentity(c)) {
+    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
+  }
 
   const thread = note.threads.find((item) => item.id === c.req.param('threadId'));
   if (!thread) {
@@ -1595,6 +1640,9 @@ app.delete('/api/share/:shareId/threads/:threadId', (c) => {
   if (!note) {
     return c.json({ ok: false, error: 'Shared note not found.' }, 404);
   }
+  if (!requireSharedIdentity(c)) {
+    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
+  }
 
   const thread = note.threads.find((item) => item.id === c.req.param('threadId'));
   if (!thread) {
@@ -1616,6 +1664,9 @@ app.patch('/api/share/:shareId/messages/:messageId', async (c) => {
   const note = requireShareAccess(c, 'comment');
   if (!note) {
     return c.json({ ok: false, error: 'Shared note not found.' }, 404);
+  }
+  if (!requireSharedIdentity(c)) {
+    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
   }
 
   const located = locateMessage(note, c.req.param('messageId'));
@@ -1646,6 +1697,9 @@ app.delete('/api/share/:shareId/messages/:messageId', (c) => {
   const note = requireShareAccess(c, 'comment');
   if (!note) {
     return c.json({ ok: false, error: 'Shared note not found.' }, 404);
+  }
+  if (!requireSharedIdentity(c)) {
+    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
   }
 
   const located = locateMessage(note, c.req.param('messageId'));
@@ -1764,7 +1818,11 @@ wss.on('connection', (ws, req) => {
     }
 
     if (note.shareAccess === 'edit') {
-      const commenterName = getCommenterIdentityFromHeaders(req.headers).name;
+      const commenterIdentity = getCommenterIdentityFromHeaders(req.headers);
+      if (!commenterIdentity.id || !commenterIdentity.name) {
+        ws.close();
+        return;
+      }
       const clientId = `c${++clientIdCounter}`;
       const color = CURSOR_COLORS[nextColorIndex++ % CURSOR_COLORS.length];
       const conn: ClientConn = {
@@ -1773,7 +1831,7 @@ wss.on('connection', (ws, req) => {
         noteId: note.id,
         shareId: note.shareId,
         clientId,
-        name: commenterName || 'Anonymous',
+        name: commenterIdentity.name,
         color,
         alive: true,
       };
@@ -1789,7 +1847,11 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
-    const commenterName = getCommenterIdentityFromHeaders(req.headers).name;
+    const commenterIdentity = getCommenterIdentityFromHeaders(req.headers);
+    if (!commenterIdentity.id || !commenterIdentity.name) {
+      ws.close();
+      return;
+    }
     const clientId = `c${++clientIdCounter}`;
     const conn: ClientConn = {
       ws,
@@ -1797,7 +1859,7 @@ wss.on('connection', (ws, req) => {
       noteId: note.id,
       shareId: note.shareId,
       clientId,
-      name: commenterName || 'Guest',
+      name: commenterIdentity.name,
       color: '',
       alive: true,
     };
@@ -2459,6 +2521,11 @@ function requireShareAccess(c: Context, minAccess: ShareAccess) {
     return null;
   }
   return note;
+}
+
+function requireSharedIdentity(c: Context) {
+  const commenter = getCommenterIdentity(c);
+  return Boolean(commenter.id && commenter.name);
 }
 
 function countOccurrences(haystack: string, needle: string) {

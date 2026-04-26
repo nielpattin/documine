@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type RefCallback, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type KeyboardEvent, type RefCallback, type RefObject } from 'react';
 import {
   ApiError,
   apiRequest,
@@ -82,6 +82,12 @@ type ScrollMetrics = {
 
 function hasScrolledToNewViewport(previous: ScrollMetrics | null, next: ScrollMetrics) {
   return !previous || previous.scrollTop !== next.scrollTop;
+}
+
+function useDocumentTitle(title: string) {
+  useEffect(() => {
+    document.title = title;
+  }, [title]);
 }
 
 function summarizeHistoryStatus(history: EditorHistoryState): string {
@@ -1180,6 +1186,7 @@ function OwnerNotePage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [title, setTitle] = useState('');
+  useDocumentTitle(title || 'Untitled');
   const [shareAccess, setShareAccess] = useState<ShareAccess>('none');
   const [markdown, setMarkdown] = useState('');
   const [renderedHtml, setRenderedHtml] = useState('');
@@ -1777,6 +1784,10 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [identityName, setIdentityName] = useState('');
+  const [identityRequired, setIdentityRequired] = useState(false);
+  const [identitySaving, setIdentitySaving] = useState(false);
+  const [identityError, setIdentityError] = useState('');
+  useDocumentTitle(payload?.note.title || 'Untitled');
   const [markdown, setMarkdown] = useState('');
   const [renderedHtml, setRenderedHtml] = useState('');
   const [connected, setConnected] = useState(false);
@@ -1856,11 +1867,19 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
     try {
       const nextPayload = await apiRequest<NotePayload>(`/api/share/${shareId}`);
       setPayload(nextPayload);
+      setIdentityRequired(false);
+      setIdentityError('');
       setIdentityName(nextPayload.viewer.commenterName || '');
       setMarkdown(nextPayload.note.markdown);
       setRenderedHtml(preparePreviewHtml(nextPayload.note.renderedHtml));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Failed to load shared note.');
+      if (cause instanceof ApiError && cause.status === 401) {
+        setPayload(null);
+        setIdentityRequired(true);
+        setError('');
+      } else {
+        setError(cause instanceof Error ? cause.message : 'Failed to load shared note.');
+      }
     } finally {
       if (!options?.background) {
         setLoading(false);
@@ -1997,7 +2016,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
     };
   }, [renderedPdfUrl]);
 
-  async function setIdentity() {
+  async function saveIdentity() {
     const response = await apiRequest<{ ok: true; viewer: NotePayload['viewer'] }>(`/api/share/${shareId}/identity`, {
       method: 'POST',
       body: { name: identityName },
@@ -2005,6 +2024,20 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
     setPayload((current) => current ? { ...current, viewer: response.viewer } : current);
     setIdentityName(response.viewer.commenterName || '');
     setShowIdentityModal(false);
+  }
+
+  async function submitRequiredIdentity() {
+    setIdentitySaving(true);
+    setIdentityError('');
+    try {
+      await saveIdentity();
+      setIdentityRequired(false);
+      await loadSharedNote();
+    } catch (cause) {
+      setIdentityError(cause instanceof Error ? cause.message : 'Failed to save your name.');
+    } finally {
+      setIdentitySaving(false);
+    }
   }
 
   async function createThread(anchor: ThreadAnchor, body: string) {
@@ -2063,6 +2096,19 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
 
   if (loading) {
     return <LoadingPage message="Loading shared note" />;
+  }
+
+  if (identityRequired) {
+    return (
+      <RequiredShareIdentityPage
+        name={identityName}
+        saving={identitySaving}
+        error={identityError}
+        onNameChange={setIdentityName}
+        onSubmit={submitRequiredIdentity}
+        onToggleTheme={onToggleTheme}
+      />
+    );
   }
 
   if (error || !payload) {
@@ -2243,7 +2289,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
         <CommentIdentityModal
           name={identityName}
           onNameChange={setIdentityName}
-          onSave={setIdentity}
+          onSave={saveIdentity}
           onClose={() => {
             setShowIdentityModal(false);
             setPendingThreadAnchor(null);
@@ -2900,6 +2946,59 @@ function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; markdow
           <div className="pdf-export-footer">
             Engine: Browser PDF · Defaults saved to instance data
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RequiredShareIdentityPage({
+  name,
+  saving,
+  error,
+  onNameChange,
+  onSubmit,
+  onToggleTheme,
+}: {
+  name: string;
+  saving: boolean;
+  error: string;
+  onNameChange: (name: string) => void;
+  onSubmit: () => Promise<void>;
+  onToggleTheme: () => void;
+}) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!name.trim() || saving) {
+      return;
+    }
+    await onSubmit();
+  }
+
+  return (
+    <div className="page-shell simple-page">
+      <div className="simple-page-content">
+        <div className="auth-card">
+          <div className="auth-header">
+            <div>
+              <h1>Enter your name</h1>
+              <p>Set your name before opening this shared note.</p>
+            </div>
+            <button type="button" className="documine-btn documine-btn--md documine-btn--ghost theme-toggle" onClick={onToggleTheme}>
+              Theme
+            </button>
+          </div>
+          <form onSubmit={(event) => void handleSubmit(event)}>
+            <div className="field">
+              <input value={name} onChange={(event) => onNameChange(event.target.value)} placeholder="Your name" autoFocus />
+            </div>
+            {error ? <div className="inline-error">{error}</div> : null}
+            <div className="modal-actions">
+              <button type="submit" className="primary" disabled={saving || !name.trim()}>
+                {saving ? 'Opening...' : 'Open shared note'}
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     </div>
