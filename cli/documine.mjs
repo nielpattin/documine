@@ -92,6 +92,51 @@ function isShareInstance(instance) {
   return Boolean(instance.shareId && !instance.token);
 }
 
+function imageContentType(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === ".png") return "image/png";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".gif") return "image/gif";
+  if (extension === ".webp") return "image/webp";
+  if (extension === ".avif") return "image/avif";
+  return null;
+}
+
+async function uploadImage(instance, endpoint, filePath) {
+  const contentType = imageContentType(filePath);
+  if (!contentType) {
+    console.error("Only PNG, JPEG, GIF, WebP, and AVIF images are supported.");
+    process.exit(1);
+  }
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    console.error(`Image file not found: ${filePath}`);
+    process.exit(1);
+  }
+
+  const boundary = `----documine-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+  const fileName = path.basename(filePath);
+  const fileBytes = fs.readFileSync(filePath);
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName.replace(/"/g, "")}"\r\nContent-Type: ${contentType}\r\n\r\n`, "utf8"),
+    fileBytes,
+    Buffer.from(`\r\n--${boundary}--\r\n`, "utf8"),
+  ]);
+
+  const url = `${instance.baseUrl.replace(/\/$/, "")}${endpoint}`;
+  const headers = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
+  if (instance.token) {
+    headers.Authorization = `Bearer ${instance.token}`;
+  }
+
+  const response = await fetch(url, { method: "POST", headers, body });
+  const payload = await response.json();
+  if (!response.ok) {
+    console.error(`Error ${response.status}: ${payload.error || payload.errors?.join(", ") || "Request failed"}`);
+    process.exit(1);
+  }
+  return payload;
+}
+
 const args = process.argv.slice(2);
 const command = args[0];
 
@@ -186,7 +231,7 @@ const subCommand = args[1];
 
 if (!subCommand) {
   console.error(`Usage: documine <instance> <command> [args...]`);
-  console.error(`Commands: list, search, read, create, edit, delete, update, auth-status, login-enable, login-disable, login-bans, login-unban`);
+  console.error(`Commands: list, search, read, create, edit, delete, update, upload-image, auth-status, login-enable, login-disable, login-bans, login-unban`);
   process.exit(1);
 }
 
@@ -390,6 +435,18 @@ switch (subCommand) {
       await request(instance, "PUT", `/api/notes/${payload.note.id}`, { title, markdown: "" });
     }
     console.log(`${payload.note.id}\t${title}`);
+    break;
+  }
+
+  case "upload-image": {
+    const noteId = args[2];
+    const imagePath = args[3];
+    if (!noteId || !imagePath) {
+      console.error("Usage: documine <instance> upload-image <id> <imagePath>");
+      process.exit(1);
+    }
+    const payload = await uploadImage(instance, `/api/notes/${encodeURIComponent(noteId)}/images`, imagePath);
+    console.log(payload.asset.markdown);
     break;
   }
 
@@ -599,6 +656,7 @@ Owner commands:
   documine <instance> read <id>                Read a note with comments
   documine <instance> create [title]           Create a new note
   documine <instance> share <id> [access]      Get/set share access (none|view|comment|edit)
+  documine <instance> upload-image <id> <path> Upload image and print markdown
   documine <instance> comment <id> <quote> <b> Comment on quoted text
   documine <instance> reply <id> <tid> <mid> b  Reply to a specific message
   documine <instance> resolve <id> <tid>        Resolve a thread
