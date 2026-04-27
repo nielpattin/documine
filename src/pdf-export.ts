@@ -570,7 +570,7 @@ async function htmlToPdfWithBrowser(htmlPath: string, pdfPath: string, signal?: 
 
   const browser = await puppeteer.launch({
     headless: true,
-    args: ['--allow-file-access-from-files'],
+    args: ['--allow-file-access-from-files', '--no-sandbox', '--disable-setuid-sandbox'],
   });
 
   try {
@@ -717,7 +717,7 @@ export async function exportMarkdownToPdf(input: ExportPdfInput): Promise<Export
 export async function warmPdfPreviewEngine(): Promise<void> {
   const browser = await puppeteer.launch({
     headless: true,
-    args: ['--allow-file-access-from-files'],
+    args: ['--allow-file-access-from-files', '--no-sandbox', '--disable-setuid-sandbox'],
   });
   await browser.close();
 }
