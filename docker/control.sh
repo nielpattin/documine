@@ -9,7 +9,7 @@ printHelp () {
 	echo "Available commands:"
 	echo
 	echo "   start        Builds docker images and starts the production stack."
-	echo "   startdev     Builds docker images and starts the local stack (API 3120, web 5173)."
+	echo "   startdev     Builds docker images and starts the local stack (API 3120, web 5175)."
 	echo "   stop         Stops the stack."
 	echo "   logs         Tail -f stack logs."
 	echo "   shell        Opens a shell into the api container."

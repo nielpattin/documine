@@ -13,6 +13,11 @@ import sanitizeHtml from 'sanitize-html';
 import { WebSocketServer, type WebSocket } from 'ws';
 
 import {
+  createNotesExportZip,
+  importNotesExportZip,
+  type ArchiveNoteInput,
+} from './note-archive.js';
+import {
   defaultPdfExportSettings,
   detectPdfExportCapabilities,
   exportMarkdownToPdf,
@@ -80,6 +85,8 @@ type NoteMetaFile = {
   threads: CommentThread[];
   collab?: SavedCollabState;
   collabState?: SavedCollabState;
+  importedAt?: string;
+  importOpenedAt?: string | null;
 };
 
 type NoteRecord = {
@@ -93,6 +100,8 @@ type NoteRecord = {
   markdown: string;
   collab: CollabState;
   clientAcks: Map<string, number>;
+  importedAt?: string;
+  importOpenedAt?: string | null;
 };
 
 type NoteSummary = {
@@ -101,6 +110,7 @@ type NoteSummary = {
   updatedAt: string;
   shareId: string;
   snippet: string;
+  isImportedUnread: boolean;
 };
 
 type NoteAssetSummary = {
@@ -261,6 +271,7 @@ const authGlobalLoginWindowMs = 1000 * 60 * 5;
 const authGlobalLoginThreshold = 10;
 const shareAccessLevels: Record<ShareAccess, number> = { none: 0, view: 1, comment: 2, edit: 3 };
 const maxImageUploadBytes = 10 * 1024 * 1024;
+const maxNotesImportZipBytes = 100 * 1024 * 1024;
 const imageMimeExtensions: Record<string, string> = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
@@ -673,6 +684,90 @@ app.post('/api/notes', (c) => {
   return c.json({ ok: true, note: summarizeNote(note, '') });
 });
 
+app.post('/api/notes/export', async (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const body = await readJsonBody(c) as { scope?: unknown; noteIds?: unknown };
+  const selectedNotes = selectNotesForExport(body);
+  if (!selectedNotes.length) {
+    return c.json({ ok: false, error: 'Select at least one note to export.' }, 400);
+  }
+
+  const archiveNotes = selectedNotes.map((note) => buildArchiveNoteInput(note));
+  const zip = createNotesExportZip({ notes: archiveNotes, exportedAt: nowIso() });
+  const fileName = archiveNotes.length === 1
+    ? `${slugifyFileName(archiveNotes[0].title) || 'note'}.documine.zip`
+    : `documine-notes-${new Date().toISOString().slice(0, 10)}.zip`;
+  return c.body(new Uint8Array(zip), 200, {
+    'Content-Type': 'application/zip',
+    'Content-Disposition': `attachment; filename="${fileName}"`,
+    'Cache-Control': 'no-store',
+  });
+});
+
+app.post(
+  '/api/notes/import',
+  bodyLimit({
+    maxSize: maxNotesImportZipBytes,
+    onError: (c) => c.json({ ok: false, error: 'This export is too large to import.' }, 413),
+  }),
+  async (c) => {
+    if (!isOwnerAuthenticated(c)) {
+      return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+    }
+
+    const body = await c.req.parseBody();
+    const file = body.file;
+    if (!(file instanceof File) || !file.name.toLowerCase().endsWith('.zip')) {
+      return c.json({ ok: false, error: 'Choose a .zip file exported from Documine.' }, 400);
+    }
+
+    let result;
+    try {
+      result = importNotesExportZip({
+        zipBuffer: Buffer.from(await file.arrayBuffer()),
+        existingTitles: new Set(Array.from(notes.values()).map((note) => note.title)),
+        now: nowIso(),
+        createId: () => createShortId(),
+      });
+    } catch (error) {
+      return c.json({ ok: false, error: error instanceof Error ? error.message : 'This file is not a valid Documine notes export.' }, 400);
+    }
+
+    for (const imported of result.imported) {
+      const note: NoteRecord = {
+        id: imported.id,
+        title: normalizeTitle(imported.title),
+        shareId: imported.shareId,
+        shareAccess: 'none',
+        createdAt: imported.createdAt,
+        updatedAt: imported.updatedAt,
+        markdown: imported.markdown,
+        threads: imported.threads,
+        collab: collabFromMarkdown(imported.markdown),
+        clientAcks: new Map(),
+        importedAt: imported.importedAt,
+        importOpenedAt: imported.importOpenedAt,
+      };
+      notes.set(note.id, note);
+      fs.mkdirSync(noteAssetDirectory(note.id), { recursive: true });
+      for (const asset of imported.assets) {
+        fs.writeFileSync(noteAssetPath(note.id, asset.fileName), asset.bytes);
+      }
+      persistNote(note);
+    }
+
+    return c.json({
+      ok: true,
+      imported: result.imported.map((note) => ({ id: note.id, title: note.title, updatedAt: note.updatedAt })),
+      skipped: result.skipped,
+      warnings: result.warnings,
+    });
+  },
+);
+
 app.get('/api/notes/:id', (c) => {
   if (!isOwnerAuthenticated(c)) {
     return c.json({ ok: false, error: 'Unauthorized.' }, 401);
@@ -708,6 +803,11 @@ app.get('/api/notes/:id', (c) => {
         content: slice.map((line, index) => `${start + index + 1}: ${line}`).join('\n'),
       },
     });
+  }
+
+  if (note.importedAt && note.importOpenedAt === null) {
+    note.importOpenedAt = nowIso();
+    persistNote(note);
   }
 
   return c.json({ ok: true, ...serializeNoteForClient(note, c) });
@@ -2326,6 +2426,8 @@ function loadNotesIntoMemory() {
       threads,
       collab,
       clientAcks: new Map(),
+      importedAt: meta.importedAt,
+      importOpenedAt: Object.prototype.hasOwnProperty.call(meta, 'importOpenedAt') ? meta.importOpenedAt ?? null : undefined,
     });
   }
 }
@@ -2383,6 +2485,8 @@ function persistNote(note: NoteRecord, broadcastUpdate = true) {
     updatedAt: note.updatedAt,
     threads: note.threads,
     collab: saveCollabState(note.collab),
+    importedAt: note.importedAt,
+    importOpenedAt: note.importOpenedAt,
   };
 
   fs.writeFileSync(noteMarkdownPath(note.id), note.markdown, 'utf8');
@@ -2390,6 +2494,60 @@ function persistNote(note: NoteRecord, broadcastUpdate = true) {
   if (broadcastUpdate) {
     broadcastNoteUpdate(note);
   }
+}
+
+function selectNotesForExport(body: { scope?: unknown; noteIds?: unknown }) {
+  if (body.scope === 'all') {
+    return Array.from(notes.values());
+  }
+  if (body.scope !== 'selected' || !Array.isArray(body.noteIds)) {
+    return [];
+  }
+  const selected: NoteRecord[] = [];
+  for (const id of body.noteIds) {
+    if (typeof id !== 'string') {
+      continue;
+    }
+    const note = notes.get(id);
+    if (note) {
+      selected.push(note);
+    }
+  }
+  return selected;
+}
+
+function buildArchiveNoteInput(note: NoteRecord): ArchiveNoteInput {
+  note.markdown = collabToMarkdown(note.collab);
+  return {
+    id: note.id,
+    title: note.title,
+    markdown: note.markdown,
+    threads: note.threads,
+    assets: collectArchiveAssets(note),
+  };
+}
+
+function collectArchiveAssets(note: NoteRecord): ArchiveNoteInput['assets'] {
+  const directory = noteAssetDirectory(note.id);
+  if (!fs.existsSync(directory)) {
+    return [];
+  }
+  return fs.readdirSync(directory).flatMap((fileName) => {
+    const filePath = noteAssetPath(note.id, fileName);
+    if (!fs.statSync(filePath).isFile()) {
+      return [];
+    }
+    const extension = path.extname(fileName).toLowerCase();
+    const contentType = imageContentTypeFromExtension(extension);
+    if (!contentType) {
+      return [];
+    }
+    return [{ fileName, bytes: fs.readFileSync(filePath), contentType }];
+  });
+}
+
+function slugifyFileName(value: string) {
+  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
 }
 
 function searchNotes(query: string) {
@@ -2407,6 +2565,7 @@ function summarizeNote(note: NoteRecord, needle: string): NoteSummary {
     updatedAt: note.updatedAt,
     shareId: note.shareId,
     snippet: buildSnippet(note, needle),
+    isImportedUnread: Boolean(note.importedAt && note.importOpenedAt === null),
   };
 }
 

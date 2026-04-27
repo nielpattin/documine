@@ -4,10 +4,12 @@ import {
   apiRequest,
   buildWsUrl,
   deleteNotePdf,
+  exportNotes,
   formatDate,
   getApiHttpOrigin,
   listNotePdfExports,
   requestRenderedHtmlPreview,
+  importNotes,
   requestSharedRenderedHtmlPreview,
   saveNotePdf,
   type ApiKey,
@@ -88,6 +90,22 @@ function useDocumentTitle(title: string) {
   useEffect(() => {
     document.title = title;
   }, [title]);
+}
+
+function useNotesListRefreshSignal(onRefresh: () => void) {
+  useEffect(() => {
+    function handleStorage(event: StorageEvent) {
+      if (event.key === 'documine_notes_list_refresh') {
+        onRefresh();
+      }
+    }
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [onRefresh]);
+}
+
+function broadcastNotesListRefresh() {
+  localStorage.setItem('documine_notes_list_refresh', String(Date.now()));
 }
 
 function summarizeHistoryStatus(history: EditorHistoryState): string {
@@ -990,6 +1008,11 @@ function NotesListPage({
   const [showSettings, setShowSettings] = useState(false);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [keysLoading, setKeysLoading] = useState(false);
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(() => new Set());
+  const [transferStatus, setTransferStatus] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const selectedCount = selectedNoteIds.size;
 
   const loadNotes = useCallback(async (query: string) => {
     setLoading(true);
@@ -1003,6 +1026,10 @@ function NotesListPage({
       setLoading(false);
     }
   }, []);
+
+  useNotesListRefreshSignal(() => {
+    void loadNotes(search);
+  });
 
   const loadKeys = useCallback(async () => {
     setKeysLoading(true);
@@ -1038,7 +1065,74 @@ function NotesListPage({
     }
 
     await apiRequest(`/api/notes/${noteId}`, { method: 'DELETE' });
+    setSelectedNoteIds((current) => {
+      const next = new Set(current);
+      next.delete(noteId);
+      return next;
+    });
     await loadNotes(search);
+  }
+
+  function toggleSelectedNote(noteId: string) {
+    setSelectedNoteIds((current) => {
+      const next = new Set(current);
+      if (next.has(noteId)) {
+        next.delete(noteId);
+      } else {
+        next.add(noteId);
+      }
+      return next;
+    });
+  }
+
+  function downloadBlob(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleExport(scope: 'all' | 'selected') {
+    if (scope === 'selected' && selectedNoteIds.size === 0) {
+      setTransferStatus('Select at least one note to export.');
+      return;
+    }
+    setExporting(true);
+    setTransferStatus('Exporting...');
+    try {
+      const result = await exportNotes(scope, Array.from(selectedNoteIds));
+      downloadBlob(result.blob, result.fileName);
+      setTransferStatus('');
+    } catch (cause) {
+      setTransferStatus(cause instanceof Error ? cause.message : 'Could not export notes. Try again.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleImport(file: File | null) {
+    if (!file) {
+      return;
+    }
+    setImporting(true);
+    setTransferStatus('Importing...');
+    try {
+      const result = await importNotes(file);
+      const issueText = result.skipped.length || result.warnings.length
+        ? `, skipped ${result.skipped.length}, with ${result.warnings.length} warnings`
+        : '';
+      setTransferStatus(`Imported ${result.imported.length} notes${issueText}.`);
+      broadcastNotesListRefresh();
+      await loadNotes(search);
+    } catch (cause) {
+      setTransferStatus(cause instanceof Error ? cause.message : 'This file is not a valid Documine notes export.');
+    } finally {
+      setImporting(false);
+    }
   }
 
   async function handleCreateKey() {
@@ -1072,6 +1166,23 @@ function NotesListPage({
           <div className="topbar-title">notes</div>
         </div>
         <div className="topbar-right">
+          <label className="documine-btn documine-btn--md documine-btn--ghost import-button">
+            {importing ? 'Importing...' : 'Import'}
+            <input
+              type="file"
+              accept=".zip,application/zip"
+              hidden
+              disabled={importing}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0] || null;
+                event.currentTarget.value = '';
+                void handleImport(file);
+              }}
+            />
+          </label>
+          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" disabled={exporting} onClick={() => void handleExport('all')}>
+            Export all
+          </button>
           <button type="button" className="documine-btn documine-btn--md documine-btn--primary" onClick={() => void handleCreateNote()}>
             New note
           </button>
@@ -1098,6 +1209,20 @@ function NotesListPage({
           />
         </div>
 
+        {transferStatus ? <p className="empty-state">{transferStatus}</p> : null}
+
+        {selectedCount > 0 ? (
+          <div className="selection-toolbar">
+            <span>{selectedCount} selected</span>
+            <button type="button" className="documine-btn documine-btn--sm documine-btn--primary" disabled={exporting} onClick={() => void handleExport('selected')}>
+              {exporting ? 'Exporting...' : 'Export selected'}
+            </button>
+            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => setSelectedNoteIds(new Set())}>
+              Clear selection
+            </button>
+          </div>
+        ) : null}
+
         {error ? <p className="empty-state">{error}</p> : null}
 
         {loading ? <p className="empty-state">Loading notes...</p> : null}
@@ -1114,8 +1239,19 @@ function NotesListPage({
         <div className="note-list">
           {notes.map((note) => (
             <div key={note.id} className="note-row" onClick={() => onOpenNote(note.id)}>
+              <label className="note-row-select" onClick={(event) => event.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  checked={selectedNoteIds.has(note.id)}
+                  onChange={() => toggleSelectedNote(note.id)}
+                  aria-label={`Select ${note.title}`}
+                />
+              </label>
               <div className="note-row-content">
-                <div className="note-row-title">{note.title}</div>
+                <div className="note-row-title">
+                  {note.title}
+                  {note.isImportedUnread ? <span className="imported-badge">Imported</span> : null}
+                </div>
                 <div className="note-row-snippet">{note.snippet || 'Empty note'}</div>
                 <div className="note-row-meta">{formatDate(note.updatedAt)}</div>
               </div>
@@ -1279,6 +1415,7 @@ function OwnerNotePage({
       setMarkdown(nextPayload.note.markdown);
       setRenderedHtml(preparePreviewHtml(nextPayload.note.renderedHtml));
       setSaveStatus('Saved');
+      broadcastNotesListRefresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Failed to load note.');
     } finally {

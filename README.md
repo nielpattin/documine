@@ -78,7 +78,7 @@ cd docker
 bash control.sh startdev
 ```
 
-This starts the API on `http://localhost:3120` and the frontend on `http://localhost:5173`.
+This starts the API on `http://localhost:3120` and the frontend on `http://localhost:5175`.
 
 ## Sharing
 

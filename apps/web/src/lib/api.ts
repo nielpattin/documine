@@ -61,6 +61,7 @@ export type NoteSummary = {
   updatedAt: string;
   shareId: string;
   snippet: string;
+  isImportedUnread: boolean;
 };
 
 export type NoteDetails = {
@@ -197,6 +198,13 @@ export type DeleteNotePdfPayload = {
   exports: NotePdfExport[];
 };
 
+export type ImportNotesPayload = {
+  ok: true;
+  imported: Array<{ id: string; title: string; updatedAt: string }>;
+  skipped: Array<{ title: string; error: string }>;
+  warnings: Array<{ title: string; warning: string }>;
+};
+
 export class ApiError extends Error {
   status: number;
   details?: string[];
@@ -274,6 +282,32 @@ export async function apiRequest<T>(path: string, init: { method?: string; body?
   });
 
   return parseApiResponse<T>(response);
+}
+
+export async function exportNotes(scope: 'all' | 'selected', noteIds: string[] = []): Promise<{ blob: Blob; fileName: string }> {
+  const response = await fetch(buildApiUrl('/api/notes/export'), {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(scope === 'all' ? { scope } : { scope, noteIds }),
+  });
+  if (!response.ok) {
+    await parseApiResponse(response);
+  }
+  const disposition = response.headers.get('content-disposition') || '';
+  const fileName = disposition.match(/filename="?([^";]+)"?/i)?.[1] || 'documine-notes.zip';
+  return { blob: await response.blob(), fileName };
+}
+
+export async function importNotes(file: File): Promise<ImportNotesPayload> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await fetch(buildApiUrl('/api/notes/import'), {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  });
+  return parseApiResponse<ImportNotesPayload>(response);
 }
 
 export async function uploadImage(file: File, options: { noteId?: string; shareId?: string }): Promise<UploadedImagePayload> {
