@@ -22,8 +22,9 @@ import {
   detectPdfExportCapabilities,
   exportMarkdownToPdf,
   loadPdfExportSettings,
-  renderMarkdownToExportHtml,
   savePdfExportSettings,
+  buildPdfCss,
+  mergeSettings,
   warmPdfPreviewEngine,
 } from './pdf-export.js';
 import {
@@ -940,21 +941,16 @@ app.post('/api/notes/:id/export/html-preview', async (c) => {
   const requestStartedAt = performance.now();
 
   try {
-    const result = await renderMarkdownToExportHtml({
-      noteId: note.id,
-      noteTitle: note.title,
-      markdown: typeof body.markdown === 'string' ? body.markdown : note.markdown,
-      settings: body.settings === undefined ? savedSettings : body.settings,
-      assetDirectory: noteAssetDirectory(note.id),
-      signal: controller.signal,
-    });
+    const markdown = typeof body.markdown === 'string' ? body.markdown : note.markdown;
+    const settings = body.settings === undefined ? savedSettings : body.settings;
+    const html = renderPrintPreviewHtml(markdown, note.title, settings);
     if (activePdfPreviewControllers.get(previewKey) === controller) {
       activePdfPreviewControllers.delete(previewKey);
     }
     const baseHref = `${new URL(c.req.url).origin}/`;
-    const html = injectPreviewBaseHref(result.html, baseHref);
+    const outHtml = injectPreviewBaseHref(html, baseHref);
     console.log(`[html-preview] note=${note.id} total=${Math.round(performance.now() - requestStartedAt)}ms`);
-    return c.body(html, 200, {
+    return c.body(outHtml, 200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
     });
@@ -1559,16 +1555,12 @@ app.post('/api/share/:shareId/export/html-preview', async (c) => {
   }
 
   const body = await readJsonBody(c) as { markdown?: unknown; settings?: unknown };
-  const result = await renderMarkdownToExportHtml({
-    noteId: note.id,
-    noteTitle: note.title,
-    markdown: typeof body.markdown === 'string' ? body.markdown : note.markdown,
-    settings: body.settings === undefined ? defaultPdfExportSettings : body.settings,
-    assetDirectory: noteAssetDirectory(note.id),
-  });
+  const markdown = typeof body.markdown === 'string' ? body.markdown : note.markdown;
+  const settings = body.settings === undefined ? defaultPdfExportSettings : body.settings;
+  const html = renderPrintPreviewHtml(markdown, note.title, settings);
   const baseHref = `${new URL(c.req.url).origin}/`;
-  const html = injectPreviewBaseHref(result.html, baseHref);
-  return c.body(html, 200, {
+  const outHtml = injectPreviewBaseHref(html, baseHref);
+  return c.body(outHtml, 200, {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
   });
@@ -2864,6 +2856,24 @@ function renderMarkdown(markdown: string) {
       a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer', target: '_blank' }),
     },
   });
+}
+
+function renderPrintPreviewHtml(markdown: string, title: string, settings: unknown): string {
+  const merged = mergeSettings(settings);
+  const body = renderMarkdown(markdown);
+  const css = buildPdfCss(title, merged);
+  const safeTitle = escapeHtml(title || 'Untitled');
+  return [
+    '<!DOCTYPE html>',
+    '<html>',
+    '<head>',
+    `<meta charset="UTF-8">`,
+    `<title>${safeTitle}</title>`,
+    `<style>${css}</style>`,
+    '</head>',
+    `<body>${body}</body>`,
+    '</html>',
+  ].join('\n');
 }
 
 function makeShareUrl(c: Context, shareId: string) {

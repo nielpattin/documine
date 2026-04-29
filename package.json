@@ -14,7 +14,7 @@
   ],
   "description": "Self-hosted collaborative markdown editor with inline comment threads",
   "scripts": {
-    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "dev": "node --env-file-if-exists=.env ./node_modules/concurrently/dist/bin/concurrently.js \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "tsx watch src/server.ts",
     "dev:web": "npm run dev --workspace @documine/web",
     "build": "npm run build:web && npm run build:api",

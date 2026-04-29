@@ -386,9 +386,15 @@ function trimRightToBoundary(text: string, end: number, upperBound: number) {
   return index;
 }
 
+const _cachedHeadingText = { text: '', headings: [] as HeadingAnchor[] };
+
 function buildHeadingAnchors(text: string): HeadingAnchor[] {
   if (!text) {
     return [];
+  }
+
+  if (text === _cachedHeadingText.text) {
+    return _cachedHeadingText.headings;
   }
 
   const headings: HeadingAnchor[] = [];
@@ -416,6 +422,8 @@ function buildHeadingAnchors(text: string): HeadingAnchor[] {
     offset += line.length + 1;
   }
 
+  _cachedHeadingText.text = text;
+  _cachedHeadingText.headings = headings;
   return headings;
 }
 
@@ -508,6 +516,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   let serverState: EditorState = { text: '', idList: new SimpleIdList() };
   let currentState: EditorState = { text: '', idList: new SimpleIdList() };
   let pendingMutations: ClientMutation[] = [];
+  let localMutationsSettledResolvers: Array<() => void> = [];
   let undoStack: HistoryTransaction[] = [];
   let redoStack: HistoryTransaction[] = [];
 
@@ -530,6 +539,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   host.appendChild(mirror);
 
   let resizeObserver: ResizeObserver | null = null;
+  let scrollRafId: number | null = null;
   try {
     resizeObserver = new ResizeObserver(() => renderRemoteCursors());
     resizeObserver.observe(textarea);
@@ -568,7 +578,9 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   function render(sel?: TextSelection): void {
     const nextSelection = clampSel(currentState.text, sel || currentDomSelection());
     programmatic = true;
-    textarea.value = currentState.text;
+    if (textarea.value !== currentState.text) {
+      textarea.value = currentState.text;
+    }
     textarea.setSelectionRange(nextSelection.start, nextSelection.end, nextSelection.direction);
     queueMicrotask(() => { programmatic = false; });
     onTextChange?.(currentState.text);
@@ -577,7 +589,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
 
   function renderRemoteCursors(): void {
     overlay.innerHTML = '';
-    if (!initialized) return;
+    if (!initialized || remoteCursors.size === 0) return;
     const indices: number[] = [];
     const cursorData: Array<{ idx: number; name: string; color: string }> = [];
 
@@ -773,6 +785,28 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     };
   }
 
+  function resolveLocalMutationsSettled(): void {
+    if (pendingMutations.length > 0 || localMutationsSettledResolvers.length === 0) {
+      return;
+    }
+
+    const resolvers = localMutationsSettledResolvers;
+    localMutationsSettledResolvers = [];
+    for (const resolve of resolvers) {
+      resolve();
+    }
+  }
+
+  function waitForLocalMutationsSettled(): Promise<void> {
+    if (pendingMutations.length === 0) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      localMutationsSettledResolvers.push(resolve);
+    });
+  }
+
   function applyMutationBatch(mutations: ClientMutation[], sel: TextSelection): void {
     if (!mutations.length) {
       return;
@@ -901,6 +935,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     });
 
     replaceRangeWithText(start, end, formatPastedMarkdown(pending.map((item) => item.placeholder).join('\n\n'), start, end));
+    await waitForLocalMutationsSettled();
 
     for (const item of pending) {
       try {
@@ -963,7 +998,10 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     serverState = { text: msg.markdown || '', idList: applyIdListUpdates(serverState.idList, msg.idListUpdates || []) };
     if (msg.senderId === clientId && msg.senderCounter !== undefined) {
       const idx = pendingMutations.findIndex((mutation) => mutation.clientCounter === msg.senderCounter);
-      if (idx !== -1) pendingMutations = pendingMutations.slice(idx + 1);
+      if (idx !== -1) {
+        pendingMutations = pendingMutations.slice(idx + 1);
+        resolveLocalMutationsSettled();
+      }
     }
     currentState = replayPending(serverState, pendingMutations);
     render(selectionFromIds(selIds, currentState.idList));
@@ -1154,7 +1192,14 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   document.addEventListener('selectionchange', handleSelectionChange);
   textarea.addEventListener('focus', throttledPresence);
   textarea.addEventListener('blur', throttledPresence);
-  textarea.addEventListener('scroll', renderRemoteCursors);
+  const handleScroll = () => {
+    if (scrollRafId !== null) return;
+    scrollRafId = requestAnimationFrame(() => {
+      scrollRafId = null;
+      renderRemoteCursors();
+    });
+  };
+  textarea.addEventListener('scroll', handleScroll);
 
   emitHistoryChange();
   connect();
@@ -1172,7 +1217,11 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       document.removeEventListener('selectionchange', handleSelectionChange);
       textarea.removeEventListener('focus', throttledPresence);
       textarea.removeEventListener('blur', throttledPresence);
-      textarea.removeEventListener('scroll', renderRemoteCursors);
+      textarea.removeEventListener('scroll', handleScroll);
+      if (scrollRafId !== null) {
+        cancelAnimationFrame(scrollRafId);
+        scrollRafId = null;
+      }
       if (presenceTimer !== null) {
         clearTimeout(presenceTimer);
       }

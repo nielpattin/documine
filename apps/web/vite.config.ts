@@ -4,7 +4,16 @@ import path from 'node:path'
 import { defineConfig, type ViteDevServer } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const apiOrigin = process.env.DOCUMINE_API_HTTP_ORIGIN || 'http://localhost:3120'
+const apiPort = process.env.PORT
+const apiHttpOrigin = process.env.VITE_DOCUMINE_API_HTTP_ORIGIN || process.env.DOCUMINE_API_HTTP_ORIGIN || (apiPort ? `http://localhost:${apiPort}` : '')
+const apiWsOrigin = process.env.VITE_DOCUMINE_API_WS_ORIGIN || process.env.DOCUMINE_API_WS_ORIGIN || (apiPort ? `ws://localhost:${apiPort}` : '')
+const apiOrigin = apiHttpOrigin || 'http://localhost:3120'
+const apiProxy = {
+  '/api': apiOrigin,
+  '/assets': apiOrigin,
+  '/ws': { target: apiOrigin, ws: true },
+}
+const webPort = Number(process.env.DOCUMINE_WEB_PORT || 5175)
 const documineTitle = 'Documine'
 const documineDescription = 'Shared markdown note'
 
@@ -88,6 +97,10 @@ function installShareMetadataMiddleware(server: ViteDevServer) {
 }
 
 export default defineConfig({
+  define: {
+    'import.meta.env.VITE_DOCUMINE_API_HTTP_ORIGIN': JSON.stringify(apiHttpOrigin),
+    'import.meta.env.VITE_DOCUMINE_API_WS_ORIGIN': JSON.stringify(apiWsOrigin),
+  },
   plugins: [
     react(),
     {
@@ -97,14 +110,16 @@ export default defineConfig({
   ],
   server: {
     host: '0.0.0.0',
-    port: 5175,
+    port: webPort,
     strictPort: true,
     allowedHosts: ['documine.nielpat.cloud'],
+    proxy: apiProxy,
   },
   preview: {
     host: '0.0.0.0',
-    port: 5175,
+    port: webPort,
     strictPort: true,
     allowedHosts: ['documine.nielpat.cloud'],
+    proxy: apiProxy,
   },
 })

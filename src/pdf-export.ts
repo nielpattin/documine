@@ -131,7 +131,7 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
   return Math.max(min, Math.min(max, parsed));
 }
 
-function mergeSettings(input: unknown): PdfExportSettings {
+export function mergeSettings(input: unknown): PdfExportSettings {
   const source = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   const marginSource = source.marginsCm && typeof source.marginsCm === 'object'
     ? source.marginsCm as Record<string, unknown>
@@ -368,7 +368,7 @@ function screenPreviewCss(): string {
 `;
 }
 
-function buildPdfCss(title: string, settings: PdfExportSettings): string {
+export function buildPdfCss(title: string, settings: PdfExportSettings): string {
   const family = settings.fontFamily === 'system-ui'
     ? 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
     : JSON.stringify(settings.fontFamily);

@@ -1445,6 +1445,7 @@ function OwnerNotePage({
       return;
     }
 
+    const renderDebounce = markdown.length > 50000 ? 600 : markdown.length > 20000 ? 400 : 200;
     const timer = window.setTimeout(async () => {
       try {
         const renderPayload = await apiRequest<{ ok: true; html: string }>('/api/render', {
@@ -1455,7 +1456,7 @@ function OwnerNotePage({
       } catch {
         // Keep last successful preview
       }
-    }, 200);
+    }, renderDebounce);
 
     return () => window.clearTimeout(timer);
   }, [markdown, payload]);
@@ -2057,6 +2058,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
       return;
     }
 
+    const renderDebounce = markdown.length > 50000 ? 600 : markdown.length > 20000 ? 400 : 200;
     const timer = window.setTimeout(async () => {
       try {
         const renderPayload = await apiRequest<{ ok: true; html: string }>(`/api/share/${shareId}/render`, {
@@ -2067,7 +2069,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
       } catch {
         // Keep last successful preview
       }
-    }, 200);
+    }, renderDebounce);
 
     return () => window.clearTimeout(timer);
   }, [markdown, payload, shareId]);
@@ -2559,14 +2561,11 @@ function CollabTextarea({
     const resizeObserver = new ResizeObserver(syncMetrics);
     resizeObserver.observe(textarea);
 
-    const intervalId = window.setInterval(syncMetrics, 250);
-
     return () => {
       textarea.removeEventListener('scroll', syncFromTextarea);
       textarea.removeEventListener('input', syncMetrics);
       horizontalScroll.removeEventListener('scroll', syncFromScrollbar);
       resizeObserver.disconnect();
-      window.clearInterval(intervalId);
     };
   }, [wrapEnabled, initialValue]);
 
@@ -3472,8 +3471,8 @@ function offsetsToRange(mapping: ReturnType<typeof collectTextNodes>, start: num
   return range;
 }
 
-function locateAnchor(anchor: AnchorWithOptionalHeading, root: HTMLElement) {
-  const mapping = collectTextNodes(root);
+function locateAnchor(anchor: AnchorWithOptionalHeading, root: HTMLElement, existingMapping?: ReturnType<typeof collectTextNodes>) {
+  const mapping = existingMapping ?? collectTextNodes(root);
   if (!mapping.fullText || !anchor.quote) {
     return null;
   }
@@ -3661,6 +3660,7 @@ function AnchoredCommentCanvas({
     }
 
     const canvasRect = canvas.getBoundingClientRect();
+    const textMapping = collectTextNodes(root);
     const visibleThreads = [...threads]
       .filter((thread) => showResolved || !thread.resolved)
       .sort((a, b) => {
@@ -3671,7 +3671,7 @@ function AnchoredCommentCanvas({
         return a.createdAt.localeCompare(b.createdAt);
       })
       .map((thread) => {
-        const match = locateAnchor(thread.anchor, root);
+        const match = locateAnchor(thread.anchor, root, textMapping);
         if (!match) {
           return null;
         }
