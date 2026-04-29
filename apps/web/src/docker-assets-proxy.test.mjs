@@ -4,9 +4,10 @@ import { test } from 'node:test';
 
 const viteConfigSource = readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
 
-test('vite dev and preview proxy API asset routes to the API server', () => {
-  assert.match(viteConfigSource, /const apiProxy = \{/);
-  assert.match(viteConfigSource, /'\/assets': apiOrigin/);
-  assert.match(viteConfigSource, /server: \{[\s\S]*proxy: apiProxy/);
-  assert.match(viteConfigSource, /preview: \{[\s\S]*proxy: apiProxy/);
+test('vite dev and preview proxy uploaded note assets without intercepting bundles', () => {
+  assert.match(viteConfigSource, /function isUploadedAssetPath\(/);
+  assert.match(viteConfigSource, /function installUploadedAssetProxyMiddleware\(/);
+  assert.match(viteConfigSource, /configureServer\(server\) \{[\s\S]*installUploadedAssetProxyMiddleware\(server\)/);
+  assert.match(viteConfigSource, /configurePreviewServer\(server\) \{[\s\S]*installUploadedAssetProxyMiddleware\(server\)/);
+  assert.doesNotMatch(viteConfigSource, /'\/assets': apiOrigin/);
 });

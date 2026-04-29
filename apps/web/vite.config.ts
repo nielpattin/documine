@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import { defineConfig, type ViteDevServer } from 'vite'
+import { defineConfig, type PreviewServer, type ViteDevServer } from 'vite'
 import react from '@vitejs/plugin-react'
 
 const apiPort = process.env.PORT
@@ -10,7 +10,6 @@ const apiWsOrigin = process.env.VITE_DOCUMINE_API_WS_ORIGIN || process.env.DOCUM
 const apiOrigin = apiHttpOrigin || 'http://localhost:3120'
 const apiProxy = {
   '/api': apiOrigin,
-  '/assets': apiOrigin,
   '/ws': { target: apiOrigin, ws: true },
 }
 const webPort = Number(process.env.DOCUMINE_WEB_PORT || 5175)
@@ -65,7 +64,41 @@ function shareIdFromUrl(url: string | undefined) {
   return match ? decodeURIComponent(match[1]) : null
 }
 
-function installShareMetadataMiddleware(server: ViteDevServer) {
+function isUploadedAssetPath(url: string | undefined) {
+  return /^\/assets\/[^/]+\/[^/]+$/.test((url || '').split('?')[0] || '')
+}
+
+function installUploadedAssetProxyMiddleware(server: ViteDevServer | PreviewServer) {
+  server.middlewares.use(async (req, res, next) => {
+    if (!isUploadedAssetPath(req.url)) {
+      next()
+      return
+    }
+
+    try {
+      const response = await fetch(`${apiOrigin}${req.url}`)
+      res.statusCode = response.status
+      response.headers.forEach((value, key) => res.setHeader(key, value))
+      res.end(Buffer.from(await response.arrayBuffer()))
+    } catch {
+      next()
+    }
+  })
+}
+
+function isDevServer(server: ViteDevServer | PreviewServer): server is ViteDevServer {
+  return 'transformIndexHtml' in server
+}
+
+async function loadIndexHtml(server: ViteDevServer | PreviewServer, url: string) {
+  const indexPath = isDevServer(server)
+    ? path.join(server.config.root, 'index.html')
+    : path.join(server.config.root, 'dist', 'index.html')
+  const indexHtml = await fs.readFile(indexPath, 'utf8')
+  return isDevServer(server) ? server.transformIndexHtml(url, indexHtml) : indexHtml
+}
+
+function installShareMetadataMiddleware(server: ViteDevServer | PreviewServer) {
   server.middlewares.use(async (req, res, next) => {
     const shareId = shareIdFromUrl(req.url)
     if (!shareId) {
@@ -83,9 +116,7 @@ function installShareMetadataMiddleware(server: ViteDevServer) {
         return
       }
 
-      const indexPath = path.join(server.config.root, 'index.html')
-      const indexHtml = await fs.readFile(indexPath, 'utf8')
-      const html = await server.transformIndexHtml(req.url || '/', indexHtml)
+      const html = await loadIndexHtml(server, req.url || '/')
 
       res.statusCode = 200
       res.setHeader('Content-Type', 'text/html; charset=utf-8')
@@ -105,7 +136,14 @@ export default defineConfig({
     react(),
     {
       name: 'documine-share-metadata',
-      configureServer: installShareMetadataMiddleware,
+      configureServer(server) {
+        installUploadedAssetProxyMiddleware(server)
+        installShareMetadataMiddleware(server)
+      },
+      configurePreviewServer(server) {
+        installUploadedAssetProxyMiddleware(server)
+        installShareMetadataMiddleware(server)
+      },
     },
   ],
   server: {
