@@ -1,18 +1,42 @@
 {
-  "name": "documine",
+  "name": "@nielpattin/documine",
   "version": "0.1.2",
   "bin": {
     "documine": "cli/documine.mjs"
   },
   "files": [
-    "dist",
+    "dist/collab.js",
+    "dist/note-archive.js",
+    "dist/pdf-export.js",
+    "dist/server.js",
     "apps/web/dist",
-    "cli"
+    "cli/documine.mjs"
   ],
   "workspaces": [
     "apps/web"
   ],
-  "description": "Self-hosted collaborative markdown editor with inline comment threads",
+  "description": "Self-hosted collaborative markdown editor (pdf preview) with inline comment threads",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nielpattin/documine.git"
+  },
+  "homepage": "https://github.com/nielpattin/documine#readme",
+  "bugs": {
+    "url": "https://github.com/nielpattin/documine/issues"
+  },
+  "keywords": [
+    "markdown",
+    "pdf",
+    "editor",
+    "collaborative",
+    "self-hosted",
+    "comments",
+    "realtime"
+  ],
   "scripts": {
     "dev": "node --env-file-if-exists=.env ./node_modules/concurrently/dist/bin/concurrently.js \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "tsx watch src/server.ts",
@@ -20,6 +44,7 @@
     "build": "npm run build:web && npm run build:api",
     "build:api": "tsc",
     "build:web": "npm run build --workspace @documine/web",
+    "prepublishOnly": "npm run build",
     "start": "node dist/server.js"
   },
   "dependencies": {

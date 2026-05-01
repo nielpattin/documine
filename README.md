@@ -36,7 +36,7 @@ Open `http://localhost:5173` for the frontend and `http://localhost:3120` for th
 ## API Server
 
 ```bash
-npm install -g documine
+npm install -g @nielpattin/documine
 documine serve                    # port 3120, data in ./data
 documine serve --port=8080        # custom port
 documine serve --data=/var/documine  # custom data dir
@@ -66,7 +66,7 @@ npm link
 For a global install from a published package:
 
 ```bash
-npm install -g documine
+npm install -g @nielpattin/documine
 ```
 
 ## Docker

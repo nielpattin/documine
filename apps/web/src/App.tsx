@@ -75,6 +75,10 @@ const RENDERED_PDF_ZOOM_MIN = 50;
 const RENDERED_PDF_ZOOM_MAX = 200;
 const RENDERED_PDF_ZOOM_STEP = 5;
 const RENDERED_PDF_ZOOM_DEFAULT = 80;
+const DOCUMINE_CLI_PACKAGE = '@nielpattin/documine';
+const DOCUMINE_CLI_COMMAND = 'documine';
+const DOCUMINE_OWNER_EXAMPLE = 'myserver';
+const DOCUMINE_SHARED_EXAMPLE = 'shared';
 
 type ScrollMetrics = {
   scrollTop: number;
@@ -155,34 +159,34 @@ function buildOwnerAgentModal(noteId: string): AgentModalConfig {
     requiresApiKey: true,
     buildInstructions: (apiKey) => [
       '# Install the CLI globally',
-      'npm install -g documine',
+      `npm i -g ${DOCUMINE_CLI_PACKAGE}`,
       '',
       '# Register this Documine instance using the generated owner API key',
-      `documine register my-documine ${apiBaseUrl} ${apiKey || '<generate-api-key-first>'}`,
+      `${DOCUMINE_CLI_COMMAND} register ${DOCUMINE_OWNER_EXAMPLE} ${apiBaseUrl} ${apiKey || '<generate-api-key-first>'}`,
       '',
       '# Read this note',
-      `documine my-documine read ${noteId}`,
+      `${DOCUMINE_CLI_COMMAND} ${DOCUMINE_OWNER_EXAMPLE} read ${noteId}`,
       '',
       '# Edit this note',
-      `documine my-documine edit ${noteId} '[{"oldText":"...","newText":"..."}]'`,
+      `${DOCUMINE_CLI_COMMAND} ${DOCUMINE_OWNER_EXAMPLE} edit ${noteId} '[{"oldText":"...","newText":"..."}]'`,
       '',
       '# Comment on quoted text',
-      `documine my-documine comment ${noteId} "quoted text" "comment body"`,
+      `${DOCUMINE_CLI_COMMAND} ${DOCUMINE_OWNER_EXAMPLE} comment ${noteId} "quoted text" "comment body"`,
       '',
       '# Reply to a specific message',
-      `documine my-documine reply ${noteId} <thread-id> <message-id> "reply"`,
+      `${DOCUMINE_CLI_COMMAND} ${DOCUMINE_OWNER_EXAMPLE} reply ${noteId} <thread-id> <message-id> "reply"`,
       '',
       '# Resolve or reopen a thread',
-      `documine my-documine resolve ${noteId} <thread-id>`,
-      `documine my-documine reopen ${noteId} <thread-id>`,
+      `${DOCUMINE_CLI_COMMAND} ${DOCUMINE_OWNER_EXAMPLE} resolve ${noteId} <thread-id>`,
+      `${DOCUMINE_CLI_COMMAND} ${DOCUMINE_OWNER_EXAMPLE} reopen ${noteId} <thread-id>`,
       '',
       '# Edit or delete comments',
-      `documine my-documine edit-comment ${noteId} <message-id> "new body"`,
-      `documine my-documine delete-comment ${noteId} <message-id>`,
-      `documine my-documine delete-thread ${noteId} <thread-id>`,
+      `${DOCUMINE_CLI_COMMAND} ${DOCUMINE_OWNER_EXAMPLE} edit-comment ${noteId} <message-id> "new body"`,
+      `${DOCUMINE_CLI_COMMAND} ${DOCUMINE_OWNER_EXAMPLE} delete-comment ${noteId} <message-id>`,
+      `${DOCUMINE_CLI_COMMAND} ${DOCUMINE_OWNER_EXAMPLE} delete-thread ${noteId} <thread-id>`,
       '',
       '# Full command reference',
-      'documine --help',
+      `${DOCUMINE_CLI_COMMAND} --help`,
     ].join('\n'),
   };
 }
@@ -195,24 +199,24 @@ function buildSharedAgentModal(shareId: string): AgentModalConfig {
     hint: 'This shared note does not need an API key. Copy these instructions directly.',
     buildInstructions: () => [
       '# Install the CLI globally',
-      'npm install -g documine',
+      `npm i -g ${DOCUMINE_CLI_PACKAGE}`,
       '',
       '# Register the shared note',
-      `documine register shared-note ${shareUrl}`,
+      `${DOCUMINE_CLI_COMMAND} register ${DOCUMINE_SHARED_EXAMPLE} ${shareUrl}`,
       '',
       '# Read the note',
-      'documine shared-note read',
+      `${DOCUMINE_CLI_COMMAND} ${DOCUMINE_SHARED_EXAMPLE} read`,
       '',
       '# Edit the note if edit access is enabled',
-      'documine shared-note edit \'' + '[{"oldText":"...","newText":"..."}]' + '\'',
+      `${DOCUMINE_CLI_COMMAND} ${DOCUMINE_SHARED_EXAMPLE} edit '[{"oldText":"...","newText":"..."}]'`,
       '',
       '# Comment and reply as an agent',
-      'documine shared-note comment "quoted text" "comment body" --name="My Agent"',
-      'documine shared-note reply <thread-id> <message-id> "reply" --name="My Agent"',
+      `${DOCUMINE_CLI_COMMAND} ${DOCUMINE_SHARED_EXAMPLE} comment "quoted text" "comment body" --name="My Agent"`,
+      `${DOCUMINE_CLI_COMMAND} ${DOCUMINE_SHARED_EXAMPLE} reply <thread-id> <message-id> "reply" --name="My Agent"`,
       '',
       '# Full command reference',
-      'documine --help',
-    ].join('\n'),
+      `${DOCUMINE_CLI_COMMAND} --help`,
+    ].join('\\n'),
   };
 }
 
