@@ -48,6 +48,9 @@
     "build:api": "tsc",
     "build:web": "npm run build --workspace @documine/web",
     "prepublishOnly": "npm run build",
+    "release:patch": "npm version patch -m \"chore: release %s\" && git push origin HEAD --follow-tags",
+    "release:minor": "npm version minor -m \"chore: release %s\" && git push origin HEAD --follow-tags",
+    "release:major": "npm version major -m \"chore: release %s\" && git push origin HEAD --follow-tags",
     "start": "node dist/server.js"
   },
   "dependencies": {
