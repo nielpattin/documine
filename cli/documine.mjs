@@ -4,6 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
+const { version } = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+
 const configDir = path.join(os.homedir(), ".config", "documine");
 const configPath = path.join(configDir, "settings.json");
 
@@ -139,6 +141,11 @@ async function uploadImage(instance, endpoint, filePath) {
 
 const args = process.argv.slice(2);
 const command = args[0];
+
+if (command === "-v" || command === "--version") {
+  console.log(version);
+  process.exit(0);
+}
 
 if (!command || command === "--help" || command === "-h" || command === "help") {
   printUsage();
