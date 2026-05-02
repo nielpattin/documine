@@ -216,7 +216,7 @@ function buildSharedAgentModal(shareId: string): AgentModalConfig {
       '',
       '# Full command reference',
       `${DOCUMINE_CLI_COMMAND} --help`,
-    ].join('\\n'),
+    ].join('\n'),
   };
 }
 
