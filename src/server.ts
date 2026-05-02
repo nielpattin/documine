@@ -133,6 +133,8 @@ type NotePdfExportSummary = {
   debugMarkdownUrl: string;
   size: number;
   createdAt: string;
+  shareToken: string | null;
+  shareUrl: string | null;
 };
 
 type DeviceToken = {
@@ -258,6 +260,27 @@ const authFilePath = path.join(dataDir, 'auth.json');
 const authGuardFilePath = path.join(dataDir, 'auth-guard.json');
 const authGuardLogFilePath = path.join(dataDir, 'auth-guard.jsonl');
 const exportSettingsFilePath = path.join(dataDir, 'export-settings.json');
+const exportShareTokensFilePath = path.join(dataDir, 'export-share-tokens.json');
+type ExportShareTokenEntry = { noteId: string; fileName: string; createdAt: string };
+const exportShareTokens = new Map<string, ExportShareTokenEntry>();
+
+function loadExportShareTokens() {
+  const data = readJson<Record<string, ExportShareTokenEntry>>(exportShareTokensFilePath, {});
+  for (const [token, entry] of Object.entries(data)) {
+    if (entry && typeof entry.noteId === 'string' && typeof entry.fileName === 'string') {
+      exportShareTokens.set(token, entry);
+    }
+  }
+}
+
+function saveExportShareTokens() {
+  const data: Record<string, ExportShareTokenEntry> = {};
+  for (const [token, entry] of exportShareTokens) {
+    data[token] = entry;
+  }
+  writeJson(exportShareTokensFilePath, data);
+}
+
 const activePdfPreviewControllers = new Map<string, AbortController>();
 const ownerSessionCookieName = 'documine_owner_session';
 const ownerLocalStorageTokenKey = 'documine_owner_token';
@@ -308,6 +331,7 @@ marked.setOptions({
 
 ensureDirectories();
 loadNotesIntoMemory();
+loadExportShareTokens();
 const authGuardRuntime = loadAuthGuardRuntime();
 
 const app = new Hono();
@@ -920,6 +944,85 @@ app.delete('/api/notes/:id/exports/:fileName', (c) => {
   try { fs.unlinkSync(noteExportAssetPath(note.id, exportFile.fileName, '.json')); } catch {}
 
   return c.json({ ok: true, exports: collectNoteExports(note) });
+});
+
+app.post('/api/notes/:id/exports/:fileName/share-token', async (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const note = notes.get(c.req.param('id'));
+  if (!note) {
+    return c.json({ ok: false, error: 'Note not found.' }, 404);
+  }
+
+  const exportFile = loadManagedNoteExportFile(note.id, c.req.param('fileName'));
+  if (!exportFile) {
+    return c.json({ ok: false, error: 'Export not found.' }, 404);
+  }
+
+  const existing = findExportShareToken(note.id, exportFile.fileName);
+  if (existing) {
+    return c.json({ ok: true, token: existing, shareUrl: `/pdf/${existing}` });
+  }
+
+  const token = crypto.randomUUID();
+  exportShareTokens.set(token, {
+    noteId: note.id,
+    fileName: exportFile.fileName,
+    createdAt: nowIso(),
+  });
+  saveExportShareTokens();
+
+  return c.json({ ok: true, token, shareUrl: `/pdf/${token}` });
+});
+
+app.delete('/api/notes/:id/exports/:fileName/share-token', (c) => {
+  if (!isOwnerAuthenticated(c)) {
+    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
+  }
+
+  const note = notes.get(c.req.param('id'));
+  if (!note) {
+    return c.json({ ok: false, error: 'Note not found.' }, 404);
+  }
+
+  const exportFile = loadManagedNoteExportFile(note.id, c.req.param('fileName'));
+  if (!exportFile) {
+    return c.json({ ok: false, error: 'Export not found.' }, 404);
+  }
+
+  const existing = findExportShareToken(note.id, exportFile.fileName);
+  if (existing) {
+    exportShareTokens.delete(existing);
+    saveExportShareTokens();
+  }
+
+  return c.json({ ok: true, exports: collectNoteExports(note) });
+});
+
+app.get('/pdf/:token', (c) => {
+  const token = c.req.param('token');
+  const entry = exportShareTokens.get(token);
+  if (!entry) {
+    return c.json({ ok: false, error: 'Link not found or revoked.' }, 404);
+  }
+
+  const exportFile = loadManagedNoteExportFile(entry.noteId, entry.fileName);
+  if (!exportFile) {
+    exportShareTokens.delete(token);
+    saveExportShareTokens();
+    return c.json({ ok: false, error: 'Export no longer exists.' }, 404);
+  }
+
+  const asDownload = c.req.query('download') === '1';
+  const asInline = c.req.query('inline') === '1' || !asDownload;
+  const dispositionType = asInline ? 'inline' : 'attachment';
+  return c.body(fs.readFileSync(exportFile.filePath), 200, {
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `${dispositionType}; filename="${exportFile.fileName}"`,
+    'Cache-Control': 'no-store',
+  });
 });
 
 app.post('/api/notes/:id/export/html-preview', async (c) => {
@@ -2305,6 +2408,15 @@ function noteExportReferencePath(noteId: string, fileName: string) {
   return `/api/notes/${encodeURIComponent(noteId)}/exports/${encodeURIComponent(fileName)}`;
 }
 
+function findExportShareToken(noteId: string, fileName: string): string | null {
+  for (const [token, entry] of exportShareTokens) {
+    if (entry.noteId === noteId && entry.fileName === fileName) {
+      return token;
+    }
+  }
+  return null;
+}
+
 function collectNoteExports(note: NoteRecord): NotePdfExportSummary[] {
   const directory = noteExportDirectory(note.id);
   if (!fs.existsSync(directory)) {
@@ -2316,6 +2428,7 @@ function collectNoteExports(note: NoteRecord): NotePdfExportSummary[] {
       const filePath = noteExportPath(note.id, fileName);
       const stats = fs.statSync(filePath);
       const baseUrl = noteExportReferencePath(note.id, fileName);
+      const existingToken = findExportShareToken(note.id, fileName);
       return {
         fileName,
         url: `${baseUrl}?inline=1`,
@@ -2326,6 +2439,8 @@ function collectNoteExports(note: NoteRecord): NotePdfExportSummary[] {
         debugMarkdownUrl: `${baseUrl}/debug/markdown`,
         size: stats.size,
         createdAt: stats.birthtime.toISOString(),
+        shareToken: existingToken,
+        shareUrl: existingToken ? `/pdf/${existingToken}` : null,
       } satisfies NotePdfExportSummary;
     })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));

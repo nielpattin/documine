@@ -12,6 +12,8 @@ import {
   importNotes,
   requestSharedRenderedHtmlPreview,
   saveNotePdf,
+  createExportShareToken,
+  revokeExportShareToken,
   type ApiKey,
   type NoteAsset,
   type NotePayload,
@@ -2731,6 +2733,10 @@ function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; markdow
   const [error, setError] = useState('');
   const [confirmDeleteExport, setConfirmDeleteExport] = useState<string | null>(null);
   const [deletingExport, setDeletingExport] = useState<string | null>(null);
+  const [generatingShareToken, setGeneratingShareToken] = useState<string | null>(null);
+  const [revokingShareToken, setRevokingShareToken] = useState<string | null>(null);
+  const [copiedShareToken, setCopiedShareToken] = useState<string | null>(null);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const apiOrigin = getApiHttpOrigin();
 
   const loadExports = useCallback(async () => {
@@ -2849,6 +2855,47 @@ function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; markdow
     }
   }
 
+  async function handleGenerateShareToken(item: NotePdfExport) {
+    setGeneratingShareToken(item.fileName);
+    setError('');
+    try {
+      await createExportShareToken(noteId, item.fileName);
+      const response = await listNotePdfExports(noteId);
+      setExportsList(response.exports);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to generate share link.');
+    } finally {
+      setGeneratingShareToken((current) => (current === item.fileName ? null : current));
+    }
+  }
+
+  async function handleRevokeShareToken(item: NotePdfExport) {
+    setRevokingShareToken(item.fileName);
+    setError('');
+    try {
+      await revokeExportShareToken(noteId, item.fileName);
+      const response = await listNotePdfExports(noteId);
+      setExportsList(response.exports);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to revoke share link.');
+    } finally {
+      setRevokingShareToken((current) => (current === item.fileName ? null : current));
+    }
+  }
+
+  async function handleCopyShareUrl(item: NotePdfExport) {
+    if (!item.shareUrl) {
+      return;
+    }
+    const fullUrl = `${apiOrigin}${item.shareUrl}`;
+    await navigator.clipboard.writeText(fullUrl).catch(() => undefined);
+    setCopiedShareToken(item.fileName);
+    if (copiedTimerRef.current) {
+      clearTimeout(copiedTimerRef.current);
+    }
+    copiedTimerRef.current = setTimeout(() => setCopiedShareToken(null), 2000);
+  }
+
   function formatFileSize(bytes: number) {
     if (bytes < 1024) {
       return `${bytes} B`;
@@ -2944,7 +2991,21 @@ function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; markdow
                     <div className="pdf-export-history-actions">
                       <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => openExport(item)}>Open</button>
                       <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => downloadExport(item)}>Download</button>
-                      <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => openDebug(item)}>Debug HTML</button>
+                      <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => openDebug(item)}>Debug</button>
+                      {item.shareUrl ? (
+                        <>
+                          <button type="button" className="documine-btn documine-btn--sm documine-btn--primary" onClick={() => void handleCopyShareUrl(item)}>
+                            {copiedShareToken === item.fileName ? 'Copied!' : 'Copy link'}
+                          </button>
+                          <button type="button" className="documine-btn documine-btn--sm documine-btn--danger" disabled={revokingShareToken === item.fileName} onClick={() => void handleRevokeShareToken(item)}>
+                            {revokingShareToken === item.fileName ? 'Revoking...' : 'Revoke'}
+                          </button>
+                        </>
+                      ) : (
+                        <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" disabled={generatingShareToken === item.fileName} onClick={() => void handleGenerateShareToken(item)}>
+                          {generatingShareToken === item.fileName ? 'Generating...' : 'Share'}
+                        </button>
+                      )}
                       {confirmDeleteExport === item.fileName ? (
                         <div className="image-asset-confirm-delete">
                           <button

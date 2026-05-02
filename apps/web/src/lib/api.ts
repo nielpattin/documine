@@ -180,6 +180,8 @@ export type NotePdfExport = {
   debugMarkdownUrl: string;
   size: number;
   createdAt: string;
+  shareToken: string | null;
+  shareUrl: string | null;
 };
 
 export type NotePdfExportsPayload = {
@@ -359,6 +361,30 @@ export async function listNotePdfExports(noteId: string): Promise<NotePdfExports
 
 export async function deleteNotePdf(noteId: string, fileName: string): Promise<DeleteNotePdfPayload> {
   const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/exports/${encodeURIComponent(fileName)}`), {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+
+  return parseApiResponse<DeleteNotePdfPayload>(response);
+}
+
+export type ShareTokenPayload = {
+  ok: true;
+  token: string;
+  shareUrl: string;
+};
+
+export async function createExportShareToken(noteId: string, fileName: string): Promise<ShareTokenPayload> {
+  const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/exports/${encodeURIComponent(fileName)}/share-token`), {
+    method: 'POST',
+    credentials: 'include',
+  });
+
+  return parseApiResponse<ShareTokenPayload>(response);
+}
+
+export async function revokeExportShareToken(noteId: string, fileName: string): Promise<DeleteNotePdfPayload> {
+  const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/exports/${encodeURIComponent(fileName)}/share-token`), {
     method: 'DELETE',
     credentials: 'include',
   });

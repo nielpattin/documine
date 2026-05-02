@@ -814,7 +814,7 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px
   width: 100%; flex: 1; min-height: 0;
   padding: 1.25rem 1.5rem; border: 0; border-radius: 0; resize: none;
   background: transparent; color: var(--text);
-  font-size: 0.82rem; line-height: 1.55;
+  font-size: 16px; line-height: 1.55;
   font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas, monospace;
   word-wrap: break-word; overflow-wrap: break-word; white-space: pre-wrap; overflow: auto;
   overscroll-behavior: contain;
@@ -1157,7 +1157,7 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px
 }
 
 /* --- Narrow / mobile --- */
-@media (max-width: 1200px) {
+@media (max-width: 600px) {
   .workspace { grid-template-columns: 1fr; }
   .editor-pane { border-right: 0; border-bottom: none; }
 
