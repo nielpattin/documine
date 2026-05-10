@@ -1506,6 +1506,22 @@ function OwnerNotePage({
     if (!options?.background) {
       setLoading(true);
       setError('');
+      setPayload(null);
+      setTitle('');
+      setShareAccess('none');
+      setMarkdown('');
+      setRenderedHtml('');
+      setRenderedPdfUrl((current) => {
+        if (current) {
+          URL.revokeObjectURL(current);
+        }
+        return '';
+      });
+      setRenderedPdfDirty(false);
+      setRenderedPdfLoading(false);
+      setRenderedPdfError('');
+      setRenderedPdfElapsedMs(0);
+      setRenderedPdfLastDurationMs(null);
     }
     try {
       const nextPayload = await apiRequest<NotePayload>(`/api/notes/${noteId}`);
@@ -2124,6 +2140,23 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
     if (!options?.background) {
       setLoading(true);
       setError('');
+      setPayload(null);
+      setIdentityRequired(false);
+      setIdentityError('');
+      setIdentityName('');
+      setMarkdown('');
+      setRenderedHtml('');
+      setRenderedPdfUrl((current) => {
+        if (current) {
+          URL.revokeObjectURL(current);
+        }
+        return '';
+      });
+      setRenderedPdfDirty(false);
+      setRenderedPdfLoading(false);
+      setRenderedPdfError('');
+      setRenderedPdfElapsedMs(0);
+      setRenderedPdfLastDurationMs(null);
     }
     try {
       const nextPayload = await apiRequest<NotePayload>(`/api/share/${shareId}`);
