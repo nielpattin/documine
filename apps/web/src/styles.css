@@ -796,6 +796,90 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px
   min-height: 0;
   overflow: hidden;
 }
+.workspace--with-explorer {
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(0, 1fr);
+}
+.note-explorer {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.65rem;
+  border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 82%, var(--bg) 18%);
+}
+.note-explorer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.note-explorer-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.note-explorer-search {
+  padding: 0.45rem 0.55rem;
+  background: var(--input-bg);
+  border-color: var(--line);
+}
+.note-explorer-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 0.15rem;
+}
+.note-explorer-status {
+  margin: 0;
+  padding: 0.5rem 0.25rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.note-explorer-row {
+  width: 100%;
+  display: grid;
+  gap: 0.12rem;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  text-align: left;
+}
+.note-explorer-row:hover {
+  background: var(--hover-bg);
+  border-color: var(--line-soft);
+}
+.note-explorer-row.active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
+}
+.note-explorer-row-title,
+.note-explorer-row-snippet,
+.note-explorer-row-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-explorer-row-title {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.note-explorer-row-snippet {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.note-explorer-row-meta {
+  color: var(--muted-2);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
 .editor-pane {
   border-right: 1px solid var(--line); background: var(--editor-bg); overflow: hidden;
   display: flex; flex-direction: column; position: relative;
@@ -808,6 +892,42 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px
   flex-direction: column;
   position: relative;
   overflow: hidden;
+}
+.editor-loading-state {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  color: var(--muted);
+}
+.editor-loading-card {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 0.65rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--panel) 78%, var(--bg) 22%);
+}
+.editor-loading-title {
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+.editor-loading-line {
+  height: 0.65rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--line-soft), var(--hover-bg), var(--line-soft));
+}
+.editor-loading-line--short { width: 68%; }
+.preview-loading-state {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .editor-textarea {
@@ -1158,7 +1278,13 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px
 
 /* --- Narrow / mobile --- */
 @media (max-width: 600px) {
-  .workspace { grid-template-columns: 1fr; }
+  .workspace,
+  .workspace--with-explorer { grid-template-columns: 1fr; }
+  .note-explorer {
+    max-height: 34vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
   .editor-pane { border-right: 0; border-bottom: none; }
 
 

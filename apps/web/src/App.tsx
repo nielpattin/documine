@@ -864,6 +864,12 @@ function App() {
     );
   }
 
+  async function handleCreateNoteFromEditor() {
+    const payload = await apiRequest<{ ok: true; note: NoteSummary }>('/api/notes', { method: 'POST' });
+    broadcastNotesListRefresh();
+    navigateTo(`/notes/${payload.note.id}`);
+  }
+
   if (route.kind === 'note') {
     return (
       <>
@@ -871,6 +877,8 @@ function App() {
         <OwnerNotePage
           noteId={route.noteId}
           onBack={() => navigateTo('/')}
+          onOpenNote={(noteId) => navigateTo(`/notes/${noteId}`)}
+          onCreateNote={handleCreateNoteFromEditor}
           onLogout={handleLogout}
           onToggleTheme={toggleTheme}
         />
@@ -1313,14 +1321,99 @@ function NotesListPage({
   );
 }
 
+function useNoteExplorerNotes() {
+  const [search, setSearch] = useState('');
+  const [notes, setNotes] = useState<NoteSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const loadNotes = useCallback(async (query: string) => {
+    setLoading(true);
+    setError('');
+    try {
+      const payload = await apiRequest<{ ok: true; notes: NoteSummary[] }>(`/api/notes?q=${encodeURIComponent(query)}`);
+      setNotes(payload.notes);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to load notes.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useNotesListRefreshSignal(() => {
+    void loadNotes(search);
+  });
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadNotes(search);
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [loadNotes, search]);
+
+  return { search, setSearch, notes, loading, error };
+}
+
+function NoteExplorer({
+  activeNoteId,
+  onOpenNote,
+  onCreateNote,
+}: {
+  activeNoteId: string;
+  onOpenNote: (noteId: string) => void;
+  onCreateNote: () => Promise<void>;
+}) {
+  const { search, setSearch, notes, loading, error } = useNoteExplorerNotes();
+
+  return (
+    <aside className="note-explorer" aria-label="Notes explorer">
+      <div className="note-explorer-header">
+        <div className="note-explorer-title">Notes</div>
+        <button type="button" className="documine-btn documine-btn--sm documine-btn--primary" onClick={() => void onCreateNote()}>
+          New note
+        </button>
+      </div>
+      <input
+        className="note-explorer-search"
+        type="text"
+        placeholder="Search notes"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+      />
+      <div className="note-explorer-list">
+        {loading ? <p className="note-explorer-status">Loading notes...</p> : null}
+        {error ? <p className="note-explorer-status">{error}</p> : null}
+        {!loading && notes.length === 0 ? <p className="note-explorer-status">No notes found.</p> : null}
+        {notes.map((note) => (
+          <button
+            key={note.id}
+            type="button"
+            className={`note-explorer-row ${note.id === activeNoteId ? 'active' : ''}`}
+            aria-current={note.id === activeNoteId ? 'page' : undefined}
+            onClick={() => onOpenNote(note.id)}
+          >
+            <span className="note-explorer-row-title">{note.title}</span>
+            <span className="note-explorer-row-snippet">{note.snippet || 'Empty note'}</span>
+            <span className="note-explorer-row-meta">{formatDate(note.updatedAt)}</span>
+          </button>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
 function OwnerNotePage({
   noteId,
   onBack,
+  onOpenNote,
+  onCreateNote,
   onLogout,
   onToggleTheme,
 }: {
   noteId: string;
   onBack: () => void;
+  onOpenNote: (noteId: string) => void;
+  onCreateNote: () => Promise<void>;
   onLogout: () => Promise<void>;
   onToggleTheme: () => void;
 }) {
@@ -1364,6 +1457,7 @@ function OwnerNotePage({
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [showComments, setShowComments] = useState(true);
   const [showResolved, setShowResolved] = useState(false);
+  const [explorerOpen, setExplorerOpen] = useState(true);
   const [pendingThreadAnchor, setPendingThreadAnchor] = useState<ThreadAnchor | null>(null);
   const editorHandleRef = useRef<CollabEditorHandle | null>(null);
   const [editorHistory, setEditorHistory] = useState<EditorHistoryState>({ canUndo: false, canRedo: false, undoLabel: null, redoLabel: null });
@@ -1660,9 +1754,8 @@ function OwnerNotePage({
     editorHandleRef.current?.insertText(markdownSnippet);
   }
 
-  if (loading) {
-    return <LoadingPage message="Loading note" />;
-  }
+  const noteReady = Boolean(payload) && !loading;
+  const activeThreads = payload?.threads ?? [];
 
   if (error && !payload) {
     return (
@@ -1675,10 +1768,6 @@ function OwnerNotePage({
     );
   }
 
-  if (!payload) {
-    return null;
-  }
-
   const agentModalConfig = buildOwnerAgentModal(noteId);
 
   return (
@@ -1687,6 +1776,12 @@ function OwnerNotePage({
         <div className="topbar-left">
           <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onBack}>
             Back
+          </button>
+          <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => setExplorerOpen((current) => !current)}>
+            {explorerOpen ? 'Hide notes' : 'Notes'}
+          </button>
+          <button type="button" className="documine-btn documine-btn--sm documine-btn--primary" onClick={() => void onCreateNote()}>
+            New note
           </button>
           <input
             className="title-input"
@@ -1798,36 +1893,55 @@ function OwnerNotePage({
         </div>
       </header>
 
-      <div className="workspace">
-        <div className="editor-pane">
-          {!connected ? <div className="editor-disconnected">Reconnecting...</div> : null}
-          <CollabTextarea
-            noteId={noteId}
-            initialValue={markdown}
-            wrapEnabled={editorWrapEnabled}
-            onScrollMetricsChange={handleEditorScrollMetricsChange}
-            onUploadImage={async (file) => {
-              const response = await uploadImage(file, { noteId });
-              if (showAssetsModal) {
-                void loadAssets();
-              }
-              return response;
-            }}
-            onEditorMount={(handle) => {
-              editorHandleRef.current = handle;
-            }}
-            onReady={(next) => {
-              setMarkdown(next.markdown);
-            }}
-            onTextChange={(nextMarkdown) => {
-              setMarkdown(nextMarkdown);
-              setSaveStatus('Live');
-            }}
-            onConnectionChange={setConnected}
-            onThreadsUpdated={() => void loadNote({ background: true })}
-            onParticipantsChange={setShareParticipants}
-            onHistoryChange={setEditorHistory}
+      <div className={`workspace ${explorerOpen ? 'workspace--with-explorer' : ''}`}>
+        {explorerOpen ? (
+          <NoteExplorer
+            activeNoteId={noteId}
+            onOpenNote={onOpenNote}
+            onCreateNote={onCreateNote}
           />
+        ) : null}
+        <div className="editor-pane">
+          {noteReady ? (
+            <>
+              {!connected ? <div className="editor-disconnected">Reconnecting...</div> : null}
+              <CollabTextarea
+                noteId={noteId}
+                initialValue={markdown}
+                wrapEnabled={editorWrapEnabled}
+                onScrollMetricsChange={handleEditorScrollMetricsChange}
+                onUploadImage={async (file) => {
+                  const response = await uploadImage(file, { noteId });
+                  if (showAssetsModal) {
+                    void loadAssets();
+                  }
+                  return response;
+                }}
+                onEditorMount={(handle) => {
+                  editorHandleRef.current = handle;
+                }}
+                onReady={(next) => {
+                  setMarkdown(next.markdown);
+                }}
+                onTextChange={(nextMarkdown) => {
+                  setMarkdown(nextMarkdown);
+                  setSaveStatus('Live');
+                }}
+                onConnectionChange={setConnected}
+                onThreadsUpdated={() => void loadNote({ background: true })}
+                onParticipantsChange={setShareParticipants}
+                onHistoryChange={setEditorHistory}
+              />
+            </>
+          ) : (
+            <div className="editor-loading-state" role="status" aria-live="polite">
+              <div className="editor-loading-card">
+                <div className="editor-loading-title">Opening note...</div>
+                <div className="editor-loading-line" />
+                <div className="editor-loading-line editor-loading-line--short" />
+              </div>
+            </div>
+          )}
         </div>
 
         <section className={`preview-stage ${showPreview ? 'preview-open' : ''}`}>
@@ -1868,14 +1982,16 @@ function OwnerNotePage({
               Close
             </button>
           </div>
-          {previewMode === 'rendered-pdf' ? (
+          {!noteReady ? (
+            <div className="preview-loading-state">Loading preview...</div>
+          ) : previewMode === 'rendered-pdf' ? (
             <RenderedPreview url={renderedPdfUrl} zoom={renderedPdfZoom} loading={renderedPdfLoading} error={renderedPdfError} dirty={renderedPdfDirty} iframeRef={pdfPreviewFrameRef} />
           ) : (
             <AnchoredCommentCanvas
               renderedHtml={renderedHtml}
               previewScrollRef={previewScrollRef}
               syncPreviewScroll={syncPreviewScroll}
-              threads={payload.threads}
+              threads={activeThreads}
               canCreateThread={showComments}
               commentsVisible={showComments}
               showResolved={showResolved}
