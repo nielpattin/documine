@@ -12,9 +12,6 @@
     "apps/web/dist",
     "cli/documine.mjs"
   ],
-  "workspaces": [
-    "apps/web"
-  ],
   "description": "Self-hosted collaborative markdown editor (pdf preview) with inline comment threads",
   "license": "MIT",
   "engines": {
@@ -41,16 +38,16 @@
     "realtime"
   ],
   "scripts": {
-    "dev": "node --env-file-if-exists=.env ./node_modules/concurrently/dist/bin/concurrently.js \"npm run dev:api\" \"npm run dev:web\"",
+    "dev": "node --env-file-if-exists=.env ./node_modules/concurrently/dist/bin/concurrently.js \"pnpm dev:api\" \"pnpm dev:web\"",
     "dev:api": "tsx watch src/server.ts",
-    "dev:web": "npm run dev --workspace @documine/web",
-    "build": "npm run build:web && npm run build:api",
+    "dev:web": "pnpm --filter @documine/web dev",
+    "build": "pnpm build:web && pnpm build:api",
     "build:api": "tsc",
-    "build:web": "npm run build --workspace @documine/web",
-    "prepublishOnly": "npm run build",
-    "release:patch": "npm version patch -m \"chore: release %s\" && git push origin HEAD --follow-tags",
-    "release:minor": "npm version minor -m \"chore: release %s\" && git push origin HEAD --follow-tags",
-    "release:major": "npm version major -m \"chore: release %s\" && git push origin HEAD --follow-tags",
+    "build:web": "pnpm --filter @documine/web build",
+    "prepublishOnly": "pnpm build",
+    "release:patch": "pnpm version patch -m \"chore: release %s\" && git push origin HEAD --follow-tags",
+    "release:minor": "pnpm version minor -m \"chore: release %s\" && git push origin HEAD --follow-tags",
+    "release:major": "pnpm version major -m \"chore: release %s\" && git push origin HEAD --follow-tags",
     "start": "node dist/server.js"
   },
   "dependencies": {
