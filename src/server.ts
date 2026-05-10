@@ -216,6 +216,14 @@ type ViewerInfo = {
   hasCommenterIdentity: boolean;
 };
 
+type ViewerContext = {
+  viewer: ViewerInfo;
+  commenter: {
+    id: string | null;
+    name: string | null;
+  };
+};
+
 type ClientConn = {
   ws: WebSocket;
   kind: 'editor' | 'public-editor' | 'public-viewer';
@@ -259,6 +267,8 @@ const noteExportsDir = path.join(dataDir, 'exports');
 const authFilePath = path.join(dataDir, 'auth.json');
 const authGuardFilePath = path.join(dataDir, 'auth-guard.json');
 const authGuardLogFilePath = path.join(dataDir, 'auth-guard.jsonl');
+const authTokenVerificationCacheMs = 1000 * 60 * 5;
+const authKeyVerificationCacheMs = 1000 * 60 * 5;
 const exportSettingsFilePath = path.join(dataDir, 'export-settings.json');
 const exportShareTokensFilePath = path.join(dataDir, 'export-share-tokens.json');
 type ExportShareTokenEntry = { noteId: string; fileName: string; createdAt: string };
@@ -282,6 +292,10 @@ function saveExportShareTokens() {
 }
 
 const activePdfPreviewControllers = new Map<string, AbortController>();
+const authDataCache = { value: null as AuthData | null, mtimeMs: -1 };
+const verifiedOwnerTokenCache = new Map<string, number>();
+const verifiedApiKeyCache = new Map<string, number>();
+const requestViewerContextCache = new WeakMap<Context, ViewerContext>();
 const ownerSessionCookieName = 'documine_owner_session';
 const ownerLocalStorageTokenKey = 'documine_owner_token';
 const commenterIdCookieName = 'documine_commenter_id';
@@ -296,6 +310,7 @@ const authGlobalLoginThreshold = 10;
 const shareAccessLevels: Record<ShareAccess, number> = { none: 0, view: 1, comment: 2, edit: 3 };
 const maxImageUploadBytes = 10 * 1024 * 1024;
 const maxNotesImportZipBytes = 100 * 1024 * 1024;
+const NOTE_LIST_SNIPPET_SOURCE_LIMIT = 1000;
 const imageMimeExtensions: Record<string, string> = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
@@ -2677,7 +2692,9 @@ function summarizeNote(note: NoteRecord, needle: string): NoteSummary {
 }
 
 function buildSnippet(note: NoteRecord, needle: string) {
-  const source = note.markdown.replace(/\s+/g, ' ').trim();
+  const source = needle
+    ? note.markdown.replace(/\s+/g, ' ').trim()
+    : note.markdown.slice(0, NOTE_LIST_SNIPPET_SOURCE_LIMIT).replace(/\s+/g, ' ').trim();
   if (!source) {
     return '';
   }
@@ -2712,21 +2729,43 @@ function locateMessage(note: NoteRecord, messageId: string) {
   return null;
 }
 
-function buildViewerInfo(
+function getViewerContext(
   c: Context,
   overrides?: { commenterNameOverride?: string; hasCommenterIdentityOverride?: boolean },
-): ViewerInfo {
+): ViewerContext {
+  if (!overrides) {
+    const cached = requestViewerContextCache.get(c);
+    if (cached) {
+      return cached;
+    }
+  }
+
   const commenter = getCommenterIdentity(c);
-  return {
+  const viewer: ViewerInfo = {
     isOwner: isOwnerAuthenticated(c),
     commenterName: overrides?.commenterNameOverride ?? commenter.name,
     hasCommenterIdentity: overrides?.hasCommenterIdentityOverride ?? Boolean(commenter.id),
   };
+
+  if (!overrides) {
+    const context = { viewer, commenter };
+    requestViewerContextCache.set(c, context);
+    return context;
+  }
+
+  return { viewer, commenter };
 }
 
-function serializeThreads(note: NoteRecord, c: Context) {
-  const viewer = buildViewerInfo(c);
-  const commenter = getCommenterIdentity(c);
+function buildViewerInfo(
+  c: Context,
+  overrides?: { commenterNameOverride?: string; hasCommenterIdentityOverride?: boolean },
+): ViewerInfo {
+  return getViewerContext(c, overrides).viewer;
+}
+
+function serializeThreads(note: NoteRecord, c: Context, viewerContext = getViewerContext(c)) {
+  const viewer = viewerContext.viewer;
+  const commenter = viewerContext.commenter;
 
   return [...note.threads]
     .sort((a, b) => {
@@ -2761,20 +2800,20 @@ function serializeThreads(note: NoteRecord, c: Context) {
 }
 
 function serializeNoteForClient(note: NoteRecord, c: Context) {
+  const viewerContext = getViewerContext(c);
   return {
     note: {
       id: note.id,
       title: note.title,
       markdown: note.markdown,
-      renderedHtml: renderMarkdown(note.markdown),
       shareId: note.shareId,
       shareAccess: note.shareAccess,
       shareUrl: makeShareUrl(c, note.shareId),
       updatedAt: note.updatedAt,
       createdAt: note.createdAt,
     },
-    viewer: buildViewerInfo(c),
-    threads: serializeThreads(note, c),
+    viewer: viewerContext.viewer,
+    threads: serializeThreads(note, c, viewerContext),
   };
 }
 
@@ -3342,11 +3381,21 @@ function secureEqualsHex(a: string, b: string) {
 }
 
 function loadAuthData() {
-  return readJson<AuthData | null>(authFilePath, null);
+  const mtimeMs = fs.existsSync(authFilePath) ? fs.statSync(authFilePath).mtimeMs : -1;
+  if (authDataCache.value && authDataCache.mtimeMs === mtimeMs) {
+    return authDataCache.value;
+  }
+  authDataCache.value = readJson<AuthData | null>(authFilePath, null);
+  authDataCache.mtimeMs = mtimeMs;
+  return authDataCache.value;
 }
 
 function saveAuthData(authData: AuthData) {
   writeJson(authFilePath, authData);
+  authDataCache.value = authData;
+  authDataCache.mtimeMs = fs.statSync(authFilePath).mtimeMs;
+  verifiedOwnerTokenCache.clear();
+  verifiedApiKeyCache.clear();
 }
 
 function defaultAuthGuardData(): AuthGuardData {
@@ -3576,24 +3625,39 @@ function issueOwnerToken() {
 }
 
 function verifyOwnerToken(token: string) {
+  const cachedExpiresAt = verifiedOwnerTokenCache.get(token);
+  if (cachedExpiresAt && cachedExpiresAt > Date.now()) {
+    return true;
+  }
+
   const auth = loadAuthData();
   if (!auth) {
     return false;
   }
 
   let changed = false;
-  for (const stored of auth.tokens) {
-    if (secureEqualsHex(hashSecret(token, stored.salt), stored.hash)) {
-      const lastSeen = Date.parse(stored.lastUsedAt);
-      if (Number.isNaN(lastSeen) || Date.now() - lastSeen > 1000 * 60 * 60 * 12) {
-        stored.lastUsedAt = nowIso();
-        changed = true;
-      }
-      if (changed) {
-        saveAuthData(auth);
-      }
-      return true;
+  for (let index = auth.tokens.length - 1; index >= 0; index--) {
+    const stored = auth.tokens[index];
+    if (!secureEqualsHex(hashSecret(token, stored.salt), stored.hash)) {
+      continue;
     }
+
+    if (index !== auth.tokens.length - 1) {
+      auth.tokens.splice(index, 1);
+      auth.tokens.push(stored);
+      changed = true;
+    }
+
+    const lastSeen = Date.parse(stored.lastUsedAt);
+    if (Number.isNaN(lastSeen) || Date.now() - lastSeen > 1000 * 60 * 60 * 12) {
+      stored.lastUsedAt = nowIso();
+      changed = true;
+    }
+    if (changed) {
+      saveAuthData(auth);
+    }
+    verifiedOwnerTokenCache.set(token, Date.now() + authTokenVerificationCacheMs);
+    return true;
   }
 
   return false;
@@ -3728,12 +3792,19 @@ function getBearerToken(c: Context) {
 }
 
 function verifyApiKey(key: string) {
+  const cachedExpiresAt = verifiedApiKeyCache.get(key);
+  if (cachedExpiresAt && cachedExpiresAt > Date.now()) {
+    return true;
+  }
+
   const auth = loadAuthData();
   if (!auth?.apiKeys) {
     return false;
   }
-  for (const stored of auth.apiKeys) {
+  for (let index = auth.apiKeys.length - 1; index >= 0; index--) {
+    const stored = auth.apiKeys[index];
     if (secureEqualsHex(hashSecret(key, stored.keySalt), stored.keyHash)) {
+      verifiedApiKeyCache.set(key, Date.now() + authKeyVerificationCacheMs);
       return true;
     }
   }
@@ -3745,7 +3816,8 @@ function getApiKeyLabel(key: string) {
   if (!auth?.apiKeys) {
     return null;
   }
-  for (const stored of auth.apiKeys) {
+  for (let index = auth.apiKeys.length - 1; index >= 0; index--) {
+    const stored = auth.apiKeys[index];
     if (secureEqualsHex(hashSecret(key, stored.keySalt), stored.keyHash)) {
       return stored.label;
     }

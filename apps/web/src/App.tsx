@@ -1429,7 +1429,7 @@ function OwnerNotePage({
   const [metaSaving, setMetaSaving] = useState(false);
   const [connected, setConnected] = useState(false);
   const [showShare, setShowShare] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
+  const [showPreview, setShowPreview] = useState(true);
   const [previewMode, setPreviewMode] = useState<PreviewMode>(() => getStoredPreviewMode());
   const [editorWrapEnabled, setEditorWrapEnabled] = useState(() => getStoredEditorWrapEnabled());
   const {
@@ -1513,7 +1513,7 @@ function OwnerNotePage({
       setTitle(nextPayload.note.title);
       setShareAccess(nextPayload.note.shareAccess);
       setMarkdown(nextPayload.note.markdown);
-      setRenderedHtml(preparePreviewHtml(nextPayload.note.renderedHtml));
+      setRenderedHtml(nextPayload.note.renderedHtml ? preparePreviewHtml(nextPayload.note.renderedHtml) : '');
       setSaveStatus('Saved');
       broadcastNotesListRefresh();
     } catch (cause) {
@@ -1536,11 +1536,11 @@ function OwnerNotePage({
   }, [loadAssets, showAssetsModal]);
 
   useEffect(() => {
-    if (!payload) {
+    if (!payload || !showPreview || previewMode !== 'markdown') {
       return;
     }
 
-    if (markdown === payload.note.markdown) {
+    if (markdown === payload.note.markdown && payload.note.renderedHtml) {
       setRenderedHtml(preparePreviewHtml(payload.note.renderedHtml));
       return;
     }
@@ -1559,14 +1559,14 @@ function OwnerNotePage({
     }, renderDebounce);
 
     return () => window.clearTimeout(timer);
-  }, [markdown, payload]);
+  }, [markdown, payload, previewMode, showPreview]);
 
   useEffect(() => {
     setRenderedPdfDirty(true);
   }, [markdown, noteId]);
 
   useEffect(() => {
-    if (previewMode !== 'rendered-pdf') {
+    if (!showPreview || previewMode !== 'rendered-pdf') {
       setRenderedPdfLoading(false);
       setRenderedPdfError('');
       return;
@@ -1620,7 +1620,7 @@ function OwnerNotePage({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [markdown, noteId, previewMode, renderedPdfDirty, renderedPdfUrl]);
+  }, [markdown, noteId, previewMode, renderedPdfDirty, showPreview]);
 
   const handleRenderedPdfZoomOut = useCallback(() => {
     setRenderedPdfZoom((current) => Math.max(RENDERED_PDF_ZOOM_MIN, current - RENDERED_PDF_ZOOM_STEP));
@@ -2053,6 +2053,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
   const [connected, setConnected] = useState(false);
   const [editorWrapEnabled, setEditorWrapEnabled] = useState(() => getStoredEditorWrapEnabled());
   const [previewMode, setPreviewMode] = useState<PreviewMode>(() => getStoredPreviewMode());
+  const showPreview = true;
   const {
     scrollWithMarkdownEnabled,
     previewScrollRef,
@@ -2131,7 +2132,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
       setIdentityError('');
       setIdentityName(nextPayload.viewer.commenterName || '');
       setMarkdown(nextPayload.note.markdown);
-      setRenderedHtml(preparePreviewHtml(nextPayload.note.renderedHtml));
+      setRenderedHtml(nextPayload.note.renderedHtml ? preparePreviewHtml(nextPayload.note.renderedHtml) : '');
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 401) {
         setPayload(null);
@@ -2171,11 +2172,11 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
   }, [loadSharedNote, payload, shareId]);
 
   useEffect(() => {
-    if (!payload) {
+    if (!payload || !showPreview || previewMode !== 'markdown') {
       return;
     }
 
-    if (markdown === payload.note.markdown) {
+    if (markdown === payload.note.markdown && payload.note.renderedHtml) {
       setRenderedHtml(preparePreviewHtml(payload.note.renderedHtml));
       return;
     }
@@ -2194,14 +2195,14 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
     }, renderDebounce);
 
     return () => window.clearTimeout(timer);
-  }, [markdown, payload, shareId]);
+  }, [markdown, payload, previewMode, shareId, showPreview]);
 
   useEffect(() => {
     setRenderedPdfDirty(true);
   }, [markdown, shareId]);
 
   useEffect(() => {
-    if (previewMode !== 'rendered-pdf') {
+    if (!showPreview || previewMode !== 'rendered-pdf') {
       setRenderedPdfLoading(false);
       setRenderedPdfError('');
       return;
@@ -2254,7 +2255,7 @@ function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; onToggleT
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [markdown, previewMode, renderedPdfDirty, renderedPdfUrl, shareId]);
+  }, [markdown, previewMode, renderedPdfDirty, shareId, showPreview]);
 
   useEffect(() => {
     if (!renderedPdfLoading) {

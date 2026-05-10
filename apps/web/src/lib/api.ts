@@ -68,7 +68,7 @@ export type NoteDetails = {
   id: string;
   title: string;
   markdown: string;
-  renderedHtml: string;
+  renderedHtml?: string;
   shareId: string;
   shareAccess: ShareAccess;
   shareUrl: string;
