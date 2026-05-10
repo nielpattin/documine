@@ -190,6 +190,13 @@ async function hasExecutable(command: string): Promise<boolean> {
   }
 }
 
+async function launchPdfBrowser() {
+  return puppeteer.launch({
+    headless: true,
+    args: ['--allow-file-access-from-files', '--no-sandbox', '--disable-setuid-sandbox'],
+  });
+}
+
 function cmToPx(value: number): number {
   return value * 37.7952755906;
 }
@@ -568,10 +575,7 @@ async function htmlToPdfWithBrowser(htmlPath: string, pdfPath: string, signal?: 
     throw new Error('PDF export superseded by a newer request.');
   }
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--allow-file-access-from-files', '--no-sandbox', '--disable-setuid-sandbox'],
-  });
+  const browser = await launchPdfBrowser();
 
   try {
     const page = await browser.newPage();
@@ -715,9 +719,6 @@ export async function exportMarkdownToPdf(input: ExportPdfInput): Promise<Export
 }
 
 export async function warmPdfPreviewEngine(): Promise<void> {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--allow-file-access-from-files', '--no-sandbox', '--disable-setuid-sandbox'],
-  });
+  const browser = await launchPdfBrowser();
   await browser.close();
 }

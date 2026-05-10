@@ -28,7 +28,7 @@ start)
 startdev)
 	docker compose -p $project -f docker-compose.base.yml down -t 1
 	docker compose -p $project -f docker-compose.base.yml -f docker-compose.dev.yml build
-	docker compose -p $project -f docker-compose.base.yml -f docker-compose.dev.yml up
+	docker compose -p $project -f docker-compose.base.yml -f docker-compose.dev.yml up -d
 	;;
 stop)
 	docker compose -p $project -f docker-compose.base.yml down -t 1
