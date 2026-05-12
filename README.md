@@ -1,101 +1,76 @@
-# documine
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/nielpattin/documine/main/docs/screenshot.png">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/nielpattin/documine/main/docs/screenshot.png">
+    <img alt="DocuMine — collaborative markdown editor" src="https://raw.githubusercontent.com/nielpattin/documine/main/docs/screenshot.png" width="600">
+  </picture>
+</p>
 
-Minimal self-hosted collaborative markdown editor with inline comment threads. Built for humans and agents.
+<p align="center">
+  <a href="https://www.npmjs.com/package/@nielpattin/documine"><img src="https://img.shields.io/npm/v/@nielpattin/documine?style=flat&label=npm" alt="npm version"></a>
+  <a href="https://github.com/nielpattin/documine/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@nielpattin/documine?style=flat" alt="MIT license"></a>
+  <a href="https://github.com/nielpattin/documine/actions"><img src="https://img.shields.io/github/actions/workflow/status/nielpattin/documine/publish.yml?style=flat&label=build" alt="build status"></a>
+  <a href="https://github.com/nielpattin/documine"><img src="https://img.shields.io/github/last-commit/nielpattin/documine?style=flat&label=updated" alt="last commit"></a>
+  <a href="https://github.com/nielpattin/documine/graphs/contributors"><img src="https://img.shields.io/github/contributors/nielpattin/documine?style=flat&label=contributors" alt="contributors"></a>
+</p>
 
-## Architecture
+<h1 align="center">DocuMine</h1>
 
-- React + Vite frontend in `apps/web`
-- Hono API server in `src/server.ts`
-- WebSocket collaboration over `/ws`
-- `.md` files on disk with collaborative state stored in note sidecars
+<p align="center">
+  <strong>Self-hosted collaborative markdown editor</strong> with live PDF preview, PDF export, inline comment threads, and a dual-mode CLI for humans and AI agents.
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#cli">CLI</a> ·
+  <a href="#http-api">HTTP API</a> ·
+  <a href="#docker">Docker</a>
+</p>
+
+---
 
 ## Quick Start
 
-Run the full local stack:
-
 ```bash
 pnpm install
 pnpm dev
 ```
 
-Open `http://localhost:5173` for the frontend and `http://localhost:3120` for the API.
+Open [http://localhost:5173](http://localhost:5173) for the editor and [http://localhost:3120](http://localhost:3120) for the API.
+
+Prefer a global install?
+
+```bash
+pnpm add -g @nielpattin/documine
+documine serve --port=3120 --data=./data
+```
+
+---
 
 ## Features
 
-- Collaborative real-time editing (multiple tabs, multiple users)
-- Remote cursors with names
-- Inline comment threads anchored to text selections
-- Threaded replies, resolve/reopen
-- Share notes with configurable access (view, comment, edit)
-- CLI for humans and agents (owner API keys or share links)
-- Owner and shared CLI workflows for humans and agents
-- Dark and light theme
-- Mobile support
-- `.md` files on disk (derived from collaborative state)
+| | |
+|---|---|
+| ✏️ **Real-time collab** | Multiple cursors, live sync, undo/redo — works across tabs and users |
+| 🔍 **Live PDF preview** | Rendered preview pane synced to the editor, with scroll sync |
+| 🖨️ **PDF export** | Configurable Pandoc PDF export with shareable, revocable links |
+| 💬 **Anchored comments** | Select text, add a thread. Reply, resolve, reopen. Threads survive edits |
+| 🔗 **Share with control** | Per-note links with configurable access: view, comment, or edit |
+| 🤖 **Agent-ready CLI** | Register with an API key or share link. Read, edit, comment — from a terminal or AI agent |
+| 🌓 **Dark + light** | Theme toggle with persisted preference |
+| 📱 **Mobile** | Responsive layout for editing on smaller screens |
+| 🐳 **Docker** | One-command deployment with `docker-compose` |
 
-## API Server
-
-```bash
-pnpm add -g @nielpattin/documine
-documine serve                    # port 3120, data in ./data
-documine serve --port=8080        # custom port
-documine serve --data=/var/documine  # custom data dir
-```
-
-This starts the backend API only.
-
-## Development
-
-```bash
-pnpm install
-pnpm dev
-```
-
-The API runs on `http://localhost:3120`. The frontend runs on `http://localhost:5175`.
-
-The API is backend-only. It serves JSON and WebSocket endpoints, not the React app.
-
-## Global CLI
-
-For local development of this repo:
-
-```bash
-pnpm link --global
-```
-
-For a global install from a published package:
-
-```bash
-pnpm add -g @nielpattin/documine
-```
-
-## Docker
-
-```bash
-cd docker
-bash control.sh startdev
-```
-
-This starts the API on `http://localhost:3120` and the frontend on `http://localhost:5175`.
-
-## Sharing
-
-Click the share icon in the editor to configure access:
-
-- **Not shared** (default)
-- **View only**: read-only preview
-- **View & comment**: preview with comment threads
-- **Edit & comment**: full collaborative editor with comments
-
-Each note has a stable share URL (`/s/<id>`). Anyone with the link gets the configured level of access, both in the browser and via the CLI. Toggle access without changing the link.
+---
 
 ## CLI
 
-The CLI works in two modes depending on how you register.
+DocuMine's CLI works in two modes. Both are accessible to humans and agents alike.
 
 ### Owner mode
 
-The instance owner creates API keys from the settings gear on the landing page. An API key grants full access to all notes.
+Create API keys from the settings gear on the landing page. Full access to all notes.
 
 ```bash
 documine register myserver https://documine.example.com <api-key>
@@ -104,34 +79,97 @@ documine myserver search "query"
 documine myserver read <note-id>
 documine myserver create "My note"
 documine myserver edit <note-id> '[{"oldText":"foo","newText":"bar"}]'
-documine myserver comment <note-id> "quoted text" "comment body"
-documine myserver reply <note-id> <thread-id> <message-id> "reply"
-documine myserver resolve <note-id> <thread-id>
-documine myserver reopen <note-id> <thread-id>
-documine myserver edit-comment <note-id> <message-id> "new body"
-documine myserver delete-comment <note-id> <message-id>
-documine myserver delete-thread <note-id> <thread-id>
-documine myserver update <note-id> title "New title"
 documine myserver delete <note-id>
 ```
 
 ### Shared mode
 
-Anyone with a share link can use it to register. No API key needed. The link itself is the credential, and access depends on what the owner configured (view, comment, or edit). This works for both humans and their agents. Humans can use the link in the browser for better UX.
+Share links are the credential. No API key needed. Access level set by the owner.
 
 ```bash
 documine register shared https://documine.example.com/s/abc123
 documine shared read
 documine shared edit '[{"oldText":"foo","newText":"bar"}]'
 documine shared comment "quoted text" "comment body" --name="My Agent"
-documine shared reply <thread-id> <message-id> "reply" --name="My Agent"
 ```
 
-### Agent integration
+---
 
-Register the instance with an owner API key or register a shared note URL directly. Agents can then read, edit, and comment through the CLI and HTTP API.
+## HTTP API
 
-## Data
+All owner endpoints use `Authorization: Bearer <api-key>`.
+
+| Method | Endpoint | Description |
+| ------ | -------- | ----------- |
+| GET | `/api/notes?q=<query>` | List / search notes |
+| POST | `/api/notes` | Create note |
+| GET | `/api/notes/:id` | Read note |
+| PUT | `/api/notes/:id` | Update title, markdown, or share access |
+| DELETE | `/api/notes/:id` | Delete note |
+| POST | `/api/notes/:id/edit` | Apply text edits |
+| POST | `/api/notes/:id/threads` | Create comment thread |
+| POST | `/api/notes/:id/threads/:tid/replies` | Reply to thread |
+| PATCH | `/api/notes/:id/threads/:tid` | Resolve / reopen thread |
+| DELETE | `/api/notes/:id/threads/:tid` | Delete thread |
+| PATCH | `/api/notes/:id/messages/:mid` | Edit comment |
+| DELETE | `/api/notes/:id/messages/:mid` | Delete comment |
+| GET | `/api/keys` | List API keys |
+| POST | `/api/keys` | Create API key |
+| DELETE | `/api/keys/:id` | Delete API key |
+
+<details>
+<summary><strong>Shared note endpoints</strong> (no auth, access controlled per-note)</summary>
+
+| Method | Endpoint | Description |
+| ------ | -------- | ----------- |
+| GET | `/api/share/:sid` | Read shared note |
+| GET | `/api/share/:sid/note` | Read shared note (lightweight) |
+| POST | `/api/share/:sid/edit` | Edit (requires edit access) |
+| POST | `/api/share/:sid/threads` | Create comment |
+| POST | `/api/share/:sid/threads/:tid/replies` | Reply |
+| POST | `/api/share/:sid/render` | Render markdown to HTML |
+
+</details>
+
+---
+
+## Architecture
+
+```
+apps/web          → React + Vite frontend (editor, preview, comments)
+src/server.ts     → Hono API server with WebSocket collab
+data/             → .md files on disk + .json sidecars (source of truth)
+```
+
+Notes are stored as markdown files on disk. The `.json` sidecar holds the collaborative editing state (history, cursors, threads). Markdown files are written for convenience — grep, backup, and external tooling.
+
+---
+
+## Docker
+
+```bash
+cd docker
+bash control.sh startdev
+```
+
+Starts the API on `http://localhost:3120` and the frontend on `http://localhost:5175`.
+
+---
+
+## Development
+
+```bash
+git clone https://github.com/nielpattin/documine.git
+cd documine
+pnpm install
+pnpm dev
+```
+
+The API runs on `http://localhost:3120`. The frontend runs on `http://localhost:5175`.
+
+---
+
+## Data layout
 
 ```
 data/
@@ -141,41 +179,14 @@ data/
     <id>.json
 ```
 
-The `.md` files are derived from the collaborative editing state stored in the `.json` sidecar. The JSON is the source of truth. The markdown files are written for convenience (grep, backup, external tooling).
+---
 
-## HTTP API
+## Contributing
 
-All owner endpoints require `Authorization: Bearer <api-key>`.
+Contributions are welcome. Open an issue or pull request.
 
-| Method | Endpoint                              | Description                         |
-| ------ | ------------------------------------- | ----------------------------------- |
-| GET    | `/api/notes?q=<query>`                | List/search notes                   |
-| POST   | `/api/notes`                          | Create note                         |
-| GET    | `/api/notes/:id`                      | Read note                           |
-| PUT    | `/api/notes/:id`                      | Update title, markdown, shareAccess |
-| DELETE | `/api/notes/:id`                      | Delete note                         |
-| POST   | `/api/notes/:id/edit`                 | Apply text edits                    |
-| POST   | `/api/notes/:id/threads`              | Create comment thread               |
-| POST   | `/api/notes/:id/threads/:tid/replies` | Reply to thread                     |
-| PATCH  | `/api/notes/:id/threads/:tid`         | Resolve/reopen thread               |
-| DELETE | `/api/notes/:id/threads/:tid`         | Delete thread                       |
-| PATCH  | `/api/notes/:id/messages/:mid`        | Edit comment                        |
-| DELETE | `/api/notes/:id/messages/:mid`        | Delete comment                      |
-| GET    | `/api/keys`                           | List API keys                       |
-| POST   | `/api/keys`                           | Create API key                      |
-| DELETE | `/api/keys/:id`                       | Delete API key                      |
-
-Share endpoints (no auth, access controlled by `shareAccess`):
-
-| Method | Endpoint                               | Description                    |
-| ------ | -------------------------------------- | ------------------------------ |
-| GET    | `/api/share/:sid`                      | Read shared note               |
-| GET    | `/api/share/:sid/note`                 | Read shared note (lightweight) |
-| POST   | `/api/share/:sid/edit`                 | Edit (requires edit access)    |
-| POST   | `/api/share/:sid/threads`              | Create comment                 |
-| POST   | `/api/share/:sid/threads/:tid/replies` | Reply                          |
-| POST   | `/api/share/:sid/render`               | Render markdown to HTML        |
+---
 
 ## License
 
-MIT
+[MIT](https://github.com/nielpattin/documine/blob/main/LICENSE)

@@ -358,6 +358,12 @@ const authGuardRuntime = loadAuthGuardRuntime();
 
 const app = new Hono();
 
+const frontendDist = path.resolve(
+  __dirname,
+  '../apps/web/dist'
+);
+const frontendDistExists = fs.existsSync(frontendDist) && fs.statSync(frontendDist).isDirectory();
+
 app.use('/api/*', async (c, next) => {
   const origin = c.req.header('origin');
   if (origin && isAllowedBrowserOrigin(origin)) {
@@ -375,7 +381,17 @@ app.use('/api/*', async (c, next) => {
   await next();
 });
 
-app.get('/', (c) => c.json({ ok: true, service: 'documine-api' }));
+app.get('/', (c) => {
+  if (frontendDistExists) {
+    const indexPath = path.join(frontendDist, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      return c.body(fs.readFileSync(indexPath), 200, {
+        'Content-Type': 'text/html',
+      });
+    }
+  }
+  return c.json({ ok: true, service: 'documine-api' });
+});
 
 app.get('/health', (c) => c.text('ok'));
 
@@ -1944,10 +1960,45 @@ app.delete('/api/share/:shareId/messages/:messageId', (c) => {
   return c.json({ ok: true, threads: serializeThreads(note, c) });
 });
 
+const staticFileContentTypes: Record<string, string> = {
+  '.html': 'text/html',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.json': 'application/json',
+};
+
 app.notFound((c) => {
-  if (c.req.path.startsWith('/api/') || c.req.path === '/' || c.req.path === '/health') {
+  if (c.req.path.startsWith('/api/') || c.req.path === '/health') {
     return c.json({ ok: false, error: 'Not found.' }, 404);
   }
+
+  if (frontendDistExists) {
+    const requestedPath = c.req.path === '/' ? '/index.html' : c.req.path;
+    const filePath = path.join(frontendDist, requestedPath);
+    const resolved = path.resolve(filePath);
+
+    if (resolved.startsWith(frontendDist) && fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+      const ext = path.extname(resolved).toLowerCase();
+      return c.body(fs.readFileSync(resolved), 200, {
+        'Content-Type': staticFileContentTypes[ext] || 'application/octet-stream',
+      });
+    }
+
+    // SPA fallback: serve index.html for paths without a file extension
+    const indexPath = path.join(frontendDist, 'index.html');
+    if (!path.extname(c.req.path) && fs.existsSync(indexPath)) {
+      return c.body(fs.readFileSync(indexPath), 200, {
+        'Content-Type': 'text/html',
+      });
+    }
+  }
+
   return c.text('Not found.', 404);
 });
 

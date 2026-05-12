@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-05-12
+
+### Fixed
+
+- `documine serve` now serves both the API and the frontend on the same port. Previously only the API was accessible; the frontend required a separate dev server or manual static file hosting.
+- Windows CLI path resolution broken by `new URL(import.meta.url).pathname` producing a leading slash, causing `Server not found` errors on Windows.
+
+## [1.1.0] - 2026-05-10
+
 ### Added
 
 - In-editor note explorer for browsing and switching notes without leaving the page.

@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 
 const { version } = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -155,7 +156,7 @@ if (!command || command === "--help" || command === "-h" || command === "help") 
 if (command === "serve") {
   const portArg = args.find((a) => a.startsWith("--port="));
   const dataArg = args.find((a) => a.startsWith("--data="));
-  const cliDir = path.dirname(new URL(import.meta.url).pathname);
+  const cliDir = path.dirname(fileURLToPath(import.meta.url));
   const serverPath = path.join(cliDir, "..", "dist", "server.js");
   if (!fs.existsSync(serverPath)) {
     console.error(`Server not found at ${serverPath}. Run 'pnpm build' first.`);
