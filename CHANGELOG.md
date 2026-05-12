@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-05-12
+
+### Fixed
+
+- Include the built frontend (`apps/web/dist`) in the npm package. `documine serve` now correctly serves both API and frontend from the global install.
+- Added `apps/web/.npmignore` to override the nested `.gitignore` for publishing.
+
 ## [1.1.2] - 2026-05-12
 
 ### Fixed
