@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-05-12
+
+### Fixed
+
+- Include missing `dist/code-block-style.js` in the npm package so `documine serve` works after a global install.
+
 ## [1.1.1] - 2026-05-12
 
 ### Fixed

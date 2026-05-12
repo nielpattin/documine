@@ -6,6 +6,7 @@
   },
   "files": [
     "dist/collab.js",
+    "dist/code-block-style.js",
     "dist/note-archive.js",
     "dist/pdf-export.js",
     "dist/server.js",
@@ -52,6 +53,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.14",
+    "@nielpattin/documine": "link:",
     "@types/adm-zip": "^0.5.8",
     "adm-zip": "^0.5.17",
     "articulated": "^1.3.1",
