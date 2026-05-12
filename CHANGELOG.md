@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- In-editor note explorer for browsing and switching notes without leaving the page.
+
+### Changed
+
+- Migrated package manager from npm to pnpm.
+- Extracted monolithic App component into dedicated page components and feature modules for better maintainability.
+
+### Fixed
+
+- Speed up note opening and preview rendering.
+- Clear stale PDF preview when switching between notes.
+- Cache bundled Chromium in Docker images to speed up builds.
+
 ## [1.0.0] - 2026-05-02
 
 ### Added
