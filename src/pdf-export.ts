@@ -6,6 +6,8 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import puppeteer from 'puppeteer';
+import { codeToHtml, bundledLanguages, type BundledLanguage } from 'shiki';
+import { TOKEN_COLORS, CODE_CHROME, codePreStyle, codeCodeStyle } from './code-block-style';
 
 const execFileAsync = promisify(execFile);
 
@@ -18,6 +20,7 @@ const PDF_FONT_FAMILIES = ['Times New Roman', 'Georgia', 'Arial', 'Inter', 'syst
 const PDF_HEADER_MODES = ['none', 'title', 'date', 'title-date'] as const;
 const PDF_CODE_WRAP_MODES = ['wrap', 'scroll'] as const;
 const PDF_IMAGE_ALIGNMENTS = ['left', 'center', 'right'] as const;
+const SHIKI_LANGUAGES = new Set<string>(Object.keys(bundledLanguages));
 
 type PdfStylePreset = typeof PDF_STYLE_PRESETS[number];
 type PdfPageSize = typeof PDF_PAGE_SIZES[number];
@@ -463,16 +466,89 @@ th, td {
 }
 
 code, pre {
-  font-family: "Consolas", "Courier New", monospace;
-  font-size: ${Math.max(8, settings.fontSizePt - 2)}pt;
+  font-family: Consolas, monospace;
+  font-size: 10pt;
 }
 
-pre {
+pre,
+pre.sourceCode,
+div.sourceCode pre,
+.hljs,
+code.hljs,
+.shiki {
   white-space: ${settings.codeWrap === 'wrap' ? 'pre-wrap' : 'pre'};
-  overflow-x: auto;
-  border: 1px solid #000;
-  padding: 8px;
+  overflow-x: ${settings.codeWrap === 'wrap' ? 'hidden' : 'auto'};
+  ${settings.codeWrap === 'wrap' ? 'overflow-wrap: anywhere;\n  word-break: break-word;' : ''}
+  background-color: ${CODE_CHROME.backgroundColor};
+  color: ${CODE_CHROME.color};
+  border-radius: ${CODE_CHROME.borderRadius};
+  padding: ${CODE_CHROME.padding};
+  -webkit-print-color-adjust: ${CODE_CHROME.webkitPrintColorAdjust};
+  print-color-adjust: ${CODE_CHROME.printColorAdjust};
 }
+
+pre code,
+code.sourceCode {
+  display: block;
+  color: inherit;
+  background: transparent;
+  padding: 0;
+}
+
+:not(pre) > code {
+  display: inline-block;
+  background: rgba(30, 30, 30, 0.08);
+  color: #d4d4d4;
+  padding: 0.12em 0.35em;
+  border-radius: 4px;
+}
+
+.hljs,
+.sourceCode {
+  color: #d4d4d4;
+  background: transparent;
+}
+
+.sourceCode .kw { color: #569cd6; }
+.sourceCode .st { color: #ce9178; }
+.sourceCode .co { color: #6a9955; }
+.sourceCode .fu { color: #dcdcaa; }
+.sourceCode .ot { color: #9cdcfe; }
+.sourceCode .dt { color: #4ec9b0; }
+.sourceCode .dv { color: #b5cea8; }
+.sourceCode .bn { color: #b5cea8; }
+.sourceCode .fl { color: #b5cea8; }
+.sourceCode .ch { color: #ce9178; }
+.sourceCode .va { color: #9cdcfe; }
+.sourceCode .ss { color: #ce9178; }
+.sourceCode .op { color: #d4d4d4; }
+.sourceCode .er { color: #f44747; }
+.sourceCode .an { color: #6a9955; }
+.sourceCode .al { color: #ce9178; }
+.sourceCode .at { color: #4fc1ff; }
+.sourceCode .cf { color: #c586c0; }
+.sourceCode .sc { color: #ce9178; }
+.sourceCode .vs { color: #ce9178; }
+.sourceCode .sh { color: #ce9178; }
+.hljs-keyword { color: #569cd6 }
+.hljs-selector-tag { color: #569cd6 }
+.hljs-built_in { color: #569cd6 }
+.hljs-name { color: #569cd6 }
+.hljs-literal { color: #569cd6 }
+.hljs-string { color: #ce9178 }
+.hljs-title { color: #dcdcaa }
+.hljs-section { color: #dcdcaa }
+.hljs-attribute { color: #ce9178 }
+.hljs-comment { color: #6a9955 }
+.hljs-quote { color: #6a9955 }
+.hljs-number { color: #b5cea8 }
+.hljs-symbol { color: #b5cea8 }
+.hljs-bullet { color: #b5cea8 }
+.hljs-type { color: #4ec9b0 }
+.hljs-variable { color: #9cdcfe }
+.hljs-template-variable { color: #9cdcfe }
+.hljs-emphasis { font-style: italic }
+.hljs-strong { font-weight: 700 }
 
 figure {
   display: block;
@@ -511,7 +587,68 @@ ${screenPreviewCss()}
 `.trim() + '\n';
 }
 
-function transformExportHtml(bodyHtml: string, settings: PdfExportSettings): string {
+function normalizeCodeLanguage(value: string): BundledLanguage | null {
+  const normalized = value.toLowerCase().replace(/^language-/, '').replace(/^sourcecode\s+/, '');
+  const language = normalized === 'cs' || normalized === 'c#' ? 'csharp' : normalized === 'ts' ? 'typescript' : normalized;
+  return SHIKI_LANGUAGES.has(language) ? language as BundledLanguage : null;
+}
+
+function decodeHtmlText(value: string): string {
+  return value
+    .replace(/<a\b[^>]*><\/a>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+export async function highlightCodeBlocksWithShiki(bodyHtml: string, settings: PdfExportSettings): Promise<string> {
+  const blockPattern = /(?:<div class="sourceCode"[^>]*>\s*)?<pre\b([^>]*)>\s*<code\b([^>]*)>([\s\S]*?)<\/code>\s*<\/pre>(?:\s*<\/div>)?/gi;
+  let result = '';
+  let lastIndex = 0;
+
+  for (const match of bodyHtml.matchAll(blockPattern)) {
+    const fullMatch = match[0];
+    const index = match.index ?? 0;
+    result += bodyHtml.slice(lastIndex, index);
+    lastIndex = index + fullMatch.length;
+
+    const attrs = `${match[1]} ${match[2]}`;
+    const classMatch = attrs.match(/class=(["'])(.*?)\1/i);
+    const language = classMatch?.[2]
+      .split(/\s+/)
+      .map(normalizeCodeLanguage)
+      .find(Boolean) ?? null;
+
+    if (!language) {
+      result += fullMatch;
+      continue;
+    }
+
+    const code = decodeHtmlText(match[3]);
+    const highlighted = await codeToHtml(code, {
+      lang: language,
+      theme: 'dark-plus',
+      transformers: [{
+        pre(node) {
+          this.addClassToHast(node, 'documine-shiki');
+        },
+        code(node) {
+          node.properties.style = codeCodeStyle();
+        },
+      }],
+    });
+    const preStyle = codePreStyle(settings.codeWrap === 'wrap' ? 'pre-wrap' : 'pre');
+    result += highlighted.replace(/<pre\b([^>]*?)\sstyle="[^"]*"/i, `<pre$1 style="${preStyle}"`);
+  }
+
+  return result + bodyHtml.slice(lastIndex);
+}
+
+async function transformExportHtml(bodyHtml: string, settings: PdfExportSettings): Promise<string> {
   const figureStyle = `display:block;width:100%;max-width:100%;margin:0.6em 0;text-align:${imageTextAlign(settings.imageAlign)};`;
   const imageStyleBase = `display:block;height:auto;margin:${imageAutoMargin(settings.imageAlign)};`;
   const imageStyleWithDefaultWidth = `${imageStyleBase}max-width:${settings.imageMaxWidthPercent}%;`;
@@ -520,13 +657,14 @@ function transformExportHtml(bodyHtml: string, settings: PdfExportSettings): str
   const withOrderedToc = bodyHtml.replace(/<nav id="TOC"\b[^>]*>[\s\S]*?<\/nav>/i, (tocHtml) => {
     return tocHtml
       .replace(/<(\/?)ul\b/gi, '<$1ol')
-      .replace(/<a\b([^>]*?)\shref=(['"])(#[^'"]+)\2([^>]*)>([\s\S]*?)<\/a>/gi, '<span class="documine-toc-link" data-target="$3">$5</span>');
+      .replace(/<a\b([^>]*?)\shref=(["'])(#[^'"]+)\2([^>]*)>([\s\S]*?)<\/a>/gi, '<span class="documine-toc-link" data-target="$3">$5</span>');
   });
-  const withStyledFigures = withOrderedToc.replace(/<figure>/g, `<figure style="${figureStyle}">`);
+  const withShikiCode = await highlightCodeBlocksWithShiki(withOrderedToc, settings);
+  const withStyledFigures = withShikiCode.replace(/<figure>/g, `<figure style="${figureStyle}">`);
   const withStyledCaptions = withStyledFigures.replace(/<figcaption(\b[^>]*)>/gi, `<figcaption$1 style="${figcaptionStyle}">`);
 
   return withStyledCaptions.replace(/<img\b([^>]*?)\s*\/?>(?![^<]*<\/img>)/gi, (match, attrs: string) => {
-    const styleMatch = attrs.match(/\sstyle=(['"])(.*?)\1/i);
+    const styleMatch = attrs.match(/\sstyle=(["'])(.*?)\1/i);
     if (styleMatch) {
       const existingStyle = styleMatch[2].trim();
       const hasExplicitSize = /(^|;)\s*(width|height)\s*:/i.test(existingStyle);
@@ -565,8 +703,14 @@ async function markdownToHtmlString(source: string, cssContent: string, settings
   const withInjectedStyles = withoutBundledStyles.includes('</head>')
     ? withoutBundledStyles.replace('</head>', `  <style>\n${cssContent}  </style>\n</head>`)
     : withoutBundledStyles;
-  return withInjectedStyles.replace(/<body(\b[^>]*)>([\s\S]*?)<\/body>/i, (_match, attrs: string, bodyHtml: string) => {
-    return `<body${attrs}>\n${transformExportHtml(bodyHtml, settings)}\n</body>`;
+  const bodyMatch = withInjectedStyles.match(/<body(\b[^>]*)>([\s\S]*?)<\/body>/i);
+  if (!bodyMatch) {
+    return withInjectedStyles;
+  }
+
+  const transformedBody = await transformExportHtml(bodyMatch[2], settings);
+  return withInjectedStyles.replace(/<body(\b[^>]*)>([\s\S]*?)<\/body>/i, (_match, attrs: string) => {
+    return `<body${attrs}>\n${transformedBody}\n</body>`;
   });
 }
 
@@ -584,10 +728,12 @@ async function htmlToPdfWithBrowser(htmlPath: string, pdfPath: string, signal?: 
     }
     await page.goto(pathToFileURL(htmlPath).toString(), { waitUntil: 'networkidle0' });
     await page.emulateMediaType('print');
+    await page.evaluateHandle('document.fonts.ready');
     await page.pdf({
       path: pdfPath,
       printBackground: true,
       preferCSSPageSize: true,
+      tagged: false,
     });
   } finally {
     await browser.close();

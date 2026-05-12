@@ -18,15 +18,22 @@ import {
   type ArchiveNoteInput,
 } from './note-archive.js';
 import {
-  defaultPdfExportSettings,
   detectPdfExportCapabilities,
   exportMarkdownToPdf,
   loadPdfExportSettings,
   savePdfExportSettings,
   buildPdfCss,
+  highlightCodeBlocksWithShiki,
+  defaultPdfExportSettings,
   mergeSettings,
+  type PdfExportSettings,
   warmPdfPreviewEngine,
 } from './pdf-export.js';
+import {
+  TOKEN_COLORS,
+  CODE_CHROME,
+  codePreStyle,
+} from './code-block-style.js';
 import {
   type CollabState,
   type ClientMutation,
@@ -1061,7 +1068,7 @@ app.post('/api/notes/:id/export/html-preview', async (c) => {
   try {
     const markdown = typeof body.markdown === 'string' ? body.markdown : note.markdown;
     const settings = body.settings === undefined ? savedSettings : body.settings;
-    const html = renderPrintPreviewHtml(markdown, note.title, settings);
+    const html = await renderPrintPreviewHtml(markdown, note.title, settings);
     if (activePdfPreviewControllers.get(previewKey) === controller) {
       activePdfPreviewControllers.delete(previewKey);
     }
@@ -1542,7 +1549,9 @@ app.post('/api/render', async (c) => {
   }
 
   const body = await readJsonBody(c);
-  return c.json({ ok: true, html: renderMarkdown(String(body.markdown || '')) });
+  const html = renderMarkdown(String(body.markdown || ''));
+  const withShiki = await highlightCodeBlocksWithShiki(html, defaultPdfExportSettings);
+  return c.json({ ok: true, html: withShiki });
 });
 
 app.get('/api/share/:shareId/meta', (c) => {
@@ -1660,7 +1669,9 @@ app.post('/api/share/:shareId/render', async (c) => {
   }
 
   const body = await readJsonBody(c);
-  return c.json({ ok: true, html: renderMarkdown(String(body.markdown || '')) });
+  const html = renderMarkdown(String(body.markdown || ''));
+  const withShiki = await highlightCodeBlocksWithShiki(html, defaultPdfExportSettings);
+  return c.json({ ok: true, html: withShiki });
 });
 
 app.post('/api/share/:shareId/export/html-preview', async (c) => {
@@ -1675,7 +1686,7 @@ app.post('/api/share/:shareId/export/html-preview', async (c) => {
   const body = await readJsonBody(c) as { markdown?: unknown; settings?: unknown };
   const markdown = typeof body.markdown === 'string' ? body.markdown : note.markdown;
   const settings = body.settings === undefined ? defaultPdfExportSettings : body.settings;
-  const html = renderPrintPreviewHtml(markdown, note.title, settings);
+  const html = await renderPrintPreviewHtml(markdown, note.title, settings);
   const baseHref = `${new URL(c.req.url).origin}/`;
   const outHtml = injectPreviewBaseHref(html, baseHref);
   return c.body(outHtml, 200, {
@@ -3012,11 +3023,13 @@ function renderMarkdown(markdown: string) {
   });
 }
 
-function renderPrintPreviewHtml(markdown: string, title: string, settings: unknown): string {
+async function renderPrintPreviewHtml(markdown: string, title: string, settings: unknown): Promise<string> {
   const merged = mergeSettings(settings);
   const body = renderMarkdown(markdown);
   const css = buildPdfCss(title, merged);
   const safeTitle = escapeHtml(title || 'Untitled');
+  const highlightedBody = await highlightCodeBlocksWithShiki(body, merged);
+  const inlinedBody = inlineCodeBlockStyles(highlightedBody, merged);
   return [
     '<!DOCTYPE html>',
     '<html>',
@@ -3025,9 +3038,49 @@ function renderPrintPreviewHtml(markdown: string, title: string, settings: unkno
     `<title>${safeTitle}</title>`,
     `<style>${css}</style>`,
     '</head>',
-    `<body>${body}</body>`,
+    `<body>${inlinedBody}</body>`,
     '</html>',
   ].join('\n');
+}
+
+function inlineCodeBlockStyles(html: string, settings: PdfExportSettings): string {
+  const PRE_BG = codePreStyle(settings.codeWrap === 'wrap' ? 'pre-wrap' : 'pre');
+
+  let result = html;
+
+  result = result.replace(/<pre\b([^>]*)>/gi, (_, attrs) => {
+    if (/style\s*=\s*["']/i.test(attrs)) {
+      return `<pre${attrs.replace(/(style\s*=\s*["'])([^"']*)(["'])/i, `$1$2;${PRE_BG}$3`)}>`;
+    }
+    return `<pre${attrs} style="${PRE_BG}">`;
+  });
+
+  result = result.replace(/<span class="([^"]*)"([^>]*)>/gi, (_, classes, attrs) => {
+    const classList = classes.split(/\s+/);
+    let color: string | null = null;
+    let isBold = false;
+    let isItalic = false;
+    for (const cls of classList) {
+      if (cls === 'hljs-strong') isBold = true;
+      if (cls === 'hljs-emphasis') isItalic = true;
+      if (!color && TOKEN_COLORS[cls]) color = TOKEN_COLORS[cls];
+    }
+    let styleAdd = '';
+    if (color) styleAdd += `color:${color};`;
+    if (isBold) styleAdd += 'font-weight:700;';
+    if (isItalic) styleAdd += 'font-style:italic;';
+
+    if (!styleAdd) {
+      return `<span class="${classes}"${attrs}>`;
+    }
+
+    if (/style\s*=\s*["']/i.test(attrs)) {
+      return `<span class="${classes}"${attrs.replace(/(style\s*=\s*["'])([^"']*)(["'])/i, `$1$2;${styleAdd}$3`)}>`;
+    }
+    return `<span class="${classes}"${attrs} style="${styleAdd}">`;
+  });
+
+  return result;
 }
 
 function makeShareUrl(c: Context, shareId: string) {
@@ -3321,9 +3374,218 @@ function buildPreviewPaginationScript(): string {
 </script>`;
 }
 
+function buildPreviewClipboardScript(): string {
+  return `<script>
+(() => {
+  const TOKEN_STYLES = {
+    ${Object.entries(TOKEN_COLORS).map(([cls, color]) => {
+      if (cls.startsWith('hljs-')) {
+        return `'${cls}': '${color.startsWith('font-') ? color : `color:${color};`}'`;
+      }
+      return `'${cls}': 'color:${color};'`;
+    }).join(',\n    ')}
+  };
+
+  document.addEventListener('copy', (event) => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const pre = range.commonAncestorContainer instanceof Element
+      ? range.commonAncestorContainer.closest('pre')
+      : range.commonAncestorContainer.parentElement?.closest('pre');
+    if (!pre) {
+      return;
+    }
+
+    const codeEl = pre.querySelector('code') || pre;
+    const cloned = codeEl.cloneNode(true);
+
+    for (const span of cloned.querySelectorAll('span[class]')) {
+      for (const cls of span.classList) {
+        const color = TOKEN_STYLES[cls];
+        if (color) {
+          span.setAttribute('style', (span.getAttribute('style') || '') + color);
+        }
+      }
+    }
+
+    const wrapper = document.createElement('pre');
+    wrapper.style.cssText = 'margin:0;color:${CODE_CHROME.color};background-color:${CODE_CHROME.backgroundColor};font-family:${CODE_CHROME.fontFamily};font-weight:normal;font-size:${CODE_CHROME.fontSize};line-height:14pt;white-space:pre;padding:${CODE_CHROME.padding};border-radius:${CODE_CHROME.borderRadius};';
+
+    const code = document.createElement('code');
+    code.style.cssText = 'color:inherit;background:transparent;font:inherit;white-space:inherit;padding:0;';
+    code.innerHTML = cloned.innerHTML;
+    wrapper.appendChild(code);
+
+    event.clipboardData.setData('text/html', wrapper.outerHTML);
+    event.clipboardData.setData('text/plain', selection.toString());
+    event.preventDefault();
+  });
+})();
+</script>`;
+}
+
+function buildCopyButtonsScript(): string {
+  return `<script>
+(() => {
+  const STYLE = document.createElement('style');
+  STYLE.textContent = \`
+    .documine-cb-wrap { position:relative; display:block; }
+    .documine-cb-wrap:hover .documine-cb-btn { opacity:0.7; }
+    .documine-cb-btn {
+      position:absolute; top:0; right:0;
+      border:0; background:transparent;
+      color:#d4d4d4; cursor:pointer;
+      font-family:system-ui,sans-serif; font-size:11px;
+      padding:4px 8px; opacity:0;
+      transition:opacity 0.15s;
+      z-index:1; line-height:1;
+    }
+    .documine-cb-btn:hover { opacity:1 !important; background:rgba(255,255,255,0.08); }
+    .documine-cb-btn.copied { opacity:1 !important; }
+    .documine-cb-btn.failed { opacity:1 !important; }
+  \`;
+  document.head.appendChild(STYLE);
+
+  const TOKEN_STYLES = {
+    ${Object.entries(TOKEN_COLORS).map(([cls, color]) => {
+      if (cls.startsWith('hljs-')) {
+        return `'${cls}': '${color.startsWith('font-') ? color : `color:${color};`}'`;
+      }
+      return `'${cls}': 'color:${color};'`;
+    }).join(',\n    ')}
+  };
+
+  function buildClipboardHtml(pre) {
+    const codeEl = pre.querySelector('code') || pre;
+    const cloned = codeEl.cloneNode(true);
+    for (const span of cloned.querySelectorAll('span[class]')) {
+      for (const cls of span.classList) {
+        const color = TOKEN_STYLES[cls];
+        if (color) {
+          span.setAttribute('style', (span.getAttribute('style') || '') + color);
+        }
+      }
+    }
+    const lines = [];
+    cloned.querySelectorAll('span.line').forEach(line => {
+      lines.push(line.innerHTML || '&nbsp;');
+    });
+    if (!lines.length) {
+      lines.push(cloned.innerHTML || '&nbsp;');
+    }
+    const cellHtml = lines.join('\\n');
+    const tableHtml = '<table style="width:100%;margin:0;border-collapse:collapse;border-spacing:0"><tbody><tr><td style="background-color:${CODE_CHROME.backgroundColor};color:${CODE_CHROME.color};font-family:${CODE_CHROME.fontFamily};font-weight:400;font-size:${CODE_CHROME.fontSize};white-space:pre;text-align:left;vertical-align:top;padding:${CODE_CHROME.padding};border-radius:${CODE_CHROME.borderRadius}">' + cellHtml + '</td></tr></tbody></table>';
+    return tableHtml;
+  }
+
+  function resetBtn(btn) {
+    setTimeout(function() { btn.textContent = 'Copy'; btn.classList.remove('copied', 'failed'); }, 2000);
+  }
+
+  async function copyCodeToClipboard(copyHtml, copyText, btn) {
+    btn.textContent = 'Copying...';
+    btn.classList.add('copied');
+    try {
+      if (typeof ClipboardItem !== 'undefined' && navigator.clipboard && navigator.clipboard.write) {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': new Blob([copyHtml], { type: 'text/html' }),
+            'text/plain': new Blob([copyText], { type: 'text/plain' }),
+          }),
+        ]);
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        resetBtn(btn);
+        return;
+      }
+    } catch (_0) {}
+    try {
+      const container = document.createElement('div');
+      container.contentEditable = 'true';
+      container.style.cssText = 'position:fixed;left:-9999px;top:0;pointer-events:none;';
+      container.innerHTML = copyHtml;
+      document.body.appendChild(container);
+      const range = document.createRange();
+      range.selectNodeContents(container);
+      const sel = window.getSelection();
+      if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+      document.execCommand('copy');
+      document.body.removeChild(container);
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      resetBtn(btn);
+      return;
+    } catch (_1) {}
+    try {
+      await navigator.clipboard.writeText(copyText);
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+    } catch (_2) {
+      btn.textContent = 'Failed';
+      btn.classList.add('failed');
+    }
+    resetBtn(btn);
+  }
+
+  function wrapUnmatchedPreBlocks() {
+    document.querySelectorAll('#documine-preview-pages pre.shiki:not([data-documine-copy-button]), #documine-preview-pages pre.documine-shiki:not([data-documine-copy-button])').forEach(pre => {
+      pre.dataset.documineCopyButton = '1';
+      const wrap = document.createElement('div');
+      wrap.className = 'documine-cb-wrap';
+      pre.parentNode.insertBefore(wrap, pre);
+      wrap.appendChild(pre);
+      const btn = document.createElement('button');
+      btn.className = 'documine-cb-btn';
+      btn.textContent = 'Copy';
+      wrap.appendChild(btn);
+    });
+  }
+
+  function initWhenPagesReady() {
+    var wrapTimer = 0;
+    function debouncedWrap() {
+      if (wrapTimer) clearTimeout(wrapTimer);
+      wrapTimer = setTimeout(function() {
+        wrapTimer = 0;
+        if (document.getElementById('documine-preview-pages')) {
+          wrapUnmatchedPreBlocks();
+        }
+      }, 30);
+    }
+    function cancelWrap() { if (wrapTimer) { clearTimeout(wrapTimer); wrapTimer = 0; } }
+    window.addEventListener('beforeunload', cancelWrap, { once: true });
+    const pages = document.getElementById('documine-preview-pages');
+    if (pages) {
+      wrapUnmatchedPreBlocks();
+    }
+    const obs = new MutationObserver(debouncedWrap);
+    obs.observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  initWhenPagesReady();
+
+  document.addEventListener('click', async function(e) {
+    const btn = e.target.closest('.documine-cb-btn');
+    if (!btn) return;
+    const wrap = btn.closest('.documine-cb-wrap');
+    if (!wrap) return;
+    const pre = wrap.querySelector('pre');
+    if (!pre) return;
+    e.preventDefault();
+    e.stopPropagation();
+    await copyCodeToClipboard(buildClipboardHtml(pre), (pre.textContent || '').trim(), btn);
+  }, true);
+})();
+</script>`;
+}
+
 function injectPreviewBaseHref(html: string, baseHref: string) {
   const baseTag = `<base href="${escapeHtml(baseHref)}">`;
-  const previewScript = buildPreviewPaginationScript();
+  const previewScript = buildPreviewPaginationScript() + buildPreviewClipboardScript() + buildCopyButtonsScript();
 
   if (/<head\b[^>]*>/i.test(html)) {
     return html.replace(/<head\b[^>]*>/i, (headTag) => `${headTag}\n    ${baseTag}\n    ${previewScript}`);

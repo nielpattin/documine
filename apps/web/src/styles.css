@@ -36,12 +36,12 @@
   --thread-reply-border: #35353f;
   --thread-footer-border: #30303a;
   --hover-bg: rgba(255, 255, 255, 0.07);
-  --hljs-text: #e0e0e4;
-  --hljs-keyword: #8ec5ff;
-  --hljs-string: #a0e8a0;
-  --hljs-comment: #80809a;
-  --hljs-number: #ffaa75;
-  --hljs-type: #74b4ff;
+  --hljs-text: #d4d4d4;
+  --hljs-keyword: #569cd6;
+  --hljs-string: #ce9178;
+  --hljs-comment: #6a9955;
+  --hljs-number: #b5cea8;
+  --hljs-type: #4ec9b0;
 }
 
 [data-theme="light"] {
@@ -1051,8 +1051,8 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px
   font-size: 0.9em; background: var(--code-bg); padding: 0.1rem 0.25rem; border-radius: 3px;
 }
 .markdown-body pre {
-  background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 4px;
-  padding: 0.65rem 0.8rem; overflow-x: auto; max-width: 100%; font-size: 0.78rem;
+  background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 0;
+  padding: 0; overflow-x: auto; max-width: 100%; font-size: 0.78rem;
 }
 .markdown-body pre code { background: transparent; padding: 0; border-radius: 0; font-size: inherit; }
 .markdown-body blockquote { margin-left: 0; padding-left: 1rem; border-left: 2px solid var(--line); color: var(--muted); }

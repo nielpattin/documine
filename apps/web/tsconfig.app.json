@@ -22,7 +22,13 @@
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+
+    /* Paths */
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["../../src/*"]
+    }
   },
   "include": ["src"]
 }

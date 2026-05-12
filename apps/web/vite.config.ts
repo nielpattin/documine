@@ -1,8 +1,11 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { defineConfig, type PreviewServer, type ViteDevServer } from 'vite'
 import react from '@vitejs/plugin-react'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const apiPort = process.env.PORT
 const apiHttpOrigin = process.env.VITE_DOCUMINE_API_HTTP_ORIGIN || process.env.DOCUMINE_API_HTTP_ORIGIN || (apiPort ? `http://localhost:${apiPort}` : '')
@@ -76,7 +79,11 @@ function installUploadedAssetProxyMiddleware(server: ViteDevServer | PreviewServ
     }
 
     try {
-      const response = await fetch(`${apiOrigin}${req.url}`)
+      const response = await fetch(`${apiOrigin}${req.url}`, {
+        headers: {
+          'Cookie': req.headers.cookie || '',
+        },
+      })
       res.statusCode = response.status
       response.headers.forEach((value, key) => res.setHeader(key, value))
       res.end(Buffer.from(await response.arrayBuffer()))
@@ -131,6 +138,11 @@ export default defineConfig({
   define: {
     'import.meta.env.VITE_DOCUMINE_API_HTTP_ORIGIN': JSON.stringify(apiHttpOrigin),
     'import.meta.env.VITE_DOCUMINE_API_WS_ORIGIN': JSON.stringify(apiWsOrigin),
+  },
+  resolve: {
+    alias: {
+      '@shared': path.resolve(__dirname, '../../src'),
+    },
   },
   plugins: [
     react(),

@@ -7,5 +7,3 @@ data/
 *.log
 .DS_Store
 tmp/
-.pi/
-.agents/
