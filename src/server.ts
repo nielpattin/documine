@@ -126,7 +126,7 @@ const authGuardFilePath = path.join(dataDir, 'auth-guard.json');
 const authGuardLogFilePath = path.join(dataDir, 'auth-guard.jsonl');
 const authTokenVerificationCacheMs = 1000 * 60 * 5;
 const authKeyVerificationCacheMs = 1000 * 60 * 5;
-const exportSettingsFilePath = path.join(dataDir, 'export-settings.json');
+export const exportSettingsFilePath = path.join(dataDir, 'export-settings.json');
 const exportShareTokensFilePath = path.join(dataDir, 'export-share-tokens.json');
 type ExportShareTokenEntry = { noteId: string; fileName: string; createdAt: string };
 const exportShareTokens = new Map<string, ExportShareTokenEntry>();
@@ -154,17 +154,17 @@ const verifiedOwnerTokenCache = new Map<string, number>();
 const verifiedApiKeyCache = new Map<string, number>();
 const requestViewerContextCache = new WeakMap<Context, ViewerContext>();
 const ownerSessionCookieName = 'documine_owner_session';
-const ownerLocalStorageTokenKey = 'documine_owner_token';
+export const ownerLocalStorageTokenKey = 'documine_owner_token';
 const commenterIdCookieName = 'documine_commenter_id';
 const commenterNameCookieName = 'documine_commenter_name';
 const ownerCookieMaxAgeSeconds = 60 * 60 * 24 * 30;
 const commenterCookieMaxAgeSeconds = 60 * 60 * 24 * 365;
-const authIpBanDurationMs = 1000 * 60 * 15;
-const authFailedAttemptWindowMs = 1000 * 60 * 15;
-const authFailedAttemptBanThreshold = 3;
-const authGlobalLoginWindowMs = 1000 * 60 * 5;
-const authGlobalLoginThreshold = 10;
-const shareAccessLevels: Record<ShareAccess, number> = { none: 0, view: 1, comment: 2, edit: 3 };
+export const authIpBanDurationMs = 1000 * 60 * 15;
+export const authFailedAttemptWindowMs = 1000 * 60 * 15;
+export const authFailedAttemptBanThreshold = 3;
+export const authGlobalLoginWindowMs = 1000 * 60 * 5;
+export const authGlobalLoginThreshold = 10;
+export const shareAccessLevels: Record<ShareAccess, number> = { none: 0, view: 1, comment: 2, edit: 3 };
 const maxImageUploadBytes = 10 * 1024 * 1024;
 const maxNotesImportZipBytes = 100 * 1024 * 1024;
 const NOTE_LIST_SNIPPET_SOURCE_LIMIT = 1000;
@@ -204,7 +204,7 @@ marked.setOptions({
 ensureDirectories();
 loadNotesIntoMemory();
 loadExportShareTokens();
-const authGuardRuntime = loadAuthGuardRuntime();
+export const authGuardRuntime = loadAuthGuardRuntime();
 
 const app = new Hono();
 
@@ -272,312 +272,8 @@ app.get('/assets/:noteId/:fileName', (c) => {
   });
 });
 
-app.get('/api/viewer', (c) => {
-  const authGuard = loadAuthGuardData();
-  if (pruneAuthGuardData(authGuard)) {
-    saveAuthGuardData(authGuard);
-  }
-
-  return c.json({
-    ok: true,
-    authConfigured: authConfigured(),
-    ownerAuthenticated: isOwnerAuthenticated(c),
-    ownerLocalStorageTokenKey,
-    authGuard: buildAuthGuardSummary(authGuard),
-    viewer: buildViewerInfo(c),
-  });
-});
-
-app.post('/api/auth/setup', async (c) => {
-  if (authConfigured()) {
-    return c.json({ ok: false, error: 'Password already configured.' }, 400);
-  }
-
-  const body = await readJsonBody(c);
-  const password = String(body.password || '');
-  const confirmPassword = String(body.confirmPassword || '');
-
-  if (password.length < 8) {
-    return c.json({ ok: false, error: 'Use at least 8 characters.' }, 400);
-  }
-
-  if (password !== confirmPassword) {
-    return c.json({ ok: false, error: 'Passwords do not match.' }, 400);
-  }
-
-  const token = initializeOwnerAuth(password);
-  return c.json({ ok: true, token, ownerLocalStorageTokenKey });
-});
-
-app.post('/api/auth/login', async (c) => {
-  if (!authConfigured()) {
-    return c.json({ ok: false, error: 'Password is not configured yet.' }, 400);
-  }
-
-  const authGuard = loadAuthGuardData();
-  if (pruneAuthGuardData(authGuard)) {
-    saveAuthGuardData(authGuard);
-  }
-  const ip = getClientIp(c);
-
-  if (!authGuard.loginEnabled) {
-    appendAuthGuardEvent({
-      type: 'login-blocked',
-      ip,
-      timestamp: nowIso(),
-      detail: authGuard.globalLock.active
-        ? 'Owner login is locked due to suspicious activity.'
-        : 'Owner login is disabled.',
-    });
-    saveAuthGuardData(authGuard);
-    return c.json({
-      ok: false,
-      error: authGuard.globalLock.active
-        ? authGuard.globalLock.expiresAt
-          ? `Owner login is temporarily locked until ${authGuard.globalLock.expiresAt}.`
-          : 'Owner login is locked due to suspicious activity. Use the CLI or auth-guard.json to re-enable it.'
-        : 'Owner login is currently disabled.',
-    }, authGuard.globalLock.active ? 423 : 403);
-  }
-
-  const timestamp = nowIso();
-  recordAuthGuardLoginRequest(ip, timestamp);
-  if (authGuardRuntime.loginRequests.length > authGlobalLoginThreshold) {
-    authGuard.loginEnabled = false;
-    authGuard.globalLock = {
-      active: true,
-      lockedAt: timestamp,
-      expiresAt: null,
-      reason: `More than ${authGlobalLoginThreshold} login requests in ${Math.round(authGlobalLoginWindowMs / 60000)} minutes.`,
-    };
-    appendAuthGuardEvent({
-      type: 'login-locked',
-      ip,
-      timestamp,
-      detail: authGuard.globalLock.reason || 'Owner login locked due to suspicious activity.',
-    });
-    console.warn(`[auth-guard] login-locked ip=${ip} timestamp=${timestamp} reason=${authGuard.globalLock.reason}`);
-    saveAuthGuardData(authGuard);
-    return c.json({ ok: false, error: 'Owner login has been locked due to suspicious activity. The current owner can re-enable it from the CLI or auth-guard.json.' }, 423);
-  }
-
-  const activeBan = getActiveIpBan(authGuard, ip);
-  if (activeBan) {
-    appendAuthGuardEvent({
-      type: 'login-blocked',
-      ip,
-      timestamp,
-      detail: `Blocked by temporary IP ban until ${activeBan.expiresAt}.`,
-    });
-    saveAuthGuardData(authGuard);
-    return c.json({ ok: false, error: `Too many failed login attempts from this IP. Login is disabled until ${activeBan.expiresAt}.` }, 429);
-  }
-
-  const body = await readJsonBody(c);
-  const password = String(body.password || '');
-  if (!passwordMatches(password)) {
-    recordAuthGuardFailedLogin(ip, timestamp);
-    const failedAttemptsForIp = authGuardRuntime.failedLogins.filter((attempt) => attempt.ip === ip).length;
-
-    if (failedAttemptsForIp >= authFailedAttemptBanThreshold) {
-      const expiresAt = new Date(Date.now() + authIpBanDurationMs).toISOString();
-      const existingBan = authGuard.bannedIps.find((item) => item.ip === ip);
-      if (existingBan) {
-        existingBan.bannedAt = timestamp;
-        existingBan.expiresAt = expiresAt;
-        existingBan.reason = `${authFailedAttemptBanThreshold} failed owner login attempts.`;
-      } else {
-        authGuard.bannedIps.push({
-          ip,
-          bannedAt: timestamp,
-          expiresAt,
-          reason: `${authFailedAttemptBanThreshold} failed owner login attempts.`,
-        });
-      }
-      authGuard.loginEnabled = false;
-      authGuard.globalLock = {
-        active: true,
-        lockedAt: timestamp,
-        expiresAt,
-        reason: `${authFailedAttemptBanThreshold} failed owner login attempts triggered a temporary login lock.`,
-      };
-      appendAuthGuardEvent({
-        type: 'ip-banned',
-        ip,
-        timestamp,
-        detail: `Temporary ban active until ${expiresAt}.`,
-      });
-      appendAuthGuardEvent({
-        type: 'login-locked',
-        ip,
-        timestamp,
-        detail: `Owner login temporarily locked until ${expiresAt} after ${authFailedAttemptBanThreshold} failed password attempts.`,
-      });
-      console.warn(`[auth-guard] ip-banned ip=${ip} timestamp=${timestamp} expiresAt=${expiresAt}`);
-      console.warn(`[auth-guard] login-locked ip=${ip} timestamp=${timestamp} expiresAt=${expiresAt} reason=${authGuard.globalLock.reason}`);
-      saveAuthGuardData(authGuard);
-      return c.json({ ok: false, error: `Owner login is temporarily locked until ${expiresAt}.` }, 423);
-    }
-
-    saveAuthGuardData(authGuard);
-    return c.json({ ok: false, error: 'Invalid credentials.' }, 401);
-  }
-
-  clearAuthGuardFailedLoginsForIp(ip);
-  appendAuthGuardEvent({
-    type: 'login-succeeded',
-    ip,
-    timestamp,
-    detail: 'Owner login succeeded.',
-  });
-  saveAuthGuardData(authGuard);
-
-  const token = issueOwnerToken();
-  return c.json({ ok: true, token, ownerLocalStorageTokenKey });
-});
-
-app.post('/api/auth/token', async (c) => {
-  const body = await readJsonBody(c);
-  const token = String(body.token || '');
-  if (!token || !verifyOwnerToken(token)) {
-    clearOwnerSessionCookie(c);
-    return c.json({ ok: false }, 401);
-  }
-
-  setOwnerSessionCookie(c, token);
-  return c.json({ ok: true });
-});
-
-app.post('/api/auth/logout', (c) => {
-  const token = getOwnerSessionToken(c);
-  if (token) {
-    revokeOwnerToken(token);
-  }
-  clearOwnerSessionCookie(c);
-  return c.json({ ok: true });
-});
-
-app.get('/api/auth/guard', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const authGuard = loadAuthGuardData();
-  if (pruneAuthGuardData(authGuard)) {
-    saveAuthGuardData(authGuard);
-  }
-  return c.json({ ok: true, authGuard: buildAuthGuardSummary(authGuard), bans: authGuard.bannedIps });
-});
-
-app.put('/api/auth/guard/login', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const body = await readJsonBody(c);
-  const enabled = body.enabled === true;
-  const authGuard = loadAuthGuardData();
-  pruneAuthGuardData(authGuard);
-  authGuard.loginEnabled = enabled;
-  authGuard.globalLock = {
-    active: false,
-    lockedAt: null,
-    expiresAt: null,
-    reason: null,
-  };
-  const timestamp = nowIso();
-  appendAuthGuardEvent({
-    type: enabled ? 'login-enabled' : 'login-disabled',
-    ip: getClientIp(c),
-    timestamp,
-    detail: enabled ? 'Owner login manually enabled.' : 'Owner login manually disabled.',
-  });
-  console.warn(`[auth-guard] ${enabled ? 'login-enabled' : 'login-disabled'} ip=${getClientIp(c)} timestamp=${timestamp}`);
-  saveAuthGuardData(authGuard);
-  return c.json({ ok: true, authGuard: buildAuthGuardSummary(authGuard), bans: authGuard.bannedIps });
-});
-
-app.delete('/api/auth/guard/bans/:ip', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const authGuard = loadAuthGuardData();
-  pruneAuthGuardData(authGuard);
-  const ip = decodeURIComponent(c.req.param('ip'));
-  const before = authGuard.bannedIps.length;
-  authGuard.bannedIps = authGuard.bannedIps.filter((item) => item.ip !== ip);
-  clearAuthGuardFailedLoginsForIp(ip);
-  if (authGuard.bannedIps.length === before) {
-    return c.json({ ok: false, error: 'IP ban not found.' }, 404);
-  }
-  const timestamp = nowIso();
-  appendAuthGuardEvent({
-    type: 'ip-unbanned',
-    ip,
-    timestamp,
-    detail: 'Temporary IP ban removed by owner.',
-  });
-  console.warn(`[auth-guard] ip-unbanned ip=${ip} timestamp=${timestamp}`);
-  saveAuthGuardData(authGuard);
-  return c.json({ ok: true, authGuard: buildAuthGuardSummary(authGuard), bans: authGuard.bannedIps });
-});
-
-app.get('/api/keys', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  return c.json({ ok: true, keys: listApiKeys() });
-});
-
-app.get('/api/export/settings', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const [settings, capabilities] = await Promise.all([
-    loadPdfExportSettings(exportSettingsFilePath),
-    detectPdfExportCapabilities(),
-  ]);
-
-  return c.json({ ok: true, settings, defaults: defaultPdfExportSettings, capabilities });
-});
-
-app.put('/api/export/settings', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const body = await readJsonBody(c);
-  const settings = await savePdfExportSettings(exportSettingsFilePath, body.settings);
-  const capabilities = await detectPdfExportCapabilities();
-  return c.json({ ok: true, settings, defaults: defaultPdfExportSettings, capabilities });
-});
-
-app.post('/api/keys', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const body = await readJsonBody(c);
-  const label = String(body.label || 'unnamed');
-  const result = createApiKey(label);
-  return c.json({ ok: true, ...result });
-});
-
-app.delete('/api/keys/:id', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const deleted = deleteApiKey(c.req.param('id'));
-  if (!deleted) {
-    return c.json({ ok: false, error: 'API key not found.' }, 404);
-  }
-
-  return c.json({ ok: true });
-});
+import { registerAuthRoutes } from './routes/auth.js';
+registerAuthRoutes(app);
 
 app.get('/api/notes', (c) => {
   if (!isOwnerAuthenticated(c)) {
@@ -2008,7 +1704,7 @@ server.listen(port, () => {
     });
 });
 
-function readJsonBody(c: Context) {
+export function readJsonBody(c: Context) {
   return c.req.json().catch(() => ({} as Record<string, unknown>)) as Promise<Record<string, unknown>>;
 }
 
@@ -2641,7 +2337,7 @@ function locateMessage(note: NoteRecord, messageId: string) {
   return null;
 }
 
-function getViewerContext(
+export function getViewerContext(
   c: Context,
   overrides?: { commenterNameOverride?: string; hasCommenterIdentityOverride?: boolean },
 ): ViewerContext {
@@ -2668,7 +2364,7 @@ function getViewerContext(
   return { viewer, commenter };
 }
 
-function buildViewerInfo(
+export function buildViewerInfo(
   c: Context,
   overrides?: { commenterNameOverride?: string; hasCommenterIdentityOverride?: boolean },
 ): ViewerInfo {
@@ -3530,11 +3226,11 @@ function escapeHtml(input: string) {
     .replaceAll("'", '&#39;');
 }
 
-function hashSecret(value: string, salt: string) {
+export function hashSecret(value: string, salt: string) {
   return crypto.scryptSync(value, salt, 64).toString('hex');
 }
 
-function secureEqualsHex(a: string, b: string) {
+export function secureEqualsHex(a: string, b: string) {
   const left = Buffer.from(a, 'hex');
   const right = Buffer.from(b, 'hex');
   if (left.length !== right.length) {
@@ -3543,7 +3239,7 @@ function secureEqualsHex(a: string, b: string) {
   return crypto.timingSafeEqual(left, right);
 }
 
-function loadAuthData() {
+export function loadAuthData() {
   const mtimeMs = fs.existsSync(authFilePath) ? fs.statSync(authFilePath).mtimeMs : -1;
   if (authDataCache.value && authDataCache.mtimeMs === mtimeMs) {
     return authDataCache.value;
@@ -3553,7 +3249,7 @@ function loadAuthData() {
   return authDataCache.value;
 }
 
-function saveAuthData(authData: AuthData) {
+export function saveAuthData(authData: AuthData) {
   writeJson(authFilePath, authData);
   authDataCache.value = authData;
   authDataCache.mtimeMs = fs.statSync(authFilePath).mtimeMs;
@@ -3561,7 +3257,7 @@ function saveAuthData(authData: AuthData) {
   verifiedApiKeyCache.clear();
 }
 
-function defaultAuthGuardData(): AuthGuardData {
+export function defaultAuthGuardData(): AuthGuardData {
   return {
     loginEnabled: true,
     globalLock: {
@@ -3581,7 +3277,7 @@ function defaultAuthGuardRuntime(): AuthGuardRuntime {
   };
 }
 
-function loadAuthGuardData(): AuthGuardData {
+export function loadAuthGuardData(): AuthGuardData {
   const raw = readJson<Record<string, unknown> | null>(authGuardFilePath, null);
   const fallback = defaultAuthGuardData();
   const authGuard: AuthGuardData = {
@@ -3608,7 +3304,7 @@ function loadAuthGuardData(): AuthGuardData {
   return authGuard;
 }
 
-function loadAuthGuardRuntime(): AuthGuardRuntime {
+export function loadAuthGuardRuntime(): AuthGuardRuntime {
   const runtime = defaultAuthGuardRuntime();
   const loginRequestCutoff = Date.now() - authGlobalLoginWindowMs;
   const failedLoginCutoff = Date.now() - authFailedAttemptWindowMs;
@@ -3647,11 +3343,11 @@ function loadAuthGuardRuntime(): AuthGuardRuntime {
   return runtime;
 }
 
-function saveAuthGuardData(authGuard: AuthGuardData) {
+export function saveAuthGuardData(authGuard: AuthGuardData) {
   writeJson(authGuardFilePath, authGuard);
 }
 
-function pruneAuthGuardData(authGuard: AuthGuardData, now = Date.now()) {
+export function pruneAuthGuardData(authGuard: AuthGuardData, now = Date.now()) {
   const bannedIpCount = authGuard.bannedIps.length;
   const previousLoginEnabled = authGuard.loginEnabled;
   const previousGlobalLock = JSON.stringify(authGuard.globalLock);
@@ -3677,7 +3373,7 @@ function pruneAuthGuardData(authGuard: AuthGuardData, now = Date.now()) {
     || JSON.stringify(authGuard.globalLock) !== previousGlobalLock;
 }
 
-function pruneAuthGuardRuntimeEntries(runtime: AuthGuardRuntime, now = Date.now()) {
+export function pruneAuthGuardRuntimeEntries(runtime: AuthGuardRuntime, now = Date.now()) {
   const loginRequestCutoff = now - authGlobalLoginWindowMs;
   const failedLoginCutoff = now - authFailedAttemptWindowMs;
   runtime.loginRequests = runtime.loginRequests.filter((item) => {
@@ -3690,15 +3386,15 @@ function pruneAuthGuardRuntimeEntries(runtime: AuthGuardRuntime, now = Date.now(
   });
 }
 
-function pruneAuthGuardRuntime(now = Date.now()) {
+export function pruneAuthGuardRuntime(now = Date.now()) {
   pruneAuthGuardRuntimeEntries(authGuardRuntime, now);
 }
 
-function appendAuthGuardEvent(event: AuthGuardEvent) {
+export function appendAuthGuardEvent(event: AuthGuardEvent) {
   fs.appendFileSync(authGuardLogFilePath, `${JSON.stringify(event)}\n`, 'utf8');
 }
 
-function recordAuthGuardLoginRequest(ip: string, timestamp: string) {
+export function recordAuthGuardLoginRequest(ip: string, timestamp: string) {
   pruneAuthGuardRuntime();
   authGuardRuntime.loginRequests.push({ ip, timestamp });
   appendAuthGuardEvent({
@@ -3709,7 +3405,7 @@ function recordAuthGuardLoginRequest(ip: string, timestamp: string) {
   });
 }
 
-function recordAuthGuardFailedLogin(ip: string, timestamp: string) {
+export function recordAuthGuardFailedLogin(ip: string, timestamp: string) {
   pruneAuthGuardRuntime();
   authGuardRuntime.failedLogins.push({ ip, timestamp });
   appendAuthGuardEvent({
@@ -3720,16 +3416,16 @@ function recordAuthGuardFailedLogin(ip: string, timestamp: string) {
   });
 }
 
-function clearAuthGuardFailedLoginsForIp(ip: string) {
+export function clearAuthGuardFailedLoginsForIp(ip: string) {
   authGuardRuntime.failedLogins = authGuardRuntime.failedLogins.filter((item) => item.ip !== ip);
 }
 
-function getActiveIpBan(authGuard: AuthGuardData, ip: string) {
+export function getActiveIpBan(authGuard: AuthGuardData, ip: string) {
   const now = Date.now();
   return authGuard.bannedIps.find((item) => item.ip === ip && Date.parse(item.expiresAt) > now) || null;
 }
 
-function buildAuthGuardSummary(authGuard: AuthGuardData): AuthGuardSummary {
+export function buildAuthGuardSummary(authGuard: AuthGuardData): AuthGuardSummary {
   pruneAuthGuardRuntime();
   return {
     loginEnabled: authGuard.loginEnabled,
@@ -3742,12 +3438,12 @@ function buildAuthGuardSummary(authGuard: AuthGuardData): AuthGuardSummary {
   };
 }
 
-function authConfigured() {
+export function authConfigured() {
   const auth = loadAuthData();
   return Boolean(auth?.passwordSalt && auth?.passwordHash);
 }
 
-function passwordMatches(password: string) {
+export function passwordMatches(password: string) {
   const auth = loadAuthData();
   if (!auth) {
     return false;
@@ -3755,7 +3451,7 @@ function passwordMatches(password: string) {
   return secureEqualsHex(hashSecret(password, auth.passwordSalt), auth.passwordHash);
 }
 
-function initializeOwnerAuth(password: string) {
+export function initializeOwnerAuth(password: string) {
   const salt = crypto.randomBytes(16).toString('hex');
   const auth: AuthData = {
     passwordSalt: salt,
@@ -3767,7 +3463,7 @@ function initializeOwnerAuth(password: string) {
   return issueOwnerToken();
 }
 
-function issueOwnerToken() {
+export function issueOwnerToken() {
   const auth = loadAuthData();
   if (!auth) {
     throw new Error('Password not configured.');
@@ -3787,7 +3483,7 @@ function issueOwnerToken() {
   return token;
 }
 
-function verifyOwnerToken(token: string) {
+export function verifyOwnerToken(token: string) {
   const cachedExpiresAt = verifiedOwnerTokenCache.get(token);
   if (cachedExpiresAt && cachedExpiresAt > Date.now()) {
     return true;
@@ -3826,7 +3522,7 @@ function verifyOwnerToken(token: string) {
   return false;
 }
 
-function revokeOwnerToken(token: string) {
+export function revokeOwnerToken(token: string) {
   const auth = loadAuthData();
   if (!auth) {
     return;
@@ -3839,7 +3535,7 @@ function revokeOwnerToken(token: string) {
   }
 }
 
-function parseCookies(header: string | undefined) {
+export function parseCookies(header: string | undefined) {
   const cookies: Record<string, string> = {};
   if (!header) {
     return cookies;
@@ -3856,22 +3552,22 @@ function parseCookies(header: string | undefined) {
   return cookies;
 }
 
-function headerValue(value: string | string[] | undefined) {
+export function headerValue(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function getOwnerSessionTokenFromHeaders(headers: http.IncomingHttpHeaders) {
+export function getOwnerSessionTokenFromHeaders(headers: http.IncomingHttpHeaders) {
   return parseCookies(headerValue(headers.cookie))[ownerSessionCookieName] || null;
 }
 
-function forwardedForToIp(value: string | null) {
+export function forwardedForToIp(value: string | null) {
   if (!value) {
     return null;
   }
   return value.split(',')[0]?.trim() || null;
 }
 
-function forwardedHeaderToIp(value: string | null) {
+export function forwardedHeaderToIp(value: string | null) {
   if (!value) {
     return null;
   }
@@ -3879,7 +3575,7 @@ function forwardedHeaderToIp(value: string | null) {
   return match?.[1]?.replace(/^\[/, '').replace(/\]$/, '').trim() || null;
 }
 
-function getClientIp(c: Context) {
+export function getClientIp(c: Context) {
   return forwardedForToIp(c.req.header('cf-connecting-ip') || null)
     || forwardedForToIp(c.req.header('x-real-ip') || null)
     || forwardedForToIp(c.req.header('x-forwarded-for') || null)
@@ -3887,7 +3583,7 @@ function getClientIp(c: Context) {
     || 'unknown';
 }
 
-function getBearerTokenFromHeaders(headers: http.IncomingHttpHeaders) {
+export function getBearerTokenFromHeaders(headers: http.IncomingHttpHeaders) {
   const header = headerValue(headers.authorization);
   if (!header || !header.startsWith('Bearer ')) {
     return null;
@@ -3895,11 +3591,11 @@ function getBearerTokenFromHeaders(headers: http.IncomingHttpHeaders) {
   return header.slice(7).trim() || null;
 }
 
-function getOwnerSessionToken(c: Context) {
+export function getOwnerSessionToken(c: Context) {
   return getCookie(c, ownerSessionCookieName) || null;
 }
 
-function isSecureRequest(c: Context) {
+export function isSecureRequest(c: Context) {
   const forwarded = c.req.header('x-forwarded-proto');
   if (forwarded) {
     return forwarded.split(',')[0]?.trim() === 'https';
@@ -3907,7 +3603,7 @@ function isSecureRequest(c: Context) {
   return new URL(c.req.url).protocol === 'https:';
 }
 
-function setOwnerSessionCookie(c: Context, token: string) {
+export function setOwnerSessionCookie(c: Context, token: string) {
   setCookie(c, ownerSessionCookieName, token, {
     path: '/',
     sameSite: 'Lax',
@@ -3917,14 +3613,14 @@ function setOwnerSessionCookie(c: Context, token: string) {
   });
 }
 
-function clearOwnerSessionCookie(c: Context) {
+export function clearOwnerSessionCookie(c: Context) {
   deleteCookie(c, ownerSessionCookieName, {
     path: '/',
     secure: isSecureRequest(c),
   });
 }
 
-function isOwnerAuthenticatedHeaders(headers: http.IncomingHttpHeaders) {
+export function isOwnerAuthenticatedHeaders(headers: http.IncomingHttpHeaders) {
   const bearer = getBearerTokenFromHeaders(headers);
   if (bearer && verifyApiKey(bearer)) {
     return true;
@@ -3933,7 +3629,7 @@ function isOwnerAuthenticatedHeaders(headers: http.IncomingHttpHeaders) {
   return Boolean(token && verifyOwnerToken(token));
 }
 
-function isOwnerAuthenticated(c: Context) {
+export function isOwnerAuthenticated(c: Context) {
   const bearer = getBearerToken(c);
   if (bearer && verifyApiKey(bearer)) {
     return true;
@@ -3942,11 +3638,11 @@ function isOwnerAuthenticated(c: Context) {
   return Boolean(token && verifyOwnerToken(token));
 }
 
-function isOwnerAuthenticatedIncomingRequest(req: http.IncomingMessage) {
+export function isOwnerAuthenticatedIncomingRequest(req: http.IncomingMessage) {
   return isOwnerAuthenticatedHeaders(req.headers);
 }
 
-function getBearerToken(c: Context) {
+export function getBearerToken(c: Context) {
   const header = c.req.header('authorization');
   if (!header || !header.startsWith('Bearer ')) {
     return null;
@@ -3954,7 +3650,7 @@ function getBearerToken(c: Context) {
   return header.slice(7).trim() || null;
 }
 
-function verifyApiKey(key: string) {
+export function verifyApiKey(key: string) {
   const cachedExpiresAt = verifiedApiKeyCache.get(key);
   if (cachedExpiresAt && cachedExpiresAt > Date.now()) {
     return true;
@@ -3974,7 +3670,7 @@ function verifyApiKey(key: string) {
   return false;
 }
 
-function getApiKeyLabel(key: string) {
+export function getApiKeyLabel(key: string) {
   const auth = loadAuthData();
   if (!auth?.apiKeys) {
     return null;
@@ -3988,7 +3684,7 @@ function getApiKeyLabel(key: string) {
   return null;
 }
 
-function createApiKey(label: string) {
+export function createApiKey(label: string) {
   const auth = loadAuthData();
   if (!auth) {
     throw new Error('Password not configured.');
@@ -4012,7 +3708,7 @@ function createApiKey(label: string) {
   return { id: apiKey.id, label: apiKey.label, key: rawKey, createdAt: apiKey.createdAt };
 }
 
-function deleteApiKey(keyId: string) {
+export function deleteApiKey(keyId: string) {
   const auth = loadAuthData();
   if (!auth?.apiKeys) {
     return false;
@@ -4027,7 +3723,7 @@ function deleteApiKey(keyId: string) {
   return false;
 }
 
-function listApiKeys() {
+export function listApiKeys() {
   const auth = loadAuthData();
   if (!auth?.apiKeys) {
     return [];
@@ -4035,7 +3731,7 @@ function listApiKeys() {
   return auth.apiKeys.map((key) => ({ id: key.id, label: key.label, createdAt: key.createdAt }));
 }
 
-function getCommenterIdentityFromHeaders(headers: http.IncomingHttpHeaders) {
+export function getCommenterIdentityFromHeaders(headers: http.IncomingHttpHeaders) {
   const cookies = parseCookies(headerValue(headers.cookie));
   return {
     id: cookies[commenterIdCookieName] || null,
@@ -4043,14 +3739,14 @@ function getCommenterIdentityFromHeaders(headers: http.IncomingHttpHeaders) {
   };
 }
 
-function getCommenterIdentity(c: Context) {
+export function getCommenterIdentity(c: Context) {
   return {
     id: getCookie(c, commenterIdCookieName) || null,
     name: getCookie(c, commenterNameCookieName) || null,
   };
 }
 
-function getOrCreateCommenterId(c: Context) {
+export function getOrCreateCommenterId(c: Context) {
   const existing = getCommenterIdentity(c).id;
   if (existing) {
     return existing;
@@ -4066,7 +3762,7 @@ function getOrCreateCommenterId(c: Context) {
   return created;
 }
 
-function setCommenterNameCookie(c: Context, name: string) {
+export function setCommenterNameCookie(c: Context, name: string) {
   setCookie(c, commenterNameCookieName, name, {
     path: '/',
     sameSite: 'Lax',
@@ -4076,7 +3772,7 @@ function setCommenterNameCookie(c: Context, name: string) {
   });
 }
 
-function ensureCommentAuthor(c: Context, body: Record<string, unknown>) {
+export function ensureCommentAuthor(c: Context, body: Record<string, unknown>) {
   if (isOwnerAuthenticated(c)) {
     return { authorId: '__owner__', authorName: 'Owner' };
   }
@@ -4091,7 +3787,7 @@ function ensureCommentAuthor(c: Context, body: Record<string, unknown>) {
   return { authorId: commenterId, authorName: name };
 }
 
-function canManageMessage(c: Context, message: CommentMessage) {
+export function canManageMessage(c: Context, message: CommentMessage) {
   if (isOwnerAuthenticated(c)) {
     return true;
   }
@@ -4099,7 +3795,7 @@ function canManageMessage(c: Context, message: CommentMessage) {
   return Boolean(commenter.id && commenter.id === message.authorId);
 }
 
-function canManageThread(c: Context, thread: CommentThread) {
+export function canManageThread(c: Context, thread: CommentThread) {
   if (isOwnerAuthenticated(c)) {
     return true;
   }
