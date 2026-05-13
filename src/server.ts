@@ -54,182 +54,32 @@ import {
   saveCollabState,
 } from './collab.js';
 
-type CommentAnchor = {
-  quote: string;
-  prefix: string;
-  suffix: string;
-  start: number;
-  end: number;
-};
+import type {
+  CommentAnchor,
+  CommentMessage,
+  CommentThread,
+  ShareAccess,
+  NoteMetaFile,
+  NoteRecord,
+  NoteSummary,
+  NoteAssetSummary,
+  NotePdfExportSummary,
+} from './types/notes.js';
 
-type CommentMessage = {
-  id: string;
-  parentId: string | null;
-  authorId: string;
-  authorName: string;
-  body: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-type CommentThread = {
-  id: string;
-  resolved: boolean;
-  createdAt: string;
-  updatedAt: string;
-  anchor: CommentAnchor;
-  messages: CommentMessage[];
-};
-
-type ShareAccess = 'none' | 'view' | 'comment' | 'edit';
-
-type NoteMetaFile = {
-  id: string;
-  title: string;
-  shareId: string;
-  shareAccess: ShareAccess;
-  createdAt: string;
-  updatedAt: string;
-  threads: CommentThread[];
-  collab?: SavedCollabState;
-  collabState?: SavedCollabState;
-  importedAt?: string;
-  importOpenedAt?: string | null;
-};
-
-type NoteRecord = {
-  id: string;
-  title: string;
-  shareId: string;
-  shareAccess: ShareAccess;
-  createdAt: string;
-  updatedAt: string;
-  threads: CommentThread[];
-  markdown: string;
-  collab: CollabState;
-  clientAcks: Map<string, number>;
-  importedAt?: string;
-  importOpenedAt?: string | null;
-};
-
-type NoteSummary = {
-  id: string;
-  title: string;
-  updatedAt: string;
-  shareId: string;
-  snippet: string;
-  isImportedUnread: boolean;
-};
-
-type NoteAssetSummary = {
-  fileName: string;
-  url: string;
-  markdown: string;
-  inUse: boolean;
-  size: number;
-  updatedAt: string;
-};
-
-type NotePdfExportSummary = {
-  fileName: string;
-  url: string;
-  downloadUrl: string;
-  debugUrl: string;
-  debugHtmlUrl: string;
-  debugCssUrl: string;
-  debugMarkdownUrl: string;
-  size: number;
-  createdAt: string;
-  shareToken: string | null;
-  shareUrl: string | null;
-};
-
-type DeviceToken = {
-  id: string;
-  salt: string;
-  hash: string;
-  createdAt: string;
-  lastUsedAt: string;
-};
-
-type ApiKey = {
-  id: string;
-  label: string;
-  keySalt: string;
-  keyHash: string;
-  createdAt: string;
-};
-
-type AuthData = {
-  passwordSalt: string;
-  passwordHash: string;
-  tokens: DeviceToken[];
-  apiKeys?: ApiKey[];
-};
-
-type AuthGuardLoginRequest = {
-  ip: string;
-  timestamp: string;
-};
-
-type AuthGuardFailedLogin = {
-  ip: string;
-  timestamp: string;
-};
-
-type AuthGuardIpBan = {
-  ip: string;
-  bannedAt: string;
-  expiresAt: string;
-  reason: string;
-};
-
-type AuthGuardEvent = {
-  type: 'login-requested' | 'login-failed' | 'login-succeeded' | 'login-blocked' | 'ip-banned' | 'ip-unbanned' | 'login-enabled' | 'login-disabled' | 'login-locked';
-  ip: string;
-  timestamp: string;
-  detail: string;
-};
-
-type AuthGuardData = {
-  loginEnabled: boolean;
-  globalLock: {
-    active: boolean;
-    lockedAt: string | null;
-    expiresAt: string | null;
-    reason: string | null;
-  };
-  bannedIps: AuthGuardIpBan[];
-};
-
-type AuthGuardRuntime = {
-  loginRequests: AuthGuardLoginRequest[];
-  failedLogins: AuthGuardFailedLogin[];
-};
-
-type AuthGuardSummary = {
-  loginEnabled: boolean;
-  globalLockActive: boolean;
-  globalLockAt: string | null;
-  globalLockExpiresAt: string | null;
-  globalLockReason: string | null;
-  recentLoginRequestCount: number;
-  bannedIpCount: number;
-};
-
-type ViewerInfo = {
-  isOwner: boolean;
-  commenterName: string | null;
-  hasCommenterIdentity: boolean;
-};
-
-type ViewerContext = {
-  viewer: ViewerInfo;
-  commenter: {
-    id: string | null;
-    name: string | null;
-  };
-};
+import type {
+  DeviceToken,
+  ApiKey,
+  AuthData,
+  AuthGuardLoginRequest,
+  AuthGuardFailedLogin,
+  AuthGuardIpBan,
+  AuthGuardEvent,
+  AuthGuardData,
+  AuthGuardRuntime,
+  AuthGuardSummary,
+  ViewerInfo,
+  ViewerContext
+} from './types/auth.js';
 
 type ClientConn = {
   ws: WebSocket;
