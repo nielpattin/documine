@@ -6,7 +6,7 @@ import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
 import { WebSocketServer, type WebSocket } from "ws";
 
-import { warmPdfPreviewEngine } from "./pdf-export.js";
+
 import type { ClientPresenceMessage } from "./collab.js";
 
 import { registerAuthRoutes } from "./routes/auth.js";
@@ -264,11 +264,5 @@ wss.on("connection", (ws, req) => {
 server.listen(port, () => {
   console.log(`documine api listening on http://localhost:${port}`);
   console.log(`data: ${path.resolve(dataDir)}`);
-  void warmPdfPreviewEngine()
-    .then(() => {
-      console.log("[pdf-preview] browser engine ready");
-    })
-    .catch((error) => {
-      console.warn(`[pdf-preview] browser engine failed: ${error instanceof Error ? error.message : String(error)}`);
-    });
+
 });
