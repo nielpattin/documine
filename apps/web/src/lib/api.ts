@@ -118,14 +118,14 @@ export type NoteAsset = {
   updatedAt: string;
 };
 
-export type PdfExportStylePreset = 'report' | 'academic' | 'clean' | 'compact';
-export type PdfExportPageSize = 'A4' | 'Letter' | 'Legal';
-export type PdfExportOrientation = 'portrait' | 'landscape';
-export type PdfExportEngine = 'browser';
-export type PdfExportFontFamily = 'Times New Roman' | 'Georgia' | 'Arial' | 'Inter' | 'system-ui';
-export type PdfExportHeaderMode = 'none' | 'title' | 'date' | 'title-date';
-export type PdfExportCodeWrapMode = 'wrap' | 'scroll';
-export type PdfExportImageAlignment = 'left' | 'center' | 'right';
+export type PdfExportStylePreset = "report" | "academic" | "clean" | "compact";
+export type PdfExportPageSize = "A4" | "Letter" | "Legal";
+export type PdfExportOrientation = "portrait" | "landscape";
+export type PdfExportEngine = "browser";
+export type PdfExportFontFamily = "Times New Roman" | "Georgia" | "Arial" | "Inter" | "system-ui";
+export type PdfExportHeaderMode = "none" | "title" | "date" | "title-date";
+export type PdfExportCodeWrapMode = "wrap" | "scroll";
+export type PdfExportImageAlignment = "left" | "center" | "right";
 
 export type PdfExportSettings = {
   stylePreset: PdfExportStylePreset;
@@ -224,11 +224,11 @@ function trimTrailingSlash(value: string) {
 }
 
 function isLocalBrowserHost(hostname: string) {
-  return hostname === 'localhost' || hostname === '127.0.0.1';
+  return hostname === "localhost" || hostname === "127.0.0.1";
 }
 
 function resolveLocalApiOrigin(protocol: string, hostname: string, port: string, origin: string) {
-  if (isLocalBrowserHost(hostname) && port && port !== '3120') {
+  if (isLocalBrowserHost(hostname) && port && port !== "3120") {
     return `${protocol}//${hostname}:3120`;
   }
   return trimTrailingSlash(origin);
@@ -259,17 +259,24 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
     try {
       payload = JSON.parse(text);
     } catch {
-      const contentType = response.headers.get('content-type') || '';
-      const looksLikeHtml = /text\/html/i.test(contentType) || text.trimStart().startsWith('<!doctype') || text.trimStart().startsWith('<html');
+      const contentType = response.headers.get("content-type") || "";
+      const looksLikeHtml =
+        /text\/html/i.test(contentType) ||
+        text.trimStart().startsWith("<!doctype") ||
+        text.trimStart().startsWith("<html");
       const message = looksLikeHtml
-        ? 'API returned HTML instead of JSON. Check that the web app is talking to the API server on port 3120.'
-        : 'API returned invalid JSON.';
+        ? "API returned HTML instead of JSON. Check that the web app is talking to the API server on port 3120."
+        : "API returned invalid JSON.";
       throw new ApiError(message, response.status || 0);
     }
   }
 
   if (!response.ok) {
-    throw new ApiError(payload?.error || payload?.errors?.join(", ") || "Request failed.", response.status, payload?.errors);
+    throw new ApiError(
+      payload?.error || payload?.errors?.join(", ") || "Request failed.",
+      response.status,
+      payload?.errors,
+    );
   }
 
   return payload as T;
@@ -286,33 +293,39 @@ export async function apiRequest<T>(path: string, init: { method?: string; body?
   return parseApiResponse<T>(response);
 }
 
-export async function exportNotes(scope: 'all' | 'selected', noteIds: string[] = []): Promise<{ blob: Blob; fileName: string }> {
-  const response = await fetch(buildApiUrl('/api/notes/export'), {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(scope === 'all' ? { scope } : { scope, noteIds }),
+export async function exportNotes(
+  scope: "all" | "selected",
+  noteIds: string[] = [],
+): Promise<{ blob: Blob; fileName: string }> {
+  const response = await fetch(buildApiUrl("/api/notes/export"), {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(scope === "all" ? { scope } : { scope, noteIds }),
   });
   if (!response.ok) {
     await parseApiResponse(response);
   }
-  const disposition = response.headers.get('content-disposition') || '';
-  const fileName = disposition.match(/filename="?([^";]+)"?/i)?.[1] || 'documine-notes.zip';
+  const disposition = response.headers.get("content-disposition") || "";
+  const fileName = disposition.match(/filename="?([^";]+)"?/i)?.[1] || "documine-notes.zip";
   return { blob: await response.blob(), fileName };
 }
 
 export async function importNotes(file: File): Promise<ImportNotesPayload> {
   const formData = new FormData();
-  formData.append('file', file);
-  const response = await fetch(buildApiUrl('/api/notes/import'), {
-    method: 'POST',
-    credentials: 'include',
+  formData.append("file", file);
+  const response = await fetch(buildApiUrl("/api/notes/import"), {
+    method: "POST",
+    credentials: "include",
     body: formData,
   });
   return parseApiResponse<ImportNotesPayload>(response);
 }
 
-export async function uploadImage(file: File, options: { noteId?: string; shareId?: string }): Promise<UploadedImagePayload> {
+export async function uploadImage(
+  file: File,
+  options: { noteId?: string; shareId?: string },
+): Promise<UploadedImagePayload> {
   const endpoint = options.noteId
     ? `/api/notes/${encodeURIComponent(options.noteId)}/images`
     : options.shareId
@@ -339,11 +352,15 @@ export function formatDate(iso: string) {
   return new Date(iso).toLocaleString();
 }
 
-export async function saveNotePdf(noteId: string, markdown: string, settings: PdfExportSettings): Promise<SaveNotePdfPayload> {
+export async function saveNotePdf(
+  noteId: string,
+  markdown: string,
+  settings: PdfExportSettings,
+): Promise<SaveNotePdfPayload> {
   const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/export/pdf`), {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ markdown, settings }),
   });
 
@@ -352,18 +369,21 @@ export async function saveNotePdf(noteId: string, markdown: string, settings: Pd
 
 export async function listNotePdfExports(noteId: string): Promise<NotePdfExportsPayload> {
   const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/exports`), {
-    method: 'GET',
-    credentials: 'include',
+    method: "GET",
+    credentials: "include",
   });
 
   return parseApiResponse<NotePdfExportsPayload>(response);
 }
 
 export async function deleteNotePdf(noteId: string, fileName: string): Promise<DeleteNotePdfPayload> {
-  const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/exports/${encodeURIComponent(fileName)}`), {
-    method: 'DELETE',
-    credentials: 'include',
-  });
+  const response = await fetch(
+    buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/exports/${encodeURIComponent(fileName)}`),
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  );
 
   return parseApiResponse<DeleteNotePdfPayload>(response);
 }
@@ -375,28 +395,38 @@ export type ShareTokenPayload = {
 };
 
 export async function createExportShareToken(noteId: string, fileName: string): Promise<ShareTokenPayload> {
-  const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/exports/${encodeURIComponent(fileName)}/share-token`), {
-    method: 'POST',
-    credentials: 'include',
-  });
+  const response = await fetch(
+    buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/exports/${encodeURIComponent(fileName)}/share-token`),
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
 
   return parseApiResponse<ShareTokenPayload>(response);
 }
 
 export async function revokeExportShareToken(noteId: string, fileName: string): Promise<DeleteNotePdfPayload> {
-  const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/exports/${encodeURIComponent(fileName)}/share-token`), {
-    method: 'DELETE',
-    credentials: 'include',
-  });
+  const response = await fetch(
+    buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/exports/${encodeURIComponent(fileName)}/share-token`),
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  );
 
   return parseApiResponse<DeleteNotePdfPayload>(response);
 }
 
-export async function requestRenderedHtmlPreview(noteId: string, markdown: string, settings?: PdfExportSettings): Promise<Blob> {
+export async function requestRenderedHtmlPreview(
+  noteId: string,
+  markdown: string,
+  settings?: PdfExportSettings,
+): Promise<Blob> {
   const response = await fetch(buildApiUrl(`/api/notes/${encodeURIComponent(noteId)}/export/html-preview`), {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(settings === undefined ? { markdown } : { markdown, settings }),
   });
 
@@ -404,11 +434,15 @@ export async function requestRenderedHtmlPreview(noteId: string, markdown: strin
     const text = await response.text();
     let payload: { error?: string; errors?: string[] } | null = null;
     try {
-      payload = text ? JSON.parse(text) as { error?: string; errors?: string[] } : null;
+      payload = text ? (JSON.parse(text) as { error?: string; errors?: string[] }) : null;
     } catch {
       payload = null;
     }
-    throw new ApiError(payload?.error || payload?.errors?.join(', ') || 'Request failed.', response.status, payload?.errors);
+    throw new ApiError(
+      payload?.error || payload?.errors?.join(", ") || "Request failed.",
+      response.status,
+      payload?.errors,
+    );
   }
 
   return response.blob();
@@ -416,9 +450,9 @@ export async function requestRenderedHtmlPreview(noteId: string, markdown: strin
 
 export async function requestSharedRenderedHtmlPreview(shareId: string, markdown: string): Promise<Blob> {
   const response = await fetch(buildApiUrl(`/api/share/${encodeURIComponent(shareId)}/export/html-preview`), {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ markdown }),
   });
 
@@ -426,11 +460,15 @@ export async function requestSharedRenderedHtmlPreview(shareId: string, markdown
     const text = await response.text();
     let payload: { error?: string; errors?: string[] } | null = null;
     try {
-      payload = text ? JSON.parse(text) as { error?: string; errors?: string[] } : null;
+      payload = text ? (JSON.parse(text) as { error?: string; errors?: string[] }) : null;
     } catch {
       payload = null;
     }
-    throw new ApiError(payload?.error || payload?.errors?.join(', ') || 'Request failed.', response.status, payload?.errors);
+    throw new ApiError(
+      payload?.error || payload?.errors?.join(", ") || "Request failed.",
+      response.status,
+      payload?.errors,
+    );
   }
 
   return response.blob();
@@ -444,7 +482,7 @@ export function buildWsUrl(pathAndQuery: string) {
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const { hostname, port, host } = window.location;
-  if (isLocalBrowserHost(hostname) && port && port !== '3120') {
+  if (isLocalBrowserHost(hostname) && port && port !== "3120") {
     return `${protocol}//${hostname}:3120${pathAndQuery}`;
   }
 

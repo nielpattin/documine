@@ -120,7 +120,10 @@ async function uploadImage(instance, endpoint, filePath) {
   const fileName = path.basename(filePath);
   const fileBytes = fs.readFileSync(filePath);
   const body = Buffer.concat([
-    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName.replace(/"/g, "")}"\r\nContent-Type: ${contentType}\r\n\r\n`, "utf8"),
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName.replace(/"/g, "")}"\r\nContent-Type: ${contentType}\r\n\r\n`,
+      "utf8",
+    ),
     fileBytes,
     Buffer.from(`\r\n--${boundary}--\r\n`, "utf8"),
   ]);
@@ -239,7 +242,9 @@ const subCommand = args[1];
 
 if (!subCommand) {
   console.error(`Usage: documine <instance> <command> [args...]`);
-  console.error(`Commands: list, search, read, create, edit, delete, update, upload-image, auth-status, login-enable, login-disable, login-bans, login-unban`);
+  console.error(
+    `Commands: list, search, read, create, edit, delete, update, upload-image, auth-status, login-enable, login-disable, login-bans, login-unban`,
+  );
   process.exit(1);
 }
 
@@ -284,7 +289,12 @@ if (isShareInstance(instance)) {
         process.exit(1);
       }
       let edits;
-      try { edits = JSON.parse(editsJson); } catch { console.error("Invalid JSON."); process.exit(1); }
+      try {
+        edits = JSON.parse(editsJson);
+      } catch {
+        console.error("Invalid JSON.");
+        process.exit(1);
+      }
       const payload = await request(instance, "POST", `/api/share/${sid}/edit`, { edits });
       console.log(`Saved at ${payload.savedAt}`);
       break;
@@ -294,10 +304,14 @@ if (isShareInstance(instance)) {
       const quote = plainArgs[2];
       const body = plainArgs.slice(3).join(" ");
       if (!quote || !body) {
-        console.error('Usage: documine <instance> comment <quote> <body>');
+        console.error("Usage: documine <instance> comment <quote> <body>");
         process.exit(1);
       }
-      const payload = await request(instance, "POST", `/api/share/${sid}/threads`, { anchor: { quote, prefix: "", suffix: "", start: 0, end: 0 }, body, name: agentName });
+      const payload = await request(instance, "POST", `/api/share/${sid}/threads`, {
+        anchor: { quote, prefix: "", suffix: "", start: 0, end: 0 },
+        body,
+        name: agentName,
+      });
       console.log(`Comment added (thread ${getCreatedThreadId(payload)})`);
       break;
     }
@@ -310,7 +324,11 @@ if (isShareInstance(instance)) {
         console.error("Usage: documine <instance> reply <threadId> <messageId> <body>");
         process.exit(1);
       }
-      await request(instance, "POST", `/api/share/${sid}/threads/${threadId}/replies`, { body, name: agentName, parentMessageId: messageId });
+      await request(instance, "POST", `/api/share/${sid}/threads/${threadId}/replies`, {
+        body,
+        name: agentName,
+        parentMessageId: messageId,
+      });
       console.log("Reply added");
       break;
     }
@@ -321,324 +339,327 @@ if (isShareInstance(instance)) {
       process.exit(1);
   }
 } else {
-
-switch (subCommand) {
-  case "auth-status": {
-    const payload = await request(instance, "GET", "/api/auth/guard");
-    printAuthGuardStatus(payload);
-    break;
-  }
-
-  case "login-enable": {
-    const payload = await request(instance, "PUT", "/api/auth/guard/login", { enabled: true });
-    printAuthGuardStatus(payload);
-    break;
-  }
-
-  case "login-disable": {
-    const payload = await request(instance, "PUT", "/api/auth/guard/login", { enabled: false });
-    printAuthGuardStatus(payload);
-    break;
-  }
-
-  case "login-bans": {
-    const payload = await request(instance, "GET", "/api/auth/guard");
-    if (!payload.bans || payload.bans.length === 0) {
-      console.log("No active IP bans.");
+  switch (subCommand) {
+    case "auth-status": {
+      const payload = await request(instance, "GET", "/api/auth/guard");
+      printAuthGuardStatus(payload);
       break;
     }
-    for (const ban of payload.bans) {
-      console.log(`${ban.ip}\t${ban.bannedAt}\t${ban.expiresAt}\t${ban.reason}`);
-    }
-    break;
-  }
 
-  case "login-unban": {
-    const ip = args[2];
-    if (!ip) {
-      console.error("Usage: documine <instance> login-unban <ip>");
-      process.exit(1);
-    }
-    const payload = await request(instance, "DELETE", `/api/auth/guard/bans/${encodeURIComponent(ip)}`);
-    printAuthGuardStatus(payload);
-    break;
-  }
-
-  case "list": {
-    const payload = await request(instance, "GET", "/api/notes");
-    for (const note of payload.notes) {
-      console.log(`${note.id}\t${note.title}\t${note.updatedAt}`);
-    }
-    break;
-  }
-
-  case "search": {
-    const query = args.slice(2).join(" ");
-    if (!query) {
-      console.error("Usage: documine <instance> search <query>");
-      process.exit(1);
-    }
-    const payload = await request(instance, "GET", `/api/notes?q=${encodeURIComponent(query)}`);
-    for (const note of payload.notes) {
-      console.log(`${note.id}\t${note.title}\t${note.updatedAt}`);
-    }
-    break;
-  }
-
-  case "read": {
-    const noteId = args[2];
-    if (!noteId) {
-      console.error("Usage: documine <instance> read <id> [--offset=N] [--limit=M]");
-      process.exit(1);
+    case "login-enable": {
+      const payload = await request(instance, "PUT", "/api/auth/guard/login", { enabled: true });
+      printAuthGuardStatus(payload);
+      break;
     }
 
-    const offsetArg = args.find((a) => a.startsWith("--offset="));
-    const limitArg = args.find((a) => a.startsWith("--limit="));
-    const offset = offsetArg ? offsetArg.split("=")[1] : null;
-    const limit = limitArg ? limitArg.split("=")[1] : null;
+    case "login-disable": {
+      const payload = await request(instance, "PUT", "/api/auth/guard/login", { enabled: false });
+      printAuthGuardStatus(payload);
+      break;
+    }
 
-    let endpoint = `/api/notes/${noteId}`;
-    const params = [];
-    if (offset) params.push(`offset=${offset}`);
-    if (limit) params.push(`limit=${limit}`);
-    if (params.length) endpoint += `?${params.join("&")}`;
+    case "login-bans": {
+      const payload = await request(instance, "GET", "/api/auth/guard");
+      if (!payload.bans || payload.bans.length === 0) {
+        console.log("No active IP bans.");
+        break;
+      }
+      for (const ban of payload.bans) {
+        console.log(`${ban.ip}\t${ban.bannedAt}\t${ban.expiresAt}\t${ban.reason}`);
+      }
+      break;
+    }
 
-    const payload = await request(instance, "GET", endpoint);
-    const note = payload.note;
+    case "login-unban": {
+      const ip = args[2];
+      if (!ip) {
+        console.error("Usage: documine <instance> login-unban <ip>");
+        process.exit(1);
+      }
+      const payload = await request(instance, "DELETE", `/api/auth/guard/bans/${encodeURIComponent(ip)}`);
+      printAuthGuardStatus(payload);
+      break;
+    }
 
-    if (note.content !== undefined) {
-      console.log(`# ${note.title}`);
-      console.log(`# id: ${note.id}`);
-      console.log(`# lines: ${note.offset}-${note.offset + note.limit - 1} of ${note.totalLines}${note.remaining > 0 ? ` (${note.remaining} more)` : ""}`);
-      console.log();
-      console.log(note.content);
-    } else {
-      console.log(`# ${note.title}`);
-      console.log(`# id: ${note.id}`);
-      console.log(`# updated: ${note.updatedAt}`);
-      console.log(`# share: ${note.shareUrl}`);
-      console.log();
-      console.log(note.markdown);
+    case "list": {
+      const payload = await request(instance, "GET", "/api/notes");
+      for (const note of payload.notes) {
+        console.log(`${note.id}\t${note.title}\t${note.updatedAt}`);
+      }
+      break;
+    }
 
-      if (payload.threads && payload.threads.length > 0) {
+    case "search": {
+      const query = args.slice(2).join(" ");
+      if (!query) {
+        console.error("Usage: documine <instance> search <query>");
+        process.exit(1);
+      }
+      const payload = await request(instance, "GET", `/api/notes?q=${encodeURIComponent(query)}`);
+      for (const note of payload.notes) {
+        console.log(`${note.id}\t${note.title}\t${note.updatedAt}`);
+      }
+      break;
+    }
+
+    case "read": {
+      const noteId = args[2];
+      if (!noteId) {
+        console.error("Usage: documine <instance> read <id> [--offset=N] [--limit=M]");
+        process.exit(1);
+      }
+
+      const offsetArg = args.find((a) => a.startsWith("--offset="));
+      const limitArg = args.find((a) => a.startsWith("--limit="));
+      const offset = offsetArg ? offsetArg.split("=")[1] : null;
+      const limit = limitArg ? limitArg.split("=")[1] : null;
+
+      let endpoint = `/api/notes/${noteId}`;
+      const params = [];
+      if (offset) params.push(`offset=${offset}`);
+      if (limit) params.push(`limit=${limit}`);
+      if (params.length) endpoint += `?${params.join("&")}`;
+
+      const payload = await request(instance, "GET", endpoint);
+      const note = payload.note;
+
+      if (note.content !== undefined) {
+        console.log(`# ${note.title}`);
+        console.log(`# id: ${note.id}`);
+        console.log(
+          `# lines: ${note.offset}-${note.offset + note.limit - 1} of ${note.totalLines}${note.remaining > 0 ? ` (${note.remaining} more)` : ""}`,
+        );
         console.log();
-        console.log("--- Comments ---");
-        for (const thread of payload.threads) {
-          const anchor = thread.anchor?.quote ? `"${thread.anchor.quote.slice(0, 60)}"` : "(no anchor)";
+        console.log(note.content);
+      } else {
+        console.log(`# ${note.title}`);
+        console.log(`# id: ${note.id}`);
+        console.log(`# updated: ${note.updatedAt}`);
+        console.log(`# share: ${note.shareUrl}`);
+        console.log();
+        console.log(note.markdown);
+
+        if (payload.threads && payload.threads.length > 0) {
           console.log();
-          console.log(`Thread ${thread.id} on ${anchor}${thread.resolved ? " [resolved]" : ""}`);
-          for (const msg of thread.messages) {
-            console.log(`  [${msg.id}] ${msg.authorName} (${msg.updatedAt}): ${msg.body}`);
+          console.log("--- Comments ---");
+          for (const thread of payload.threads) {
+            const anchor = thread.anchor?.quote ? `"${thread.anchor.quote.slice(0, 60)}"` : "(no anchor)";
+            console.log();
+            console.log(`Thread ${thread.id} on ${anchor}${thread.resolved ? " [resolved]" : ""}`);
+            for (const msg of thread.messages) {
+              console.log(`  [${msg.id}] ${msg.authorName} (${msg.updatedAt}): ${msg.body}`);
+            }
           }
         }
       }
-    }
-    break;
-  }
-
-  case "create": {
-    const title = args.slice(2).join(" ") || "untitled";
-    const payload = await request(instance, "POST", "/api/notes");
-    if (title !== "untitled") {
-      await request(instance, "PUT", `/api/notes/${payload.note.id}`, { title, markdown: "" });
-    }
-    console.log(`${payload.note.id}\t${title}`);
-    break;
-  }
-
-  case "upload-image": {
-    const noteId = args[2];
-    const imagePath = args[3];
-    if (!noteId || !imagePath) {
-      console.error("Usage: documine <instance> upload-image <id> <imagePath>");
-      process.exit(1);
-    }
-    const payload = await uploadImage(instance, `/api/notes/${encodeURIComponent(noteId)}/images`, imagePath);
-    console.log(payload.asset.markdown);
-    break;
-  }
-
-  case "comment": {
-    const noteId = args[2];
-    const quote = args[3];
-    const body = args.slice(4).join(" ");
-    if (!noteId || !quote || !body) {
-      console.error("Usage: documine <instance> comment <id> <quote> <body>");
-      console.error('Example: documine myserver comment abc123 "some text" "my comment"');
-      process.exit(1);
-    }
-    const payload = await request(instance, "POST", `/api/notes/${noteId}/threads`, { quote, body });
-    console.log(`Comment added (thread ${getCreatedThreadId(payload)})`);
-    break;
-  }
-
-  case "reply": {
-    const noteId = args[2];
-    const threadId = args[3];
-    const messageId = args[4];
-    const body = args.slice(5).join(" ");
-    if (!noteId || !threadId || !messageId || !body) {
-      console.error("Usage: documine <instance> reply <noteId> <threadId> <messageId> <body>");
-      process.exit(1);
-    }
-    await request(instance, "POST", `/api/notes/${noteId}/threads/${threadId}/replies`, { body, parentMessageId: messageId });
-    console.log("Reply added");
-    break;
-  }
-
-  case "resolve": {
-    const noteId = args[2];
-    const threadId = args[3];
-    if (!noteId || !threadId) {
-      console.error("Usage: documine <instance> resolve <noteId> <threadId>");
-      process.exit(1);
-    }
-    await request(instance, "PATCH", `/api/notes/${noteId}/threads/${threadId}`, { resolved: true });
-    console.log("Thread resolved");
-    break;
-  }
-
-  case "reopen": {
-    const noteId = args[2];
-    const threadId = args[3];
-    if (!noteId || !threadId) {
-      console.error("Usage: documine <instance> reopen <noteId> <threadId>");
-      process.exit(1);
-    }
-    await request(instance, "PATCH", `/api/notes/${noteId}/threads/${threadId}`, { resolved: false });
-    console.log("Thread reopened");
-    break;
-  }
-
-  case "delete-thread": {
-    const noteId = args[2];
-    const threadId = args[3];
-    if (!noteId || !threadId) {
-      console.error("Usage: documine <instance> delete-thread <noteId> <threadId>");
-      process.exit(1);
-    }
-    await request(instance, "DELETE", `/api/notes/${noteId}/threads/${threadId}`);
-    console.log("Thread deleted");
-    break;
-  }
-
-  case "edit-comment": {
-    const noteId = args[2];
-    const messageId = args[3];
-    const body = args.slice(4).join(" ");
-    if (!noteId || !messageId || !body) {
-      console.error("Usage: documine <instance> edit-comment <noteId> <messageId> <body>");
-      process.exit(1);
-    }
-    await request(instance, "PATCH", `/api/notes/${noteId}/messages/${messageId}`, { body });
-    console.log("Comment edited");
-    break;
-  }
-
-  case "delete-comment": {
-    const noteId = args[2];
-    const messageId = args[3];
-    if (!noteId || !messageId) {
-      console.error("Usage: documine <instance> delete-comment <noteId> <messageId>");
-      process.exit(1);
-    }
-    await request(instance, "DELETE", `/api/notes/${noteId}/messages/${messageId}`);
-    console.log("Comment deleted");
-    break;
-  }
-
-  case "edit": {
-    const noteId = args[2];
-    const editsJson = args[3];
-    if (!noteId || !editsJson) {
-      console.error("Usage: documine <instance> edit <id> '<json edits>'");
-      console.error('Example: documine myserver edit abc123 \'[{"oldText":"hello","newText":"world"}]\'');
-      process.exit(1);
-    }
-
-    let edits;
-    try {
-      edits = JSON.parse(editsJson);
-    } catch {
-      console.error("Invalid JSON for edits.");
-      process.exit(1);
-    }
-
-    const payload = await request(instance, "POST", `/api/notes/${noteId}/edit`, { edits });
-    console.log(`Saved at ${payload.savedAt}`);
-    break;
-  }
-
-  case "share": {
-    const noteId = args[2];
-    const access = args[3];
-    if (!noteId) {
-      console.error("Usage: documine <instance> share <id> [none|view|comment|edit]");
-      process.exit(1);
-    }
-    if (!access) {
-      const payload = await request(instance, "GET", `/api/notes/${noteId}`);
-      const note = payload.note;
-      console.log(`${note.id}\t${note.shareAccess}\t${note.shareUrl}`);
       break;
     }
-    if (!["none", "view", "comment", "edit"].includes(access)) {
-      console.error("Access must be one of: none, view, comment, edit");
-      process.exit(1);
+
+    case "create": {
+      const title = args.slice(2).join(" ") || "untitled";
+      const payload = await request(instance, "POST", "/api/notes");
+      if (title !== "untitled") {
+        await request(instance, "PUT", `/api/notes/${payload.note.id}`, { title, markdown: "" });
+      }
+      console.log(`${payload.note.id}\t${title}`);
+      break;
     }
-    const sharePayload = await request(instance, "PUT", `/api/notes/${noteId}`, { shareAccess: access });
-    const readPayload = await request(instance, "GET", `/api/notes/${noteId}`);
-    console.log(`${noteId}\t${readPayload.note.shareAccess}\t${readPayload.note.shareUrl}`);
-    break;
+
+    case "upload-image": {
+      const noteId = args[2];
+      const imagePath = args[3];
+      if (!noteId || !imagePath) {
+        console.error("Usage: documine <instance> upload-image <id> <imagePath>");
+        process.exit(1);
+      }
+      const payload = await uploadImage(instance, `/api/notes/${encodeURIComponent(noteId)}/images`, imagePath);
+      console.log(payload.asset.markdown);
+      break;
+    }
+
+    case "comment": {
+      const noteId = args[2];
+      const quote = args[3];
+      const body = args.slice(4).join(" ");
+      if (!noteId || !quote || !body) {
+        console.error("Usage: documine <instance> comment <id> <quote> <body>");
+        console.error('Example: documine myserver comment abc123 "some text" "my comment"');
+        process.exit(1);
+      }
+      const payload = await request(instance, "POST", `/api/notes/${noteId}/threads`, { quote, body });
+      console.log(`Comment added (thread ${getCreatedThreadId(payload)})`);
+      break;
+    }
+
+    case "reply": {
+      const noteId = args[2];
+      const threadId = args[3];
+      const messageId = args[4];
+      const body = args.slice(5).join(" ");
+      if (!noteId || !threadId || !messageId || !body) {
+        console.error("Usage: documine <instance> reply <noteId> <threadId> <messageId> <body>");
+        process.exit(1);
+      }
+      await request(instance, "POST", `/api/notes/${noteId}/threads/${threadId}/replies`, {
+        body,
+        parentMessageId: messageId,
+      });
+      console.log("Reply added");
+      break;
+    }
+
+    case "resolve": {
+      const noteId = args[2];
+      const threadId = args[3];
+      if (!noteId || !threadId) {
+        console.error("Usage: documine <instance> resolve <noteId> <threadId>");
+        process.exit(1);
+      }
+      await request(instance, "PATCH", `/api/notes/${noteId}/threads/${threadId}`, { resolved: true });
+      console.log("Thread resolved");
+      break;
+    }
+
+    case "reopen": {
+      const noteId = args[2];
+      const threadId = args[3];
+      if (!noteId || !threadId) {
+        console.error("Usage: documine <instance> reopen <noteId> <threadId>");
+        process.exit(1);
+      }
+      await request(instance, "PATCH", `/api/notes/${noteId}/threads/${threadId}`, { resolved: false });
+      console.log("Thread reopened");
+      break;
+    }
+
+    case "delete-thread": {
+      const noteId = args[2];
+      const threadId = args[3];
+      if (!noteId || !threadId) {
+        console.error("Usage: documine <instance> delete-thread <noteId> <threadId>");
+        process.exit(1);
+      }
+      await request(instance, "DELETE", `/api/notes/${noteId}/threads/${threadId}`);
+      console.log("Thread deleted");
+      break;
+    }
+
+    case "edit-comment": {
+      const noteId = args[2];
+      const messageId = args[3];
+      const body = args.slice(4).join(" ");
+      if (!noteId || !messageId || !body) {
+        console.error("Usage: documine <instance> edit-comment <noteId> <messageId> <body>");
+        process.exit(1);
+      }
+      await request(instance, "PATCH", `/api/notes/${noteId}/messages/${messageId}`, { body });
+      console.log("Comment edited");
+      break;
+    }
+
+    case "delete-comment": {
+      const noteId = args[2];
+      const messageId = args[3];
+      if (!noteId || !messageId) {
+        console.error("Usage: documine <instance> delete-comment <noteId> <messageId>");
+        process.exit(1);
+      }
+      await request(instance, "DELETE", `/api/notes/${noteId}/messages/${messageId}`);
+      console.log("Comment deleted");
+      break;
+    }
+
+    case "edit": {
+      const noteId = args[2];
+      const editsJson = args[3];
+      if (!noteId || !editsJson) {
+        console.error("Usage: documine <instance> edit <id> '<json edits>'");
+        console.error('Example: documine myserver edit abc123 \'[{"oldText":"hello","newText":"world"}]\'');
+        process.exit(1);
+      }
+
+      let edits;
+      try {
+        edits = JSON.parse(editsJson);
+      } catch {
+        console.error("Invalid JSON for edits.");
+        process.exit(1);
+      }
+
+      const payload = await request(instance, "POST", `/api/notes/${noteId}/edit`, { edits });
+      console.log(`Saved at ${payload.savedAt}`);
+      break;
+    }
+
+    case "share": {
+      const noteId = args[2];
+      const access = args[3];
+      if (!noteId) {
+        console.error("Usage: documine <instance> share <id> [none|view|comment|edit]");
+        process.exit(1);
+      }
+      if (!access) {
+        const payload = await request(instance, "GET", `/api/notes/${noteId}`);
+        const note = payload.note;
+        console.log(`${note.id}\t${note.shareAccess}\t${note.shareUrl}`);
+        break;
+      }
+      if (!["none", "view", "comment", "edit"].includes(access)) {
+        console.error("Access must be one of: none, view, comment, edit");
+        process.exit(1);
+      }
+      const _sharePayload = await request(instance, "PUT", `/api/notes/${noteId}`, { shareAccess: access });
+      const readPayload = await request(instance, "GET", `/api/notes/${noteId}`);
+      console.log(`${noteId}\t${readPayload.note.shareAccess}\t${readPayload.note.shareUrl}`);
+      break;
+    }
+
+    case "update": {
+      const noteId = args[2];
+      const field = args[3];
+      const value = args.slice(4).join(" ");
+      if (!noteId || !field || !value) {
+        console.error("Usage: documine <instance> update <id> title <value>");
+        console.error("       documine <instance> update <id> markdown <value>");
+        process.exit(1);
+      }
+
+      const body = {};
+      if (field === "title") {
+        body.title = value;
+        body.markdown = undefined;
+        const current = await request(instance, "GET", `/api/notes/${noteId}`);
+        body.markdown = current.note.markdown;
+      } else if (field === "markdown") {
+        body.markdown = value;
+        const current = await request(instance, "GET", `/api/notes/${noteId}`);
+        body.title = current.note.title;
+      } else {
+        console.error(`Unknown field: ${field}. Use 'title' or 'markdown'.`);
+        process.exit(1);
+      }
+
+      const payload = await request(instance, "PUT", `/api/notes/${noteId}`, body);
+      console.log(`Saved at ${payload.savedAt}`);
+      break;
+    }
+
+    case "delete": {
+      const noteId = args[2];
+      if (!noteId) {
+        console.error("Usage: documine <instance> delete <id>");
+        process.exit(1);
+      }
+      await request(instance, "DELETE", `/api/notes/${noteId}`);
+      console.log(`Deleted ${noteId}`);
+      break;
+    }
+
+    default:
+      console.error(`Unknown command: ${subCommand}`);
+      printUsage();
+      process.exit(1);
   }
-
-  case "update": {
-    const noteId = args[2];
-    const field = args[3];
-    const value = args.slice(4).join(" ");
-    if (!noteId || !field || !value) {
-      console.error("Usage: documine <instance> update <id> title <value>");
-      console.error("       documine <instance> update <id> markdown <value>");
-      process.exit(1);
-    }
-
-    const body = {};
-    if (field === "title") {
-      body.title = value;
-      body.markdown = undefined;
-      const current = await request(instance, "GET", `/api/notes/${noteId}`);
-      body.markdown = current.note.markdown;
-    } else if (field === "markdown") {
-      body.markdown = value;
-      const current = await request(instance, "GET", `/api/notes/${noteId}`);
-      body.title = current.note.title;
-    } else {
-      console.error(`Unknown field: ${field}. Use 'title' or 'markdown'.`);
-      process.exit(1);
-    }
-
-    const payload = await request(instance, "PUT", `/api/notes/${noteId}`, body);
-    console.log(`Saved at ${payload.savedAt}`);
-    break;
-  }
-
-  case "delete": {
-    const noteId = args[2];
-    if (!noteId) {
-      console.error("Usage: documine <instance> delete <id>");
-      process.exit(1);
-    }
-    await request(instance, "DELETE", `/api/notes/${noteId}`);
-    console.log(`Deleted ${noteId}`);
-    break;
-  }
-
-  default:
-    console.error(`Unknown command: ${subCommand}`);
-    printUsage();
-    process.exit(1);
-}
-
 } // end owner mode
 
 function printUsage() {

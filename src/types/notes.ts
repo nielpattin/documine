@@ -1,4 +1,4 @@
-import type { SavedCollabState, CollabState } from '../collab.js';
+import type { SavedCollabState, CollabState } from "../collab.js";
 
 export type CommentAnchor = {
   quote: string;
@@ -27,7 +27,7 @@ export type CommentThread = {
   messages: CommentMessage[];
 };
 
-export type ShareAccess = 'none' | 'view' | 'comment' | 'edit';
+export type ShareAccess = "none" | "view" | "comment" | "edit";
 
 export type NoteMetaFile = {
   id: string;

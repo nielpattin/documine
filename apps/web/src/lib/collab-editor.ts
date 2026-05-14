@@ -11,7 +11,7 @@ import {
   type SelectionIds,
   type TextSelection,
   type TextState,
-} from './collab-shared';
+} from "./collab-shared";
 
 const PRESENCE_THROTTLE_MS = 80;
 const RECONNECT_BASE_MS = 1000;
@@ -34,14 +34,26 @@ type CreateCollabEditorOptions = {
   onConnectionChange?: (connected: boolean) => void;
   onThreadsUpdated?: () => void;
   onParticipantsChange?: (participants: ShareParticipant[]) => void;
-  onHistoryChange?: (history: { canUndo: boolean; canRedo: boolean; undoLabel: string | null; redoLabel: string | null }) => void;
+  onHistoryChange?: (history: {
+    canUndo: boolean;
+    canRedo: boolean;
+    undoLabel: string | null;
+    redoLabel: string | null;
+  }) => void;
   onUploadImage?: (file: File) => Promise<UploadImageResult>;
 };
 
 export type CollabEditorHandle = {
   destroy: () => void;
   getText: () => string;
-  getScrollAnchor: () => { quote: string; prefix: string; suffix: string; start: number; end: number; heading: { text: string; level: number } | null } | null;
+  getScrollAnchor: () => {
+    quote: string;
+    prefix: string;
+    suffix: string;
+    start: number;
+    end: number;
+    heading: { text: string; level: number } | null;
+  } | null;
   insertText: (text: string) => void;
   undo: () => void;
   redo: () => void;
@@ -84,7 +96,7 @@ type BoxPosition = {
 };
 
 type ServerHelloMessage = {
-  type: 'hello';
+  type: "hello";
   clientId?: string;
   noteId: string;
   title: string;
@@ -94,7 +106,7 @@ type ServerHelloMessage = {
 };
 
 type ServerMutationMessage = {
-  type: 'mutation';
+  type: "mutation";
   senderId?: string;
   senderCounter?: number;
   markdown?: string;
@@ -102,7 +114,7 @@ type ServerMutationMessage = {
 };
 
 type ServerPresenceMessage = {
-  type: 'presence';
+  type: "presence";
   clientId: string;
   name: string;
   color: string;
@@ -110,16 +122,16 @@ type ServerPresenceMessage = {
 };
 
 type ServerPresenceLeaveMessage = {
-  type: 'presence-leave';
+  type: "presence-leave";
   clientId: string;
 };
 
 type ServerThreadsUpdatedMessage = {
-  type: 'threads-updated';
+  type: "threads-updated";
 };
 
 type ServerParticipantsMessage = {
-  type: 'participants';
+  type: "participants";
   participants: ShareParticipant[];
 };
 
@@ -132,13 +144,13 @@ type ServerMessage =
   | ServerParticipantsMessage;
 
 type ClientMutationEnvelope = {
-  type: 'mutation';
+  type: "mutation";
   clientId: string;
   mutations: ClientMutation[];
 };
 
 type ClientPresenceEnvelope = {
-  type: 'presence';
+  type: "presence";
   clientId: string;
   selection: SelectionIds;
 };
@@ -164,53 +176,65 @@ type HistoryTransaction = {
 };
 
 function escapeMarkdownAlt(text: string): string {
-  return String(text || 'image').replace(/[\[\]\\]/g, '').trim() || 'image';
+  return (
+    String(text || "image")
+      .replace(/[[\]\\]/g, "")
+      .trim() || "image"
+  );
 }
 
 function fileLabel(file?: File): string {
-  const name = String(file?.name || '').trim();
-  if (!name) return 'image';
-  return name.replace(/\.[A-Za-z0-9]+$/, '') || 'image';
+  const name = String(file?.name || "").trim();
+  if (!name) return "image";
+  return name.replace(/\.[A-Za-z0-9]+$/, "") || "image";
 }
 
 function imageFilesFromPasteEvent(event: ClipboardEvent): File[] {
-  return Array.from(event.clipboardData?.files || []).filter((file) => file && String(file.type || '').startsWith('image/'));
+  return Array.from(event.clipboardData?.files || []).filter(
+    (file) => file && String(file.type || "").startsWith("image/"),
+  );
 }
 
 function imageFilesFromDropEvent(event: DragEvent): File[] {
-  return Array.from(event.dataTransfer?.files || []).filter((file) => file && String(file.type || '').startsWith('image/'));
+  return Array.from(event.dataTransfer?.files || []).filter(
+    (file) => file && String(file.type || "").startsWith("image/"),
+  );
 }
 
 function isWordChar(ch: string): boolean {
-  return /[0-9A-Za-z_]/.test(ch || '');
+  return /[0-9A-Za-z_]/.test(ch || "");
 }
 
 function normalizeInsertedText(text: string): string {
-  return String(text || '').replace(/\r\n?/g, '\n');
+  return String(text || "").replace(/\r\n?/g, "\n");
 }
 
 function readInsertText(event: InputEvent): string {
-  if (typeof event.data === 'string') return normalizeInsertedText(event.data);
-  if (event.dataTransfer) return normalizeInsertedText(event.dataTransfer.getData('text/plain') || '');
-  return '';
+  if (typeof event.data === "string") return normalizeInsertedText(event.data);
+  if (event.dataTransfer) return normalizeInsertedText(event.dataTransfer.getData("text/plain") || "");
+  return "";
 }
 
 function clampSel(text: string, sel: TextSelection): TextSelection {
   return {
     start: Math.max(0, Math.min(sel.start, text.length)),
     end: Math.max(0, Math.min(sel.end, text.length)),
-    direction: sel.direction || 'none',
+    direction: sel.direction || "none",
   };
 }
 
-export function diffTextChange(previousText: string, nextText: string): {
+export function diffTextChange(
+  previousText: string,
+  nextText: string,
+): {
   prefix: number;
   previousEnd: number;
   nextEnd: number;
   insertedText: string;
 } {
   let prefix = 0;
-  while (prefix < previousText.length && prefix < nextText.length && previousText[prefix] === nextText[prefix]) prefix++;
+  while (prefix < previousText.length && prefix < nextText.length && previousText[prefix] === nextText[prefix])
+    prefix++;
 
   let previousEnd = previousText.length;
   let nextEnd = nextText.length;
@@ -227,41 +251,51 @@ export function diffTextChange(previousText: string, nextText: string): {
   };
 }
 
-function historyLabelForInput(inputType: string, hasSelection: boolean, insertedText: string, deletedLength: number): string {
-  if (inputType === 'insertText' || inputType === 'insertReplacementText') {
-    return hasSelection ? 'Replace text' : 'Insert text';
+function historyLabelForInput(
+  inputType: string,
+  hasSelection: boolean,
+  insertedText: string,
+  deletedLength: number,
+): string {
+  if (inputType === "insertText" || inputType === "insertReplacementText") {
+    return hasSelection ? "Replace text" : "Insert text";
   }
-  if (inputType === 'insertFromPaste' || inputType === 'insertFromDrop') {
-    return hasSelection ? 'Paste and replace' : 'Paste text';
+  if (inputType === "insertFromPaste" || inputType === "insertFromDrop") {
+    return hasSelection ? "Paste and replace" : "Paste text";
   }
-  if (inputType === 'insertLineBreak' || inputType === 'insertParagraph') {
-    return 'Insert line break';
+  if (inputType === "insertLineBreak" || inputType === "insertParagraph") {
+    return "Insert line break";
   }
-  if (inputType === 'deleteWordBackward' || inputType === 'deleteWordForward') {
-    return hasSelection ? 'Delete selection' : 'Delete word';
+  if (inputType === "deleteWordBackward" || inputType === "deleteWordForward") {
+    return hasSelection ? "Delete selection" : "Delete word";
   }
-  if (inputType === 'deleteSoftLineBackward' || inputType === 'deleteHardLineBackward') {
-    return hasSelection ? 'Delete selection' : 'Delete line';
+  if (inputType === "deleteSoftLineBackward" || inputType === "deleteHardLineBackward") {
+    return hasSelection ? "Delete selection" : "Delete line";
   }
-  if (inputType === 'deleteContentBackward' || inputType === 'deleteContentForward') {
-    return hasSelection ? 'Delete selection' : 'Delete character';
+  if (inputType === "deleteContentBackward" || inputType === "deleteContentForward") {
+    return hasSelection ? "Delete selection" : "Delete character";
   }
   if (deletedLength > 0 && insertedText.length > 0) {
-    return 'Edit text';
+    return "Edit text";
   }
   if (insertedText.length > 0) {
-    return 'Insert text';
+    return "Insert text";
   }
   if (deletedLength > 0) {
-    return 'Delete text';
+    return "Delete text";
   }
-  return 'Edit text';
+  return "Edit text";
 }
 
-function buildDeleteMutation(state: EditorState, start: number, endExcl: number, counter: number): ClientMutation | null {
+function buildDeleteMutation(
+  state: EditorState,
+  start: number,
+  endExcl: number,
+  counter: number,
+): ClientMutation | null {
   if (start < 0 || endExcl <= start || endExcl > state.text.length) return null;
   return {
-    name: 'delete',
+    name: "delete",
     clientCounter: counter,
     args: { startId: state.idList.at(start), endId: state.idList.at(endExcl - 1), contentLength: endExcl - start },
   };
@@ -277,10 +311,10 @@ function buildInsertMutation(
   if (!content) return null;
   const before = index === 0 ? null : state.idList.at(index - 1);
   const id = newId(before, state.idList, content.length);
-  const prev = index > 0 ? state.text[index - 1] : '';
-  const next = index < state.text.length ? state.text[index] : '';
+  const prev = index > 0 ? state.text[index - 1] : "";
+  const next = index < state.text.length ? state.text[index] : "";
   return {
-    name: 'insert',
+    name: "insert",
     clientCounter: counter,
     args: { before, id, content, isInWord: isWordChar(content[0]) && (isWordChar(prev) || isWordChar(next)) },
   };
@@ -293,23 +327,24 @@ function replayPending(serverState: EditorState, pending: ClientMutation[]): Edi
 }
 
 function trimTrailingSlash(value: string): string {
-  return value.replace(/\/$/, '');
+  return value.replace(/\/$/, "");
 }
 
 function isLocalBrowserHost(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1';
+  return hostname === "localhost" || hostname === "127.0.0.1";
 }
 
 function buildApiWsOrigin(): string {
-  const envOrigin = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_DOCUMINE_API_WS_ORIGIN
-    ? String(import.meta.env.VITE_DOCUMINE_API_WS_ORIGIN).trim()
-    : '';
+  const envOrigin =
+    typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_DOCUMINE_API_WS_ORIGIN
+      ? String(import.meta.env.VITE_DOCUMINE_API_WS_ORIGIN).trim()
+      : "";
   if (envOrigin) {
     return trimTrailingSlash(envOrigin);
   }
 
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  if (isLocalBrowserHost(location.hostname) && location.port && location.port !== '3120') {
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  if (isLocalBrowserHost(location.hostname) && location.port && location.port !== "3120") {
     return `${protocol}//${location.hostname}:3120`;
   }
 
@@ -330,10 +365,28 @@ function getBoxPosition(element: HTMLElement, relativeTo: HTMLElement): BoxPosit
 function syncMirrorStyles(mirror: HTMLDivElement, textarea: HTMLTextAreaElement, relativeTo: HTMLElement): BoxPosition {
   const cs = getComputedStyle(textarea);
   const props = [
-    'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'textTransform',
-    'wordSpacing', 'textIndent', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth',
-    'borderLeftWidth', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
-    'wordWrap', 'overflowWrap', 'whiteSpace', 'lineHeight', 'tabSize', 'boxSizing',
+    "fontFamily",
+    "fontSize",
+    "fontWeight",
+    "fontStyle",
+    "letterSpacing",
+    "textTransform",
+    "wordSpacing",
+    "textIndent",
+    "borderTopWidth",
+    "borderRightWidth",
+    "borderBottomWidth",
+    "borderLeftWidth",
+    "paddingTop",
+    "paddingRight",
+    "paddingBottom",
+    "paddingLeft",
+    "wordWrap",
+    "overflowWrap",
+    "whiteSpace",
+    "lineHeight",
+    "tabSize",
+    "boxSizing",
   ] as const;
   for (const prop of props) mirror.style[prop] = cs[prop];
   const box = getBoxPosition(textarea, relativeTo);
@@ -344,24 +397,29 @@ function syncMirrorStyles(mirror: HTMLDivElement, textarea: HTMLTextAreaElement,
   return box;
 }
 
-function measureCaretPositions(textarea: HTMLTextAreaElement, mirror: HTMLDivElement, relativeTo: HTMLElement, indices: number[]): { positions: Map<number, CaretPosition>; box: BoxPosition } {
+function measureCaretPositions(
+  textarea: HTMLTextAreaElement,
+  mirror: HTMLDivElement,
+  relativeTo: HTMLElement,
+  indices: number[],
+): { positions: Map<number, CaretPosition>; box: BoxPosition } {
   const box = syncMirrorStyles(mirror, textarea, relativeTo);
   const text = textarea.value;
   const sorted = [...new Set(indices)].sort((a, b) => a - b);
-  mirror.textContent = '';
+  mirror.textContent = "";
   const markers = new Map<number, HTMLSpanElement>();
   let last = 0;
   for (const idx of sorted) {
     const clampedIdx = Math.max(0, Math.min(idx, text.length));
     if (clampedIdx > last) mirror.appendChild(document.createTextNode(text.substring(last, clampedIdx)));
-    const span = document.createElement('span');
-    span.textContent = '\u200b';
+    const span = document.createElement("span");
+    span.textContent = "\u200b";
     mirror.appendChild(span);
     markers.set(idx, span);
     last = clampedIdx;
   }
   if (last < text.length) mirror.appendChild(document.createTextNode(text.substring(last)));
-  if (!mirror.childNodes.length) mirror.appendChild(document.createTextNode('\u200b'));
+  if (!mirror.childNodes.length) mirror.appendChild(document.createTextNode("\u200b"));
 
   const positions = new Map<number, CaretPosition>();
   for (const [idx, span] of markers) {
@@ -372,7 +430,7 @@ function measureCaretPositions(textarea: HTMLTextAreaElement, mirror: HTMLDivEle
 
 function trimLeftToBoundary(text: string, start: number, lowerBound: number) {
   let index = start;
-  while (index > lowerBound && isWordChar(text[index - 1] || '')) {
+  while (index > lowerBound && isWordChar(text[index - 1] || "")) {
     index--;
   }
   return index;
@@ -380,13 +438,13 @@ function trimLeftToBoundary(text: string, start: number, lowerBound: number) {
 
 function trimRightToBoundary(text: string, end: number, upperBound: number) {
   let index = end;
-  while (index < upperBound && isWordChar(text[index] || '')) {
+  while (index < upperBound && isWordChar(text[index] || "")) {
     index++;
   }
   return index;
 }
 
-const _cachedHeadingText = { text: '', headings: [] as HeadingAnchor[] };
+const _cachedHeadingText = { text: "", headings: [] as HeadingAnchor[] };
 
 function buildHeadingAnchors(text: string): HeadingAnchor[] {
   if (!text) {
@@ -398,7 +456,7 @@ function buildHeadingAnchors(text: string): HeadingAnchor[] {
   }
 
   const headings: HeadingAnchor[] = [];
-  const lines = text.split('\n');
+  const lines = text.split("\n");
   let offset = 0;
   let inFence = false;
 
@@ -409,7 +467,7 @@ function buildHeadingAnchors(text: string): HeadingAnchor[] {
     } else if (!inFence) {
       const match = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
       if (match) {
-        const headingText = match[2].replace(/\s+#+$/, '').trim();
+        const headingText = match[2].replace(/\s+#+$/, "").trim();
         if (headingText) {
           headings.push({
             start: offset,
@@ -464,7 +522,11 @@ function buildScrollAnchor(text: string, index: number, headings: HeadingAnchor[
   };
 }
 
-function getVisibleScrollAnchor(textarea: HTMLTextAreaElement, mirror: HTMLDivElement, relativeTo: HTMLElement): ScrollAnchor | null {
+function getVisibleScrollAnchor(
+  textarea: HTMLTextAreaElement,
+  mirror: HTMLDivElement,
+  relativeTo: HTMLElement,
+): ScrollAnchor | null {
   const text = textarea.value;
   if (!text) {
     return null;
@@ -493,15 +555,25 @@ function getVisibleScrollAnchor(textarea: HTMLTextAreaElement, mirror: HTMLDivEl
 }
 
 function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function isServerMessage(value: unknown): value is ServerMessage {
-  return typeof value === 'object' && value !== null && 'type' in value;
+  return typeof value === "object" && value !== null && "type" in value;
 }
 
 export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCollabEditorOptions): CollabEditorHandle {
-  const { noteId, shareId, onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onHistoryChange, onUploadImage } = opts;
+  const {
+    noteId,
+    shareId,
+    onReady,
+    onTextChange,
+    onConnectionChange,
+    onThreadsUpdated,
+    onParticipantsChange,
+    onHistoryChange,
+    onUploadImage,
+  } = opts;
   let nextBunchIdCounter = 0;
 
   let ws: WebSocket | null = null;
@@ -513,8 +585,8 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   let nextClientCounter = 1;
   let clientId: string | null = null;
 
-  let serverState: EditorState = { text: '', idList: new SimpleIdList() };
-  let currentState: EditorState = { text: '', idList: new SimpleIdList() };
+  let serverState: EditorState = { text: "", idList: new SimpleIdList() };
+  let currentState: EditorState = { text: "", idList: new SimpleIdList() };
   let pendingMutations: ClientMutation[] = [];
   let localMutationsSettledResolvers: Array<() => void> = [];
   let undoStack: HistoryTransaction[] = [];
@@ -524,18 +596,19 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
 
   const container = textarea.parentElement;
   if (!container) {
-    throw new Error('Collab editor textarea must have a parent element.');
+    throw new Error("Collab editor textarea must have a parent element.");
   }
   const host = container;
-  host.style.position = 'relative';
+  host.style.position = "relative";
 
-  const overlay = document.createElement('div');
-  overlay.className = 'cursor-overlay';
+  const overlay = document.createElement("div");
+  overlay.className = "cursor-overlay";
   host.appendChild(overlay);
 
-  const mirror = document.createElement('div');
-  mirror.className = 'textarea-mirror';
-  mirror.style.cssText = 'position:absolute;visibility:hidden;overflow:hidden;white-space:pre-wrap;word-wrap:break-word;pointer-events:none;';
+  const mirror = document.createElement("div");
+  mirror.className = "textarea-mirror";
+  mirror.style.cssText =
+    "position:absolute;visibility:hidden;overflow:hidden;white-space:pre-wrap;word-wrap:break-word;pointer-events:none;";
   host.appendChild(mirror);
 
   let resizeObserver: ResizeObserver | null = null;
@@ -564,7 +637,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     return {
       start: textarea.selectionStart,
       end: textarea.selectionEnd,
-      direction: textarea.selectionDirection || 'none',
+      direction: textarea.selectionDirection || "none",
     };
   }
 
@@ -582,13 +655,15 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       textarea.value = currentState.text;
     }
     textarea.setSelectionRange(nextSelection.start, nextSelection.end, nextSelection.direction);
-    queueMicrotask(() => { programmatic = false; });
+    queueMicrotask(() => {
+      programmatic = false;
+    });
     onTextChange?.(currentState.text);
     renderRemoteCursors();
   }
 
   function renderRemoteCursors(): void {
-    overlay.innerHTML = '';
+    overlay.innerHTML = "";
     if (!initialized || remoteCursors.size === 0) return;
     const indices: number[] = [];
     const cursorData: Array<{ idx: number; name: string; color: string }> = [];
@@ -626,8 +701,8 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       const visibleHeight = textarea.clientHeight;
       if (pos.top < 0 - lineHeight || pos.top > visibleHeight + borderTopWidth + borderBottomWidth) continue;
 
-      const el = document.createElement('div');
-      el.className = 'remote-cursor';
+      const el = document.createElement("div");
+      el.className = "remote-cursor";
       el.style.left = `${pos.left}px`;
       el.style.top = `${pos.top}px`;
       el.innerHTML = `<div class="remote-cursor-caret" style="background:${cursor.color};height:${lineHeight}px"></div><div class="remote-cursor-label" style="background:${cursor.color}">${escapeHtml(cursor.name)}</div>`;
@@ -648,11 +723,16 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
 
   function sendPresence(): void {
     if (!initialized || !connected || !clientId || !ws || ws.readyState !== WebSocket.OPEN) return;
-    const sel = selectionToIds(currentState.idList, textarea.selectionStart, textarea.selectionEnd, textarea.selectionDirection || 'none');
+    const sel = selectionToIds(
+      currentState.idList,
+      textarea.selectionStart,
+      textarea.selectionEnd,
+      textarea.selectionDirection || "none",
+    );
     const key = JSON.stringify(sel);
     if (key === lastSentSelection) return;
     lastSentSelection = key;
-    sendJson({ type: 'presence', clientId, selection: sel });
+    sendJson({ type: "presence", clientId, selection: sel });
   }
 
   function throttledPresence(): void {
@@ -664,10 +744,13 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       if (presenceTimer !== null) {
         clearTimeout(presenceTimer);
       }
-      presenceTimer = window.setTimeout(() => {
-        lastPresenceSent = Date.now();
-        sendPresence();
-      }, PRESENCE_THROTTLE_MS - (now - lastPresenceSent));
+      presenceTimer = window.setTimeout(
+        () => {
+          lastPresenceSent = Date.now();
+          sendPresence();
+        },
+        PRESENCE_THROTTLE_MS - (now - lastPresenceSent),
+      );
     }
   }
 
@@ -688,16 +771,19 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     return ids;
   }
 
-  function resolveInsertPoint(state: EditorState, segment: HistorySegment): { before: ElementId | null; index: number } {
+  function resolveInsertPoint(
+    state: EditorState,
+    segment: HistorySegment,
+  ): { before: ElementId | null; index: number } {
     if (segment.before !== null && state.idList.isKnown(segment.before)) {
       return {
         before: segment.before,
-        index: state.idList.cursorIndex(segment.before, 'left'),
+        index: state.idList.cursorIndex(segment.before, "left"),
       };
     }
 
     if (segment.after !== null && state.idList.isKnown(segment.after)) {
-      const index = state.idList.cursorIndex(segment.after, 'left');
+      const index = state.idList.cursorIndex(segment.after, "left");
       return {
         before: index === 0 ? null : state.idList.at(index - 1),
         index,
@@ -725,8 +811,13 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     };
   }
 
-  function buildInsertHistorySegment(state: EditorState, index: number, content: string, mutation: ClientMutation): HistorySegment | null {
-    if (!content || mutation.name !== 'insert') {
+  function buildInsertHistorySegment(
+    state: EditorState,
+    index: number,
+    content: string,
+    mutation: ClientMutation,
+  ): HistorySegment | null {
+    if (!content || mutation.name !== "insert") {
       return null;
     }
 
@@ -745,26 +836,30 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     }
 
     try {
-      const startIndex = state.idList.indexOf(ids[0], 'right');
-      const endIndex = state.idList.indexOf(ids[ids.length - 1], 'left');
+      const startIndex = state.idList.indexOf(ids[0], "right");
+      const endIndex = state.idList.indexOf(ids[ids.length - 1], "left");
       return buildDeleteMutation(state, startIndex, endIndex + 1, counter);
     } catch {
       return null;
     }
   }
 
-  function planSegmentToggle(state: EditorState, segment: HistorySegment, counter: number): { mutation: ClientMutation; selection: TextSelection; nextActiveIds: ElementId[]; nextState: EditorState } | null {
+  function planSegmentToggle(
+    state: EditorState,
+    segment: HistorySegment,
+    counter: number,
+  ): { mutation: ClientMutation; selection: TextSelection; nextActiveIds: ElementId[]; nextState: EditorState } | null {
     if (segment.activeIds.length > 0) {
       const mutation = buildDeleteMutationFromIds(state, segment.activeIds, counter);
       if (!mutation) {
         return null;
       }
 
-      const startIndex = state.idList.indexOf(segment.activeIds[0], 'right');
+      const startIndex = state.idList.indexOf(segment.activeIds[0], "right");
       const nextState = applyClientMutation(state, mutation);
       return {
         mutation,
-        selection: { start: startIndex, end: startIndex, direction: 'none' },
+        selection: { start: startIndex, end: startIndex, direction: "none" },
         nextActiveIds: [],
         nextState,
       };
@@ -772,14 +867,14 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
 
     const { index } = resolveInsertPoint(state, segment);
     const mutation = buildInsertMutation(state, index, segment.content, counter, newId);
-    if (!mutation || mutation.name !== 'insert') {
+    if (!mutation || mutation.name !== "insert") {
       return null;
     }
 
     const nextState = applyClientMutation(state, mutation);
     return {
       mutation,
-      selection: { start: index + segment.content.length, end: index + segment.content.length, direction: 'none' },
+      selection: { start: index + segment.content.length, end: index + segment.content.length, direction: "none" },
       nextActiveIds: buildIdRange(mutation.args.id, segment.content.length),
       nextState,
     };
@@ -818,12 +913,17 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     }
     render(sel);
     if (clientId) {
-      sendJson({ type: 'mutation', clientId, mutations });
+      sendJson({ type: "mutation", clientId, mutations });
     }
     throttledPresence();
   }
 
-  function commitLocalMutations(mutations: ClientMutation[], sel: TextSelection, segments: HistorySegment[], label: string): void {
+  function commitLocalMutations(
+    mutations: ClientMutation[],
+    sel: TextSelection,
+    segments: HistorySegment[],
+    label: string,
+  ): void {
     if (!mutations.length) {
       return;
     }
@@ -836,12 +936,16 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     }
   }
 
-  function applyHistoryTransaction(entry: HistoryTransaction, direction: 'undo' | 'redo'): boolean {
-    const segments = direction === 'undo' ? [...entry.segments].reverse() : [...entry.segments];
+  function applyHistoryTransaction(entry: HistoryTransaction, direction: "undo" | "redo"): boolean {
+    const segments = direction === "undo" ? [...entry.segments].reverse() : [...entry.segments];
     const plannedMutations: ClientMutation[] = [];
     const segmentUpdates: Array<{ segment: HistorySegment; activeIds: ElementId[] }> = [];
     let workingState: EditorState = { text: currentState.text, idList: currentState.idList.clone() };
-    let selection: TextSelection = { start: textarea.selectionStart, end: textarea.selectionEnd, direction: textarea.selectionDirection || 'none' };
+    let selection: TextSelection = {
+      start: textarea.selectionStart,
+      end: textarea.selectionEnd,
+      direction: textarea.selectionDirection || "none",
+    };
     let counter = nextClientCounter;
 
     for (const segment of segments) {
@@ -871,7 +975,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       return false;
     }
 
-    if (!applyHistoryTransaction(entry, 'undo')) {
+    if (!applyHistoryTransaction(entry, "undo")) {
       return false;
     }
 
@@ -887,7 +991,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       return false;
     }
 
-    if (!applyHistoryTransaction(entry, 'redo')) {
+    if (!applyHistoryTransaction(entry, "redo")) {
       return false;
     }
 
@@ -901,7 +1005,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     const normalizedContent = normalizeInsertedText(nextContent);
     const nextText = `${currentState.text.slice(0, start)}${normalizedContent}${currentState.text.slice(end)}`;
     const cursor = start + normalizedContent.length;
-    applyDiffFallback(nextText, { start: cursor, end: cursor, direction: 'none' });
+    applyDiffFallback(nextText, { start: cursor, end: cursor, direction: "none" });
   }
 
   function replaceFirstOccurrence(oldText: string, newText: string): boolean {
@@ -916,13 +1020,13 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   function formatPastedMarkdown(markdown: string, start: number, end: number): string {
     const before = currentState.text.slice(0, start);
     const after = currentState.text.slice(end);
-    const prefix = before.length === 0 ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
-    const suffix = after.length === 0 ? '' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
+    const prefix = before.length === 0 ? "" : before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+    const suffix = after.length === 0 ? "" : after.startsWith("\n\n") ? "" : after.startsWith("\n") ? "\n" : "\n\n";
     return `${prefix}${markdown}${suffix}`;
   }
 
   async function insertUploadedImages(files: File[], start: number, end: number): Promise<void> {
-    if (!initialized || !connected || typeof onUploadImage !== 'function' || !files.length) {
+    if (!initialized || !connected || typeof onUploadImage !== "function" || !files.length) {
       return;
     }
 
@@ -934,7 +1038,11 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       };
     });
 
-    replaceRangeWithText(start, end, formatPastedMarkdown(pending.map((item) => item.placeholder).join('\n\n'), start, end));
+    replaceRangeWithText(
+      start,
+      end,
+      formatPastedMarkdown(pending.map((item) => item.placeholder).join("\n\n"), start, end),
+    );
     await waitForLocalMutationsSettled();
 
     for (const item of pending) {
@@ -942,8 +1050,8 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
         const payload = await onUploadImage(item.file);
         replaceFirstOccurrence(item.placeholder, payload.asset.markdown);
       } catch (error) {
-        replaceFirstOccurrence(item.placeholder, '');
-        window.alert(error instanceof Error ? error.message : 'Image upload failed.');
+        replaceFirstOccurrence(item.placeholder, "");
+        window.alert(error instanceof Error ? error.message : "Image upload failed.");
       }
     }
   }
@@ -974,28 +1082,38 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
 
   function receiveHello(msg: ServerHelloMessage): void {
     const selIds = initialized
-      ? selectionToIds(currentState.idList, textarea.selectionStart, textarea.selectionEnd, textarea.selectionDirection || 'none')
+      ? selectionToIds(
+          currentState.idList,
+          textarea.selectionStart,
+          textarea.selectionEnd,
+          textarea.selectionDirection || "none",
+        )
       : null;
 
     if (msg.clientId) clientId = msg.clientId;
-    serverState = { text: msg.markdown || '', idList: SimpleIdList.load(msg.idListState || []) };
+    serverState = { text: msg.markdown || "", idList: SimpleIdList.load(msg.idListState || []) };
     currentState = replayPending(serverState, pendingMutations);
     initialized = true;
     setConnected(true);
     reconnectDelay = RECONNECT_BASE_MS;
-    render(selIds ? selectionFromIds(selIds, currentState.idList) : { start: 0, end: 0, direction: 'none' });
+    render(selIds ? selectionFromIds(selIds, currentState.idList) : { start: 0, end: 0, direction: "none" });
     onReady?.({ noteId: msg.noteId, title: msg.title, shareId: msg.shareId, markdown: currentState.text });
 
     if (pendingMutations.length > 0 && clientId) {
-      sendJson({ type: 'mutation', clientId, mutations: pendingMutations });
+      sendJson({ type: "mutation", clientId, mutations: pendingMutations });
     }
     throttledPresence();
   }
 
   function receiveMutation(msg: ServerMutationMessage): void {
     if (!initialized) return;
-    const selIds = selectionToIds(currentState.idList, textarea.selectionStart, textarea.selectionEnd, textarea.selectionDirection || 'none');
-    serverState = { text: msg.markdown || '', idList: applyIdListUpdates(serverState.idList, msg.idListUpdates || []) };
+    const selIds = selectionToIds(
+      currentState.idList,
+      textarea.selectionStart,
+      textarea.selectionEnd,
+      textarea.selectionDirection || "none",
+    );
+    serverState = { text: msg.markdown || "", idList: applyIdListUpdates(serverState.idList, msg.idListUpdates || []) };
     if (msg.senderId === clientId && msg.senderCounter !== undefined) {
       const idx = pendingMutations.findIndex((mutation) => mutation.clientCounter === msg.senderCounter);
       if (idx !== -1) {
@@ -1009,7 +1127,12 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   }
 
   function receivePresence(msg: ServerPresenceMessage): void {
-    remoteCursors.set(msg.clientId, { name: msg.name, color: msg.color, selection: msg.selection, lastUpdate: Date.now() });
+    remoteCursors.set(msg.clientId, {
+      name: msg.name,
+      color: msg.color,
+      selection: msg.selection,
+      lastUpdate: Date.now(),
+    });
     renderRemoteCursors();
   }
 
@@ -1023,14 +1146,14 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       event.preventDefault();
       return;
     }
-    if (event.isComposing || event.inputType.includes('Composition')) return;
+    if (event.isComposing || event.inputType.includes("Composition")) return;
 
-    if (event.inputType === 'historyUndo') {
+    if (event.inputType === "historyUndo") {
       event.preventDefault();
       undoHistory();
       return;
     }
-    if (event.inputType === 'historyRedo') {
+    if (event.inputType === "historyRedo") {
       event.preventDefault();
       redoHistory();
     }
@@ -1039,10 +1162,20 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   function handleInput(event?: Event): void {
     if (programmatic || !initialized) return;
     const nativeEvent = event instanceof InputEvent ? event : null;
-    applyDiffFallback(textarea.value, currentDomSelection(), nativeEvent ? nativeEvent.inputType : undefined, nativeEvent ? readInsertText(nativeEvent) : '');
+    applyDiffFallback(
+      textarea.value,
+      currentDomSelection(),
+      nativeEvent ? nativeEvent.inputType : undefined,
+      nativeEvent ? readInsertText(nativeEvent) : "",
+    );
   }
 
-  function applyDiffFallback(nextText: string, selectionOverride?: TextSelection, inputType?: string, insertedTextOverride?: string): void {
+  function applyDiffFallback(
+    nextText: string,
+    selectionOverride?: TextSelection,
+    inputType?: string,
+    insertedTextOverride?: string,
+  ): void {
     const normalizedNextText = normalizeInsertedText(nextText);
     if (!initialized || normalizedNextText === currentState.text) return;
 
@@ -1063,7 +1196,13 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     }
 
     if (diff.insertedText) {
-      const insertMutation = buildInsertMutation(workingState, diff.prefix, diff.insertedText, nextClientCounter, newId);
+      const insertMutation = buildInsertMutation(
+        workingState,
+        diff.prefix,
+        diff.insertedText,
+        nextClientCounter,
+        newId,
+      );
       if (insertMutation) {
         nextClientCounter++;
         mutations.push(insertMutation);
@@ -1075,11 +1214,14 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       }
     }
 
-    const nextSelection = clampSel(normalizedNextText, selectionOverride || {
-      start: diff.prefix + diff.insertedText.length,
-      end: diff.prefix + diff.insertedText.length,
-      direction: 'none',
-    });
+    const nextSelection = clampSel(
+      normalizedNextText,
+      selectionOverride || {
+        start: diff.prefix + diff.insertedText.length,
+        end: diff.prefix + diff.insertedText.length,
+        direction: "none",
+      },
+    );
 
     if (!mutations.length) {
       render(nextSelection);
@@ -1087,21 +1229,26 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     }
 
     const deletedLength = Math.max(0, diff.previousEnd - diff.prefix);
-    const historyLabel = historyLabelForInput(inputType || '', nextSelection.start !== nextSelection.end, insertedTextOverride ?? diff.insertedText, deletedLength);
+    const historyLabel = historyLabelForInput(
+      inputType || "",
+      nextSelection.start !== nextSelection.end,
+      insertedTextOverride ?? diff.insertedText,
+      deletedLength,
+    );
     commitLocalMutations(mutations, nextSelection, historySegments, historyLabel);
   }
 
   function connect(): void {
-    const param = noteId ? `noteId=${encodeURIComponent(noteId)}` : `shareId=${encodeURIComponent(shareId || '')}`;
+    const param = noteId ? `noteId=${encodeURIComponent(noteId)}` : `shareId=${encodeURIComponent(shareId || "")}`;
     const socket = new WebSocket(`${buildApiWsOrigin()}/ws?${param}`);
     ws = socket;
 
-    socket.addEventListener('open', () => {
+    socket.addEventListener("open", () => {
       if (destroyed || ws !== socket) {
         socket.close();
       }
     });
-    socket.addEventListener('message', (event) => {
+    socket.addEventListener("message", (event) => {
       if (destroyed || ws !== socket) {
         return;
       }
@@ -1114,18 +1261,18 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       if (!isServerMessage(msg)) {
         return;
       }
-      if (msg.type === 'hello') receiveHello(msg);
-      else if (msg.type === 'mutation') receiveMutation(msg);
-      else if (msg.type === 'presence') receivePresence(msg);
-      else if (msg.type === 'presence-leave') receivePresenceLeave(msg);
-      else if (msg.type === 'threads-updated') onThreadsUpdated?.();
-      else if (msg.type === 'participants') onParticipantsChange?.(msg.participants);
+      if (msg.type === "hello") receiveHello(msg);
+      else if (msg.type === "mutation") receiveMutation(msg);
+      else if (msg.type === "presence") receivePresence(msg);
+      else if (msg.type === "presence-leave") receivePresenceLeave(msg);
+      else if (msg.type === "threads-updated") onThreadsUpdated?.();
+      else if (msg.type === "participants") onParticipantsChange?.(msg.participants);
     });
-    socket.addEventListener('close', () => {
+    socket.addEventListener("close", () => {
       if (ws === socket) {
         ws = null;
       }
-      if (destroyed || ws !== null && ws !== socket) return;
+      if (destroyed || (ws !== null && ws !== socket)) return;
       setConnected(false);
       remoteCursors.clear();
       renderRemoteCursors();
@@ -1136,7 +1283,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
         }
       }, reconnectDelay);
     });
-    socket.addEventListener('error', () => {
+    socket.addEventListener("error", () => {
       if (destroyed || ws !== socket) {
         return;
       }
@@ -1171,27 +1318,27 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
     }
 
     const key = event.key.toLowerCase();
-    if (key === 'z' && !event.shiftKey) {
+    if (key === "z" && !event.shiftKey) {
       event.preventDefault();
       undoHistory();
       return;
     }
-    if ((key === 'z' && event.shiftKey) || key === 'y') {
+    if ((key === "z" && event.shiftKey) || key === "y") {
       event.preventDefault();
       redoHistory();
     }
   };
 
-  textarea.addEventListener('beforeinput', handleBeforeInput);
-  textarea.addEventListener('input', handleInput);
-  textarea.addEventListener('keydown', handleKeyDown);
-  textarea.addEventListener('paste', handlePaste);
-  textarea.addEventListener('dragover', handleDragOver);
-  textarea.addEventListener('drop', handleDrop);
-  textarea.addEventListener('compositionend', handleCompositionEnd);
-  document.addEventListener('selectionchange', handleSelectionChange);
-  textarea.addEventListener('focus', throttledPresence);
-  textarea.addEventListener('blur', throttledPresence);
+  textarea.addEventListener("beforeinput", handleBeforeInput);
+  textarea.addEventListener("input", handleInput);
+  textarea.addEventListener("keydown", handleKeyDown);
+  textarea.addEventListener("paste", handlePaste);
+  textarea.addEventListener("dragover", handleDragOver);
+  textarea.addEventListener("drop", handleDrop);
+  textarea.addEventListener("compositionend", handleCompositionEnd);
+  document.addEventListener("selectionchange", handleSelectionChange);
+  textarea.addEventListener("focus", throttledPresence);
+  textarea.addEventListener("blur", throttledPresence);
   const handleScroll = () => {
     if (scrollRafId !== null) return;
     scrollRafId = requestAnimationFrame(() => {
@@ -1199,7 +1346,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
       renderRemoteCursors();
     });
   };
-  textarea.addEventListener('scroll', handleScroll);
+  textarea.addEventListener("scroll", handleScroll);
 
   emitHistoryChange();
   connect();
@@ -1207,17 +1354,17 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
   return {
     destroy() {
       destroyed = true;
-      textarea.removeEventListener('beforeinput', handleBeforeInput);
-      textarea.removeEventListener('input', handleInput);
-      textarea.removeEventListener('keydown', handleKeyDown);
-      textarea.removeEventListener('paste', handlePaste);
-      textarea.removeEventListener('dragover', handleDragOver);
-      textarea.removeEventListener('drop', handleDrop);
-      textarea.removeEventListener('compositionend', handleCompositionEnd);
-      document.removeEventListener('selectionchange', handleSelectionChange);
-      textarea.removeEventListener('focus', throttledPresence);
-      textarea.removeEventListener('blur', throttledPresence);
-      textarea.removeEventListener('scroll', handleScroll);
+      textarea.removeEventListener("beforeinput", handleBeforeInput);
+      textarea.removeEventListener("input", handleInput);
+      textarea.removeEventListener("keydown", handleKeyDown);
+      textarea.removeEventListener("paste", handlePaste);
+      textarea.removeEventListener("dragover", handleDragOver);
+      textarea.removeEventListener("drop", handleDrop);
+      textarea.removeEventListener("compositionend", handleCompositionEnd);
+      document.removeEventListener("selectionchange", handleSelectionChange);
+      textarea.removeEventListener("focus", throttledPresence);
+      textarea.removeEventListener("blur", throttledPresence);
+      textarea.removeEventListener("scroll", handleScroll);
       if (scrollRafId !== null) {
         cancelAnimationFrame(scrollRafId);
         scrollRafId = null;
@@ -1234,7 +1381,7 @@ export function createCollabEditor(textarea: HTMLTextAreaElement, opts: CreateCo
         if (socket.readyState === WebSocket.OPEN) {
           socket.close();
         } else if (socket.readyState === WebSocket.CONNECTING) {
-          socket.addEventListener('open', () => socket.close(), { once: true });
+          socket.addEventListener("open", () => socket.close(), { once: true });
         }
       }
       overlay.remove();

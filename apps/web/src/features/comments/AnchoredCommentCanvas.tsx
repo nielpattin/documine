@@ -1,14 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefCallback, type RefObject } from 'react';
-import { formatDate, type Thread, type ThreadAnchor, type ThreadMessage } from '../../lib/api';
-import { handleCommentTextareaKeyDown } from '../../components/shared-ui';
-import { handlePreviewCodeCopy } from '../clipboard';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefCallback,
+  type RefObject,
+} from "react";
+import { formatDate, type Thread, type ThreadAnchor, type ThreadMessage } from "../../lib/api";
+import { handleCommentTextareaKeyDown } from "../../components/shared-ui";
+import { handlePreviewCodeCopy } from "../clipboard";
 
 type AnchorWithOptionalHeading = ThreadAnchor & {
   heading?: { text: string; level: number } | null;
 };
 
 function normalizePreviewText(value: string) {
-  return value.replace(/\s+/g, ' ').trim().toLowerCase();
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function findTextOccurrences(text: string, pattern: string) {
@@ -45,10 +54,10 @@ function usePreviewCommentSelection({
     function hideControls() {
       anchorRef.current = null;
       if (bubbleRef.current) {
-        bubbleRef.current.style.display = 'none';
+        bubbleRef.current.style.display = "none";
       }
       if (fabRef.current) {
-        fabRef.current.style.display = 'none';
+        fabRef.current.style.display = "none";
       }
     }
 
@@ -83,21 +92,21 @@ function usePreviewCommentSelection({
       }
 
       const rect = range.getBoundingClientRect();
-      const useFab = window.matchMedia('(hover: none), (pointer: coarse)').matches;
+      const useFab = window.matchMedia("(hover: none), (pointer: coarse)").matches;
       anchorRef.current = anchor;
 
       if (bubbleRef.current) {
         if (useFab) {
-          bubbleRef.current.style.display = 'none';
+          bubbleRef.current.style.display = "none";
         } else {
           bubbleRef.current.style.left = `${Math.max(16, rect.left)}px`;
           bubbleRef.current.style.top = `${rect.bottom + 6}px`;
-          bubbleRef.current.style.display = 'inline-flex';
+          bubbleRef.current.style.display = "inline-flex";
         }
       }
 
       if (fabRef.current) {
-        fabRef.current.style.display = useFab ? 'inline-flex' : 'none';
+        fabRef.current.style.display = useFab ? "inline-flex" : "none";
       }
     }
 
@@ -126,19 +135,19 @@ function usePreviewCommentSelection({
       scheduleUpdate();
     }
 
-    document.addEventListener('selectionchange', scheduleUpdate);
-    document.addEventListener('pointerdown', handlePointerDown, true);
-    document.addEventListener('pointerup', handlePointerUp, true);
-    window.addEventListener('resize', scheduleUpdate);
-    window.addEventListener('keyup', scheduleUpdate);
+    document.addEventListener("selectionchange", scheduleUpdate);
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("pointerup", handlePointerUp, true);
+    window.addEventListener("resize", scheduleUpdate);
+    window.addEventListener("keyup", scheduleUpdate);
 
     return () => {
       hideControls();
-      document.removeEventListener('selectionchange', scheduleUpdate);
-      document.removeEventListener('pointerdown', handlePointerDown, true);
-      document.removeEventListener('pointerup', handlePointerUp, true);
-      window.removeEventListener('resize', scheduleUpdate);
-      window.removeEventListener('keyup', scheduleUpdate);
+      document.removeEventListener("selectionchange", scheduleUpdate);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("pointerup", handlePointerUp, true);
+      window.removeEventListener("resize", scheduleUpdate);
+      window.removeEventListener("keyup", scheduleUpdate);
       if (rafIdRef.current) {
         cancelAnimationFrame(rafIdRef.current);
       }
@@ -152,10 +161,10 @@ function usePreviewCommentSelection({
   function clearSelection() {
     anchorRef.current = null;
     if (bubbleRef.current) {
-      bubbleRef.current.style.display = 'none';
+      bubbleRef.current.style.display = "none";
     }
     if (fabRef.current) {
-      fabRef.current.style.display = 'none';
+      fabRef.current.style.display = "none";
     }
     window.getSelection()?.removeAllRanges();
   }
@@ -188,12 +197,12 @@ function buildAnchorFromSelection(root: HTMLElement, range: Range): ThreadAnchor
 function collectTextNodes(root: HTMLElement) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const segments: Array<{ node: Text; start: number; end: number }> = [];
-  let fullText = '';
+  let fullText = "";
   let offset = 0;
   let node = walker.nextNode();
   while (node) {
     const textNode = node as Text;
-    const value = textNode.nodeValue || '';
+    const value = textNode.nodeValue || "";
     segments.push({ node: textNode, start: offset, end: offset + value.length });
     fullText += value;
     offset += value.length;
@@ -245,7 +254,11 @@ function offsetsToRange(mapping: ReturnType<typeof collectTextNodes>, start: num
   return range;
 }
 
-function locateAnchor(anchor: AnchorWithOptionalHeading, root: HTMLElement, existingMapping?: ReturnType<typeof collectTextNodes>) {
+function locateAnchor(
+  anchor: AnchorWithOptionalHeading,
+  root: HTMLElement,
+  existingMapping?: ReturnType<typeof collectTextNodes>,
+) {
   const mapping = existingMapping ?? collectTextNodes(root);
   if (!mapping.fullText || !anchor.quote) {
     return null;
@@ -264,8 +277,10 @@ function locateAnchor(anchor: AnchorWithOptionalHeading, root: HTMLElement, exis
     return null;
   }
 
-  const headingText = normalizePreviewText(anchor.heading?.text || '');
-  const headingOccurrences = headingText ? findTextOccurrences(normalizePreviewText(mapping.fullText), headingText) : [];
+  const headingText = normalizePreviewText(anchor.heading?.text || "");
+  const headingOccurrences = headingText
+    ? findTextOccurrences(normalizePreviewText(mapping.fullText), headingText)
+    : [];
 
   let best: number | null = null;
   let bestScore = -Infinity;
@@ -274,7 +289,10 @@ function locateAnchor(anchor: AnchorWithOptionalHeading, root: HTMLElement, exis
     if (mapping.fullText.slice(Math.max(0, candidate - anchor.prefix.length), candidate) === anchor.prefix) {
       score += 12;
     }
-    const suffix = mapping.fullText.slice(candidate + anchor.quote.length, candidate + anchor.quote.length + anchor.suffix.length);
+    const suffix = mapping.fullText.slice(
+      candidate + anchor.quote.length,
+      candidate + anchor.quote.length + anchor.suffix.length,
+    );
     if (suffix === anchor.suffix) {
       score += 12;
     }
@@ -354,7 +372,7 @@ function findAnchorAtPoint(x: number, y: number, layer: HTMLElement | null) {
     return null;
   }
 
-  const anchors = layer.querySelectorAll<HTMLElement>('[data-thread-id]');
+  const anchors = layer.querySelectorAll<HTMLElement>("[data-thread-id]");
   for (const anchor of anchors) {
     const rect = anchor.getBoundingClientRect();
     if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
@@ -370,7 +388,6 @@ function usePreviewScrollHtmlSync(renderedHtml: string, syncPreviewScroll: () =>
     syncPreviewScroll();
   }, [renderedHtml, syncPreviewScroll]);
 }
-
 
 export function AnchoredCommentCanvas({
   renderedHtml,
@@ -471,10 +488,10 @@ export function AnchoredCommentCanvas({
       frame = requestAnimationFrame(computeLayout);
     };
 
-    window.addEventListener('resize', handleResize);
+    window.addEventListener("resize", handleResize);
     return () => {
       cancelAnimationFrame(frame);
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener("resize", handleResize);
     };
   }, [computeLayout, renderedHtml]);
 
@@ -495,10 +512,7 @@ export function AnchoredCommentCanvas({
     }
   }, [activeThreadId, dialogThreadId, threads]);
 
-  const visibleThreads = useMemo(
-    () => positionedThreads.map((item) => item.thread),
-    [positionedThreads],
-  );
+  const visibleThreads = useMemo(() => positionedThreads.map((item) => item.thread), [positionedThreads]);
 
   function openThread(threadId: string) {
     setActiveThreadId(threadId);
@@ -511,7 +525,7 @@ export function AnchoredCommentCanvas({
     }
 
     const target = event.target as HTMLElement;
-    if (target.closest('.selection-bubble, .comment-fab')) {
+    if (target.closest(".selection-bubble, .comment-fab")) {
       return;
     }
 
@@ -535,7 +549,7 @@ export function AnchoredCommentCanvas({
     clearSelection();
   }
 
-  const dialogThread = dialogThreadId ? visibleThreads.find((thread) => thread.id === dialogThreadId) ?? null : null;
+  const dialogThread = dialogThreadId ? (visibleThreads.find((thread) => thread.id === dialogThreadId) ?? null) : null;
 
   return (
     <>
@@ -560,22 +574,31 @@ export function AnchoredCommentCanvas({
             Add comment
           </button>
           <div ref={highlightLayerRef} className="highlight-layer">
-            {commentsVisible ? positionedThreads.flatMap((item) => item.highlightRects.map((rect, index) => (
-              <div
-                key={`${item.thread.id}-${index}`}
-                className={`anchor-highlight ${item.thread.id === activeThreadId ? 'active' : ''}`}
-                data-thread-id={item.thread.id}
-                style={{
-                  left: rect.left,
-                  top: rect.top,
-                  width: rect.width,
-                  height: rect.height,
-                }}
-              />
-            ))) : null}
+            {commentsVisible
+              ? positionedThreads.flatMap((item) =>
+                  item.highlightRects.map((rect, index) => (
+                    <div
+                      key={`${item.thread.id}-${index}`}
+                      className={`anchor-highlight ${item.thread.id === activeThreadId ? "active" : ""}`}
+                      data-thread-id={item.thread.id}
+                      style={{
+                        left: rect.left,
+                        top: rect.top,
+                        width: rect.width,
+                        height: rect.height,
+                      }}
+                    />
+                  )),
+                )
+              : null}
           </div>
           <div className="preview-content">
-            <div ref={previewMarkdownRef} className="markdown-body" onCopy={handlePreviewCodeCopy} dangerouslySetInnerHTML={{ __html: renderedHtml }} />
+            <div
+              ref={previewMarkdownRef}
+              className="markdown-body"
+              onCopy={handlePreviewCodeCopy}
+              dangerouslySetInnerHTML={{ __html: renderedHtml }}
+            />
             {commentsVisible && visibleThreads.length === 0 ? <p className="empty-state">{emptyMessage}</p> : null}
           </div>
         </div>
@@ -584,7 +607,11 @@ export function AnchoredCommentCanvas({
         <div className="modal-backdrop" onClick={() => setDialogThreadId(null)}>
           <div className="modal thread-modal" onClick={(event) => event.stopPropagation()}>
             <div className="thread-modal-close-wrap">
-              <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => setDialogThreadId(null)}>
+              <button
+                type="button"
+                className="documine-btn documine-btn--sm documine-btn--ghost"
+                onClick={() => setDialogThreadId(null)}
+              >
                 Close
               </button>
             </div>
@@ -608,7 +635,7 @@ export function AnchoredCommentCanvas({
 function ThreadCard({
   thread,
   active = false,
-  className = '',
+  className = "",
   style,
   onReply,
   onResolve,
@@ -627,8 +654,8 @@ function ThreadCard({
   onDeleteMessage: (messageId: string) => Promise<void>;
 }) {
   const messageTree = useMemo(() => buildMessageTree(thread.messages), [thread.messages]);
-  const [replyBody, setReplyBody] = useState('');
-  const [replyParentId, setReplyParentId] = useState(thread.messages[0]?.id || '');
+  const [replyBody, setReplyBody] = useState("");
+  const [replyParentId, setReplyParentId] = useState(thread.messages[0]?.id || "");
   const [replying, setReplying] = useState(false);
 
   async function handleReply() {
@@ -639,20 +666,23 @@ function ThreadCard({
     setReplying(true);
     try {
       await onReply(thread.id, replyParentId, replyBody);
-      setReplyBody('');
+      setReplyBody("");
     } finally {
       setReplying(false);
     }
   }
 
   return (
-    <div className={`thread-card ${active ? 'active' : ''} ${thread.resolved ? 'resolved' : ''} ${className}`.trim()} style={style}>
+    <div
+      className={`thread-card ${active ? "active" : ""} ${thread.resolved ? "resolved" : ""} ${className}`.trim()}
+      style={style}
+    >
       <div className="thread-message-head">
         <strong className="thread-author">“{thread.anchor.quote}”</strong>
         <span className="thread-meta">{formatDate(thread.updatedAt)}</span>
       </div>
-      <div className="thread-state">{thread.resolved ? 'Resolved' : 'Open'}</div>
-      <div className="thread-tree" style={{ marginTop: '0.75rem' }}>
+      <div className="thread-state">{thread.resolved ? "Resolved" : "Open"}</div>
+      <div className="thread-tree" style={{ marginTop: "0.75rem" }}>
         {messageTree.map((node) => (
           <ThreadMessageNode
             key={node.message.id}
@@ -667,30 +697,45 @@ function ThreadCard({
       </div>
       <div className="thread-footer">
         {thread.canResolve ? (
-          <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => void onResolve(thread.id, !thread.resolved)}>
-            {thread.resolved ? 'Reopen' : 'Resolve'}
+          <button
+            type="button"
+            className="documine-btn documine-btn--sm documine-btn--ghost"
+            onClick={() => void onResolve(thread.id, !thread.resolved)}
+          >
+            {thread.resolved ? "Reopen" : "Resolve"}
           </button>
         ) : null}
         {thread.canDeleteThread ? (
-          <button type="button" className="documine-btn documine-btn--sm documine-btn--danger" onClick={() => void onDeleteThread(thread.id)}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--sm documine-btn--danger"
+            onClick={() => void onDeleteThread(thread.id)}
+          >
             Delete thread
           </button>
         ) : null}
       </div>
       {thread.canReply ? (
-        <div className="compact" style={{ marginTop: '0.75rem' }}>
+        <div className="compact" style={{ marginTop: "0.75rem" }}>
           {replyParentId ? <div className="reply-target-note">Replying to selected comment</div> : null}
           <div className="field">
             <textarea
               value={replyBody}
               onChange={(event) => setReplyBody(event.target.value)}
-              onKeyDown={(event) => handleCommentTextareaKeyDown(event, !replying && !!replyBody.trim(), () => void handleReply())}
+              onKeyDown={(event) =>
+                handleCommentTextareaKeyDown(event, !replying && !!replyBody.trim(), () => void handleReply())
+              }
               placeholder="Reply"
             />
           </div>
           <div className="modal-actions">
-            <button type="button" className="primary" onClick={() => void handleReply()} disabled={replying || !replyBody.trim()}>
-              {replying ? 'Saving...' : 'Reply'}
+            <button
+              type="button"
+              className="primary"
+              onClick={() => void handleReply()}
+              disabled={replying || !replyBody.trim()}
+            >
+              {replying ? "Saving..." : "Reply"}
             </button>
           </div>
         </div>
@@ -754,8 +799,10 @@ function ThreadMessageNode({
   }
 
   return (
-    <div className="thread-node" style={{ ['--depth' as string]: depth }}>
-      <div className={`thread-message ${depth === 0 ? 'thread-message-root' : 'thread-message-reply'} ${activeReplyTargetId === node.message.id ? 'thread-message-targeted' : ''}`}>
+    <div className="thread-node" style={{ ["--depth" as string]: depth }}>
+      <div
+        className={`thread-message ${depth === 0 ? "thread-message-root" : "thread-message-reply"} ${activeReplyTargetId === node.message.id ? "thread-message-targeted" : ""}`}
+      >
         <div className="thread-message-head">
           <strong className="thread-author thread-author-small">{node.message.authorName}</strong>
           <span className="thread-meta">{formatDate(node.message.updatedAt)}</span>
@@ -777,17 +824,29 @@ function ThreadMessageNode({
         )}
         <div className="thread-message-actions">
           {canReply ? (
-            <button type="button" className="documine-btn documine-btn--link" onClick={() => onReplyTarget(node.message.id)}>
-              {activeReplyTargetId === node.message.id ? 'Replying here' : 'Reply here'}
+            <button
+              type="button"
+              className="documine-btn documine-btn--link"
+              onClick={() => onReplyTarget(node.message.id)}
+            >
+              {activeReplyTargetId === node.message.id ? "Replying here" : "Reply here"}
             </button>
           ) : null}
           {node.message.canEdit ? (
-            <button type="button" className="documine-btn documine-btn--link" onClick={() => setEditing((current) => !current)}>
+            <button
+              type="button"
+              className="documine-btn documine-btn--link"
+              onClick={() => setEditing((current) => !current)}
+            >
               Edit
             </button>
           ) : null}
           {node.message.canDelete ? (
-            <button type="button" className="documine-btn documine-btn--link" onClick={() => void onDeleteMessage(node.message.id)}>
+            <button
+              type="button"
+              className="documine-btn documine-btn--link"
+              onClick={() => void onDeleteMessage(node.message.id)}
+            >
               Delete
             </button>
           ) : null}
@@ -812,5 +871,3 @@ function ThreadMessageNode({
     </div>
   );
 }
-
-

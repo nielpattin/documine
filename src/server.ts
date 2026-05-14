@@ -1,162 +1,78 @@
-import crypto from 'node:crypto';
-import fs from 'node:fs';
-import http from 'node:http';
-import path from 'node:path';
+import crypto from "node:crypto";
+import fs from "node:fs";
+import http from "node:http";
+import path from "node:path";
 
-import { getRequestListener } from '@hono/node-server';
-import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
-import { bodyLimit } from 'hono/body-limit';
-import { Hono, type Context } from 'hono';
-import hljs from 'highlight.js';
-import { marked, type Tokens } from 'marked';
-import sanitizeHtml from 'sanitize-html';
-import { WebSocketServer, type WebSocket } from 'ws';
+import { getRequestListener } from "@hono/node-server";
+import { getCookie, setCookie, deleteCookie } from "hono/cookie";
+import { Hono, type Context } from "hono";
+import hljs from "highlight.js";
+import { marked, type Tokens } from "marked";
+import sanitizeHtml from "sanitize-html";
+import { WebSocketServer, type WebSocket } from "ws";
 
 import {
-  createNotesExportZip,
-  importNotesExportZip,
-  type ArchiveNoteInput,
-} from './note-archive.js';
-import {
-  detectPdfExportCapabilities,
-  exportMarkdownToPdf,
-  loadPdfExportSettings,
-  savePdfExportSettings,
   buildPdfCss,
   highlightCodeBlocksWithShiki,
-  defaultPdfExportSettings,
   mergeSettings,
   type PdfExportSettings,
   warmPdfPreviewEngine,
-} from './pdf-export.js';
+} from "./pdf-export.js";
+import { TOKEN_COLORS, CODE_CHROME, codePreStyle } from "./code-block-style.js";
 import {
-  TOKEN_COLORS,
-  CODE_CHROME,
-  codePreStyle,
-} from './code-block-style.js';
-import {
-  type CollabState,
   type ClientMutation,
-  type ClientMutationMessage,
   type ClientPresenceMessage,
-  type SavedCollabState,
-  type ServerHelloMessage,
   type ServerMutationMessage,
-  type ServerPresenceLeaveMessage,
-  type ServerPresenceMessage,
   applyClientMutations,
-  collabFromMarkdown,
-  collabToMarkdown,
   idAtIndex,
   idBeforeIndex,
-  loadCollabState,
-  newCollabState,
-  saveCollabState,
-} from './collab.js';
+} from "./collab.js";
 
 import type {
   CommentAnchor,
   CommentMessage,
   CommentThread,
   ShareAccess,
-  NoteMetaFile,
   NoteRecord,
-  NoteSummary,
   NoteAssetSummary,
-  NotePdfExportSummary,
-} from './types/notes.js';
+} from "./types/notes.js";
 
 import type {
-  DeviceToken,
   ApiKey,
   AuthData,
-  AuthGuardLoginRequest,
-  AuthGuardFailedLogin,
-  AuthGuardIpBan,
-  AuthGuardEvent,
   AuthGuardData,
+  AuthGuardEvent,
   AuthGuardRuntime,
   AuthGuardSummary,
   ViewerInfo,
-  ViewerContext
-} from './types/auth.js';
+  ViewerContext,
+  AuthGuardIpBan,
+} from "./types/auth.js";
 
-type ClientConn = {
-  ws: WebSocket;
-  kind: 'editor' | 'public-editor' | 'public-viewer';
-  noteId: string;
-  shareId: string;
-  clientId: string;
-  name: string;
-  color: string;
-  alive: boolean;
-  selection?: ClientPresenceMessage['selection'];
-};
-
-type ShareParticipantMessage = {
-  type: 'participants';
-  participants: Array<{
-    clientId: string;
-    name: string;
-    permissionLabel: string;
-  }>;
-};
-
-type AnyServerMessage =
-  | (ServerHelloMessage & { clientId?: string })
-  | ServerMutationMessage
-  | ServerPresenceMessage
-  | ServerPresenceLeaveMessage
-  | ShareParticipantMessage
-  | { type: 'updated'; noteId: string; shareId: string; updatedAt: string }
-  | { type: 'threads-updated'; noteId: string; shareId: string };
-
-function cliArg(name: string) {
+export function cliArg(name: string) {
   const match = process.argv.find((arg) => arg.startsWith(`--${name}=`));
-  return match ? match.split('=').slice(1).join('=') : null;
+  return match ? match.split("=").slice(1).join("=") : null;
 }
 
-const port = Number(cliArg('port') || process.env.PORT || 3120);
-const dataDir = cliArg('data') || process.env.DATA_DIR || path.join(process.cwd(), 'data');
-const notesDir = path.join(dataDir, 'notes');
-const noteAssetsDir = path.join(dataDir, 'assets');
-const noteExportsDir = path.join(dataDir, 'exports');
-const authFilePath = path.join(dataDir, 'auth.json');
-const authGuardFilePath = path.join(dataDir, 'auth-guard.json');
-const authGuardLogFilePath = path.join(dataDir, 'auth-guard.jsonl');
+const port = Number(cliArg("port") || process.env.PORT || 3120);
+const dataDir = cliArg("data") || process.env.DATA_DIR || path.join(process.cwd(), "data");
+const noteAssetsDir = path.join(dataDir, "assets");
+const noteExportsDir = path.join(dataDir, "exports");
+const authFilePath = path.join(dataDir, "auth.json");
+const authGuardFilePath = path.join(dataDir, "auth-guard.json");
+const authGuardLogFilePath = path.join(dataDir, "auth-guard.jsonl");
 const authTokenVerificationCacheMs = 1000 * 60 * 5;
 const authKeyVerificationCacheMs = 1000 * 60 * 5;
-export const exportSettingsFilePath = path.join(dataDir, 'export-settings.json');
-const exportShareTokensFilePath = path.join(dataDir, 'export-share-tokens.json');
-type ExportShareTokenEntry = { noteId: string; fileName: string; createdAt: string };
-const exportShareTokens = new Map<string, ExportShareTokenEntry>();
-
-function loadExportShareTokens() {
-  const data = readJson<Record<string, ExportShareTokenEntry>>(exportShareTokensFilePath, {});
-  for (const [token, entry] of Object.entries(data)) {
-    if (entry && typeof entry.noteId === 'string' && typeof entry.fileName === 'string') {
-      exportShareTokens.set(token, entry);
-    }
-  }
-}
-
-function saveExportShareTokens() {
-  const data: Record<string, ExportShareTokenEntry> = {};
-  for (const [token, entry] of exportShareTokens) {
-    data[token] = entry;
-  }
-  writeJson(exportShareTokensFilePath, data);
-}
-
-const activePdfPreviewControllers = new Map<string, AbortController>();
+export const exportSettingsFilePath = path.join(dataDir, "export-settings.json");
+export const activePdfPreviewControllers = new Map<string, AbortController>();
 const authDataCache = { value: null as AuthData | null, mtimeMs: -1 };
 const verifiedOwnerTokenCache = new Map<string, number>();
 const verifiedApiKeyCache = new Map<string, number>();
 const requestViewerContextCache = new WeakMap<Context, ViewerContext>();
-const ownerSessionCookieName = 'documine_owner_session';
-export const ownerLocalStorageTokenKey = 'documine_owner_token';
-const commenterIdCookieName = 'documine_commenter_id';
-const commenterNameCookieName = 'documine_commenter_name';
+const ownerSessionCookieName = "documine_owner_session";
+export const ownerLocalStorageTokenKey = "documine_owner_token";
+const commenterIdCookieName = "documine_commenter_id";
+const commenterNameCookieName = "documine_commenter_name";
 const ownerCookieMaxAgeSeconds = 60 * 60 * 24 * 30;
 const commenterCookieMaxAgeSeconds = 60 * 60 * 24 * 365;
 export const authIpBanDurationMs = 1000 * 60 * 15;
@@ -165,32 +81,25 @@ export const authFailedAttemptBanThreshold = 3;
 export const authGlobalLoginWindowMs = 1000 * 60 * 5;
 export const authGlobalLoginThreshold = 10;
 export const shareAccessLevels: Record<ShareAccess, number> = { none: 0, view: 1, comment: 2, edit: 3 };
-const maxImageUploadBytes = 10 * 1024 * 1024;
-const maxNotesImportZipBytes = 100 * 1024 * 1024;
-const NOTE_LIST_SNIPPET_SOURCE_LIMIT = 1000;
-const imageMimeExtensions: Record<string, string> = {
-  'image/png': '.png',
-  'image/jpeg': '.jpg',
-  'image/gif': '.gif',
-  'image/webp': '.webp',
-  'image/avif': '.avif',
+export const maxImageUploadBytes = 10 * 1024 * 1024;
+export const maxNotesImportZipBytes = 100 * 1024 * 1024;
+export const NOTE_LIST_SNIPPET_SOURCE_LIMIT = 1000;
+export const imageMimeExtensions: Record<string, string> = {
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "image/avif": ".avif",
 };
-const notes = new Map<string, NoteRecord>();
-const clients: ClientConn[] = [];
-const CURSOR_COLORS = ['#4285f4', '#ea4335', '#34a853', '#fbbc04', '#9c27b0', '#ff6d00', '#00bcd4', '#e91e63'];
-let nextColorIndex = 0;
-let clientIdCounter = 0;
 
 const codeRenderer = new marked.Renderer();
 codeRenderer.code = ({ text, lang }: Tokens.Code) => {
-  const language = (lang || '').trim().split(/\s+/)[0];
-  if (language === 'mermaid') {
+  const language = (lang || "").trim().split(/\s+/)[0];
+  if (language === "mermaid") {
     return `<pre class="mermaid">${escapeHtml(text)}</pre>`;
   }
   const validLanguage = language && hljs.getLanguage(language) ? language : null;
-  const highlighted = validLanguage
-    ? hljs.highlight(text, { language: validLanguage }).value
-    : escapeHtml(text);
+  const highlighted = validLanguage ? hljs.highlight(text, { language: validLanguage }).value : escapeHtml(text);
   const languageClass = validLanguage ? ` class="hljs language-${escapeHtml(validLanguage)}"` : ' class="hljs"';
   return `<pre><code${languageClass}>${highlighted}</code></pre>`;
 };
@@ -201,1396 +110,133 @@ marked.setOptions({
   renderer: codeRenderer,
 });
 
-ensureDirectories();
-loadNotesIntoMemory();
-loadExportShareTokens();
 export const authGuardRuntime = loadAuthGuardRuntime();
 
 const app = new Hono();
 
-const frontendDist = path.resolve(
-  __dirname,
-  '../apps/web/dist'
-);
+const frontendDist = path.resolve(__dirname, "../apps/web/dist");
 const frontendDistExists = fs.existsSync(frontendDist) && fs.statSync(frontendDist).isDirectory();
 
-app.use('/api/*', async (c, next) => {
-  const origin = c.req.header('origin');
+app.use("/api/*", async (c, next) => {
+  const origin = c.req.header("origin");
   if (origin && isAllowedBrowserOrigin(origin)) {
-    c.header('Access-Control-Allow-Origin', origin);
-    c.header('Access-Control-Allow-Credentials', 'true');
-    c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    c.header('Vary', 'Origin');
+    c.header("Access-Control-Allow-Origin", origin);
+    c.header("Access-Control-Allow-Credentials", "true");
+    c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    c.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    c.header("Vary", "Origin");
   }
 
-  if (c.req.method === 'OPTIONS') {
+  if (c.req.method === "OPTIONS") {
     return c.body(null, 204);
   }
 
   await next();
 });
 
-app.get('/', (c) => {
+app.get("/", (c) => {
   if (frontendDistExists) {
-    const indexPath = path.join(frontendDist, 'index.html');
+    const indexPath = path.join(frontendDist, "index.html");
     if (fs.existsSync(indexPath)) {
       return c.body(fs.readFileSync(indexPath), 200, {
-        'Content-Type': 'text/html',
+        "Content-Type": "text/html",
       });
     }
   }
-  return c.json({ ok: true, service: 'documine-api' });
+  return c.json({ ok: true, service: "documine-api" });
 });
 
-app.get('/health', (c) => c.text('ok'));
+app.get("/health", (c) => c.text("ok"));
 
-app.get('/assets/:noteId/:fileName', (c) => {
-  const note = notes.get(c.req.param('noteId'));
+app.get("/assets/:noteId/:fileName", (c) => {
+  const note = noteStore.getNote(c.req.param("noteId"));
   if (!note) {
-    return c.text('Not found.', 404);
+    return c.text("Not found.", 404);
   }
   if (!isOwnerAuthenticated(c) && shareAccessLevels[note.shareAccess] < shareAccessLevels.view) {
-    return c.text('Forbidden.', 403);
+    return c.text("Forbidden.", 403);
   }
 
-  const fileName = path.basename(c.req.param('fileName'));
+  const fileName = path.basename(c.req.param("fileName"));
   const filePath = path.join(noteAssetDirectory(note.id), fileName);
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-    return c.text('Not found.', 404);
+    return c.text("Not found.", 404);
   }
 
   const extension = path.extname(fileName).toLowerCase();
   const contentType = imageContentTypeFromExtension(extension);
   if (!contentType) {
-    return c.text('Unsupported media type.', 415);
+    return c.text("Unsupported media type.", 415);
   }
 
   return c.body(fs.readFileSync(filePath), 200, {
-    'Content-Type': contentType,
-    'Cache-Control': 'private, max-age=31536000, immutable',
+    "Content-Type": contentType,
+    "Cache-Control": "private, max-age=31536000, immutable",
   });
 });
 
-import { registerAuthRoutes } from './routes/auth.js';
+import { registerAuthRoutes } from "./routes/auth.js";
 registerAuthRoutes(app);
 
-app.get('/api/notes', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const query = c.req.query('q') || '';
-  return c.json({ ok: true, notes: searchNotes(query) });
-});
-
-app.post('/api/notes', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = createNote();
-  return c.json({ ok: true, note: summarizeNote(note, '') });
-});
-
-app.post('/api/notes/export', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const body = await readJsonBody(c) as { scope?: unknown; noteIds?: unknown };
-  const selectedNotes = selectNotesForExport(body);
-  if (!selectedNotes.length) {
-    return c.json({ ok: false, error: 'Select at least one note to export.' }, 400);
-  }
-
-  const archiveNotes = selectedNotes.map((note) => buildArchiveNoteInput(note));
-  const zip = createNotesExportZip({ notes: archiveNotes, exportedAt: nowIso() });
-  const fileName = archiveNotes.length === 1
-    ? `${slugifyFileName(archiveNotes[0].title) || 'note'}.documine.zip`
-    : `documine-notes-${new Date().toISOString().slice(0, 10)}.zip`;
-  return c.body(new Uint8Array(zip), 200, {
-    'Content-Type': 'application/zip',
-    'Content-Disposition': `attachment; filename="${fileName}"`,
-    'Cache-Control': 'no-store',
-  });
-});
-
-app.post(
-  '/api/notes/import',
-  bodyLimit({
-    maxSize: maxNotesImportZipBytes,
-    onError: (c) => c.json({ ok: false, error: 'This export is too large to import.' }, 413),
-  }),
-  async (c) => {
-    if (!isOwnerAuthenticated(c)) {
-      return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-    }
-
-    const body = await c.req.parseBody();
-    const file = body.file;
-    if (!(file instanceof File) || !file.name.toLowerCase().endsWith('.zip')) {
-      return c.json({ ok: false, error: 'Choose a .zip file exported from Documine.' }, 400);
-    }
-
-    let result;
-    try {
-      result = importNotesExportZip({
-        zipBuffer: Buffer.from(await file.arrayBuffer()),
-        existingTitles: new Set(Array.from(notes.values()).map((note) => note.title)),
-        now: nowIso(),
-        createId: () => createShortId(),
-      });
-    } catch (error) {
-      return c.json({ ok: false, error: error instanceof Error ? error.message : 'This file is not a valid Documine notes export.' }, 400);
-    }
-
-    for (const imported of result.imported) {
-      const note: NoteRecord = {
-        id: imported.id,
-        title: normalizeTitle(imported.title),
-        shareId: imported.shareId,
-        shareAccess: 'none',
-        createdAt: imported.createdAt,
-        updatedAt: imported.updatedAt,
-        markdown: imported.markdown,
-        threads: imported.threads,
-        collab: collabFromMarkdown(imported.markdown),
-        clientAcks: new Map(),
-        importedAt: imported.importedAt,
-        importOpenedAt: imported.importOpenedAt,
-      };
-      notes.set(note.id, note);
-      fs.mkdirSync(noteAssetDirectory(note.id), { recursive: true });
-      for (const asset of imported.assets) {
-        fs.writeFileSync(noteAssetPath(note.id, asset.fileName), asset.bytes);
-      }
-      persistNote(note);
-    }
-
-    return c.json({
-      ok: true,
-      imported: result.imported.map((note) => ({ id: note.id, title: note.title, updatedAt: note.updatedAt })),
-      skipped: result.skipped,
-      warnings: result.warnings,
-    });
-  },
-);
-
-app.get('/api/notes/:id', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const offsetQuery = c.req.query('offset');
-  const limitQuery = c.req.query('limit');
-  const offset = offsetQuery ? Number(offsetQuery) : null;
-  const limit = limitQuery ? Number(limitQuery) : null;
-
-  if (offset !== null || limit !== null) {
-    const lines = note.markdown.split('\n');
-    const start = Math.max(0, (offset || 1) - 1);
-    const end = limit ? Math.min(lines.length, start + limit) : lines.length;
-    const slice = lines.slice(start, end);
-    const totalLines = lines.length;
-    const remaining = totalLines - end;
-
-    return c.json({
-      ok: true,
-      note: {
-        id: note.id,
-        title: note.title,
-        totalLines,
-        offset: start + 1,
-        limit: slice.length,
-        remaining,
-        content: slice.map((line, index) => `${start + index + 1}: ${line}`).join('\n'),
-      },
-    });
-  }
-
-  if (note.importedAt && note.importOpenedAt === null) {
-    note.importOpenedAt = nowIso();
-    persistNote(note);
-  }
-
-  return c.json({ ok: true, ...serializeNoteForClient(note, c) });
-});
-
-app.get('/api/notes/:id/exports', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  return c.json({ ok: true, exports: collectNoteExports(note) });
-});
-
-app.get('/api/notes/:id/exports/:fileName', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const exportFile = loadManagedNoteExportFile(note.id, c.req.param('fileName'));
-  if (!exportFile) {
-    return c.json({ ok: false, error: 'Export not found.' }, 404);
-  }
-
-  const asDownload = c.req.query('download') === '1';
-  const asInline = c.req.query('inline') === '1' || !asDownload;
-  const dispositionType = asInline ? 'inline' : 'attachment';
-  return c.body(fs.readFileSync(exportFile.filePath), 200, {
-    'Content-Type': 'application/pdf',
-    'Content-Disposition': `${dispositionType}; filename="${exportFile.fileName}"`,
-    'Cache-Control': 'no-store',
-  });
-});
-
-app.get('/api/notes/:id/exports/:fileName/debug', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const exportFile = loadManagedDebugExportFile(note.id, c.req.param('fileName'));
-  if (!exportFile) {
-    return c.json({ ok: false, error: 'Export debug not found.' }, 404);
-  }
-
-  return c.json({ ok: true, fileName: exportFile.fileName, ...exportFile.debug });
-});
-
-app.get('/api/notes/:id/exports/:fileName/debug/:kind', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const exportFile = loadManagedDebugExportFile(note.id, c.req.param('fileName'));
-  if (!exportFile) {
-    return c.json({ ok: false, error: 'Export debug not found.' }, 404);
-  }
-
-  const kind = c.req.param('kind');
-  if (kind === 'html') {
-    return c.body(exportFile.debug.html, 200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-  }
-  if (kind === 'css') {
-    return c.body(exportFile.debug.css, 200, { 'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': 'no-store' });
-  }
-  if (kind === 'markdown') {
-    return c.body(exportFile.debug.markdown, 200, { 'Content-Type': 'text/markdown; charset=utf-8', 'Cache-Control': 'no-store' });
-  }
-  return c.json({ ok: false, error: 'Unknown debug artifact.' }, 404);
-});
-
-app.delete('/api/notes/:id/exports/:fileName', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const exportFile = loadManagedNoteExportFile(note.id, c.req.param('fileName'));
-  if (!exportFile) {
-    return c.json({ ok: false, error: 'Export not found.' }, 404);
-  }
-
-  try { fs.unlinkSync(exportFile.filePath); } catch {}
-  try { fs.unlinkSync(noteExportAssetPath(note.id, exportFile.fileName, '.html')); } catch {}
-  try { fs.unlinkSync(noteExportAssetPath(note.id, exportFile.fileName, '.css')); } catch {}
-  try { fs.unlinkSync(noteExportAssetPath(note.id, exportFile.fileName, '.md')); } catch {}
-  try { fs.unlinkSync(noteExportAssetPath(note.id, exportFile.fileName, '.json')); } catch {}
-
-  return c.json({ ok: true, exports: collectNoteExports(note) });
-});
-
-app.post('/api/notes/:id/exports/:fileName/share-token', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const exportFile = loadManagedNoteExportFile(note.id, c.req.param('fileName'));
-  if (!exportFile) {
-    return c.json({ ok: false, error: 'Export not found.' }, 404);
-  }
-
-  const existing = findExportShareToken(note.id, exportFile.fileName);
-  if (existing) {
-    return c.json({ ok: true, token: existing, shareUrl: `/pdf/${existing}` });
-  }
-
-  const token = crypto.randomUUID();
-  exportShareTokens.set(token, {
-    noteId: note.id,
-    fileName: exportFile.fileName,
-    createdAt: nowIso(),
-  });
-  saveExportShareTokens();
-
-  return c.json({ ok: true, token, shareUrl: `/pdf/${token}` });
-});
-
-app.delete('/api/notes/:id/exports/:fileName/share-token', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const exportFile = loadManagedNoteExportFile(note.id, c.req.param('fileName'));
-  if (!exportFile) {
-    return c.json({ ok: false, error: 'Export not found.' }, 404);
-  }
-
-  const existing = findExportShareToken(note.id, exportFile.fileName);
-  if (existing) {
-    exportShareTokens.delete(existing);
-    saveExportShareTokens();
-  }
-
-  return c.json({ ok: true, exports: collectNoteExports(note) });
-});
-
-app.get('/pdf/:token', (c) => {
-  const token = c.req.param('token');
-  const entry = exportShareTokens.get(token);
-  if (!entry) {
-    return c.json({ ok: false, error: 'Link not found or revoked.' }, 404);
-  }
-
-  const exportFile = loadManagedNoteExportFile(entry.noteId, entry.fileName);
-  if (!exportFile) {
-    exportShareTokens.delete(token);
-    saveExportShareTokens();
-    return c.json({ ok: false, error: 'Export no longer exists.' }, 404);
-  }
-
-  const asDownload = c.req.query('download') === '1';
-  const asInline = c.req.query('inline') === '1' || !asDownload;
-  const dispositionType = asInline ? 'inline' : 'attachment';
-  return c.body(fs.readFileSync(exportFile.filePath), 200, {
-    'Content-Type': 'application/pdf',
-    'Content-Disposition': `${dispositionType}; filename="${exportFile.fileName}"`,
-    'Cache-Control': 'no-store',
-  });
-});
-
-app.post('/api/notes/:id/export/html-preview', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const body = await readJsonBody(c) as { markdown?: unknown; settings?: unknown };
-  const savedSettings = await loadPdfExportSettings(exportSettingsFilePath);
-  const previewKey = `${note.id}:owner-preview`;
-  activePdfPreviewControllers.get(previewKey)?.abort();
-  const controller = new AbortController();
-  activePdfPreviewControllers.set(previewKey, controller);
-  const requestStartedAt = performance.now();
-
-  try {
-    const markdown = typeof body.markdown === 'string' ? body.markdown : note.markdown;
-    const settings = body.settings === undefined ? savedSettings : body.settings;
-    const html = await renderPrintPreviewHtml(markdown, note.title, settings);
-    if (activePdfPreviewControllers.get(previewKey) === controller) {
-      activePdfPreviewControllers.delete(previewKey);
-    }
-    const baseHref = `${new URL(c.req.url).origin}/`;
-    const outHtml = injectPreviewBaseHref(html, baseHref);
-    console.log(`[html-preview] note=${note.id} total=${Math.round(performance.now() - requestStartedAt)}ms`);
-    return c.body(outHtml, 200, {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-store',
-    });
-  } catch (error) {
-    if (activePdfPreviewControllers.get(previewKey) === controller) {
-      activePdfPreviewControllers.delete(previewKey);
-    }
-    const message = error instanceof Error ? error.message : 'Preview failed.';
-    if (controller.signal.aborted) {
-      console.log(`[html-preview] note=${note.id} cancelled after ${Math.round(performance.now() - requestStartedAt)}ms`);
-      return c.json({ ok: false, error: 'Preview superseded by a newer request.' }, 409);
-    }
-    console.log(`[html-preview] note=${note.id} failed after ${Math.round(performance.now() - requestStartedAt)}ms error=${message}`);
-    return c.json({ ok: false, error: message }, 500);
-  }
-});
-
-app.post('/api/notes/:id/export/pdf', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const body = await readJsonBody(c) as { markdown?: unknown; settings?: unknown };
-  const savedSettings = await loadPdfExportSettings(exportSettingsFilePath);
-
-  try {
-    const result = await exportMarkdownToPdf({
-      noteId: note.id,
-      noteTitle: note.title,
-      markdown: typeof body.markdown === 'string' ? body.markdown : note.markdown,
-      settings: body.settings === undefined ? savedSettings : body.settings,
-      assetDirectory: noteAssetDirectory(note.id),
-    });
-    const finalFileName = buildIncrementedExportFileName(note.id, note.title || result.fileName.replace(/\.pdf$/i, ''));
-    const exportPath = noteExportPath(note.id, finalFileName);
-    fs.mkdirSync(noteExportDirectory(note.id), { recursive: true });
-    fs.writeFileSync(exportPath, result.pdf);
-    fs.writeFileSync(noteExportAssetPath(note.id, finalFileName, '.html'), result.debug.html, 'utf8');
-    fs.writeFileSync(noteExportAssetPath(note.id, finalFileName, '.css'), result.debug.css, 'utf8');
-    fs.writeFileSync(noteExportAssetPath(note.id, finalFileName, '.md'), result.debug.markdown, 'utf8');
-    writeJson(noteExportAssetPath(note.id, finalFileName, '.json'), {
-      noteId: note.id,
-      noteTitle: note.title,
-      createdAt: nowIso(),
-      settings: body.settings === undefined ? savedSettings : body.settings,
-      fileName: finalFileName,
-    });
-    return c.json({
-      ok: true,
-      export: collectNoteExports(note).find((item) => item.fileName === finalFileName) || null,
-      exports: collectNoteExports(note),
-    });
-  } catch (error) {
-    return c.json({ ok: false, error: error instanceof Error ? error.message : 'PDF export failed.' }, 500);
-  }
-});
-
-app.put('/api/notes/:id', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const body = await readJsonBody(c);
-  const titleProvided = Object.prototype.hasOwnProperty.call(body, 'title');
-  const markdownProvided = Object.prototype.hasOwnProperty.call(body, 'markdown');
-  const shareAccessProvided = Object.prototype.hasOwnProperty.call(body, 'shareAccess');
-  const nextTitle = titleProvided ? normalizeTitle(String(body.title || note.title)) : note.title;
-  const nextMarkdown = markdownProvided ? String(body.markdown || '') : note.markdown;
-  const nextShareAccess = shareAccessProvided && ['none', 'view', 'comment', 'edit'].includes(String(body.shareAccess))
-    ? (String(body.shareAccess) as ShareAccess)
-    : note.shareAccess;
-
-  const titleChanged = nextTitle !== note.title;
-  const markdownChanged = nextMarkdown !== note.markdown;
-  const shareAccessChanged = nextShareAccess !== note.shareAccess;
-
-  note.title = nextTitle;
-  note.shareAccess = nextShareAccess;
-  if (markdownChanged) {
-    note.collab = collabFromMarkdown(nextMarkdown, note.collab.serverCounter + 1);
-    note.markdown = nextMarkdown;
-  }
-  note.updatedAt = nowIso();
-  persistNote(note, false);
-
-  if (shareAccessChanged) {
-    enforceShareAccessForConnections(note);
-  }
-  if (titleChanged || markdownChanged || shareAccessChanged) {
-    broadcastEditorHello(note);
-    broadcastNoteUpdate(note);
-  }
-
-  return c.json({ ok: true, savedAt: note.updatedAt, shareAccess: note.shareAccess });
-});
-
-app.delete('/api/notes/:id', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const noteId = c.req.param('id');
-  const note = notes.get(noteId);
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  notes.delete(noteId);
-  closeConnectionsForNote(note.id);
-  try { fs.unlinkSync(noteMarkdownPath(noteId)); } catch {}
-  try { fs.unlinkSync(noteMetaPath(noteId)); } catch {}
-  try { fs.rmSync(noteAssetDirectory(noteId), { recursive: true, force: true }); } catch {}
-  try { fs.rmSync(noteExportDirectory(noteId), { recursive: true, force: true }); } catch {}
-  return c.json({ ok: true });
-});
-
-app.post('/api/notes/:id/edit', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const body = await readJsonBody(c);
-  const edits = body.edits;
-  if (!Array.isArray(edits) || edits.length === 0) {
-    return c.json({ ok: false, error: 'edits must be a non-empty array of {oldText, newText}.' }, 400);
-  }
-
-  const result = applyTextEditsToNote(note, edits);
-  if (!result.ok) {
-    return c.json({ ok: false, errors: result.errors }, 400);
-  }
-
-  const titleProvided = Object.prototype.hasOwnProperty.call(body, 'title');
-  const titleChanged = titleProvided && normalizeTitle(String(body.title || note.title)) !== note.title;
-  if (titleProvided) {
-    note.title = normalizeTitle(String(body.title || note.title));
-  }
-  note.updatedAt = nowIso();
-  persistNote(note, false);
-
-  if (titleChanged) {
-    broadcastEditorHello(note);
-  } else if (result.idListUpdates.length > 0) {
-    broadcastEditorMutation(note, {
-      type: 'mutation',
-      senderId: '__api__',
-      senderCounter: result.senderCounter,
-      serverCounter: note.collab.serverCounter,
-      markdown: note.markdown,
-      idListUpdates: result.idListUpdates,
-    });
-  }
-  broadcastNoteUpdate(note);
-  return c.json({ ok: true, savedAt: note.updatedAt });
-});
-
-app.get('/api/notes/:id/assets', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  return c.json({ ok: true, assets: listNoteAssets(note, c) });
-});
-
-app.delete('/api/notes/:id/assets/:fileName', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const fileName = path.basename(c.req.param('fileName'));
-  const asset = listNoteAssets(note, c).find((item) => item.fileName === fileName);
-  if (!asset) {
-    return c.json({ ok: false, error: 'Asset not found.' }, 404);
-  }
-  if (asset.inUse) {
-    return c.json({ ok: false, error: 'Remove this image from the note before deleting it.' }, 400);
-  }
-
-  try {
-    fs.unlinkSync(noteAssetPath(note.id, fileName));
-  } catch {
-    return c.json({ ok: false, error: 'Failed to delete asset.' }, 500);
-  }
-
-  return c.json({ ok: true, assets: listNoteAssets(note, c) });
-});
-
-app.post(
-  '/api/notes/:id/images',
-  bodyLimit({
-    maxSize: maxImageUploadBytes,
-    onError: (c) => c.json({ ok: false, error: 'Image exceeds the 10 MB upload limit.' }, 413),
-  }),
-  async (c) => {
-    if (!isOwnerAuthenticated(c)) {
-      return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-    }
-
-    const note = notes.get(c.req.param('id'));
-    if (!note) {
-      return c.json({ ok: false, error: 'Note not found.' }, 404);
-    }
-
-    return handleImageUpload(c, note);
-  },
-);
-
-app.post('/api/notes/:id/threads', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const body = await readJsonBody(c);
-  const commentBody = normalizeCommentBody(String(body.body || ''));
-  let anchor = sanitizeAnchor(body.anchor);
-
-  if (!anchor) {
-    const quote = String(body.quote || '');
-    if (!quote || !commentBody) {
-      return c.json({ ok: false, error: 'quote and body are required.' }, 400);
-    }
-
-    const start = note.markdown.indexOf(quote);
-    if (start === -1) {
-      return c.json({ ok: false, error: 'Quoted text not found in note.' }, 400);
-    }
-
-    const end = start + quote.length;
-    anchor = {
-      quote,
-      prefix: note.markdown.slice(Math.max(0, start - 32), start),
-      suffix: note.markdown.slice(end, end + 32),
-      start,
-      end,
-    };
-  }
-
-  if (!commentBody) {
-    return c.json({ ok: false, error: 'quote and body are required.' }, 400);
-  }
-
-  const bearer = getBearerToken(c);
-  const apiKeyLabel = bearer ? getApiKeyLabel(bearer) : null;
-  const authorName = apiKeyLabel || 'Owner';
-  const timestamp = nowIso();
-
-  const thread: CommentThread = {
-    id: createId(10),
-    resolved: false,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    anchor,
-    messages: [
-      {
-        id: createId(10),
-        parentId: null,
-        authorId: '__owner__',
-        authorName,
-        body: commentBody,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      },
-    ],
-  };
-
-  note.threads.push(thread);
-  note.updatedAt = timestamp;
-  persistNote(note);
-  broadcastThreadsUpdated(note);
-  return c.json({ ok: true, threads: serializeThreads(note, c) });
-});
-
-app.post('/api/notes/:id/threads/:threadId/replies', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const thread = note.threads.find((item) => item.id === c.req.param('threadId'));
-  if (!thread) {
-    return c.json({ ok: false, error: 'Thread not found.' }, 404);
-  }
-
-  const body = await readJsonBody(c);
-  const commentBody = normalizeCommentBody(String(body.body || ''));
-  const parentMessageId = String(body.parentMessageId || thread.messages[0]?.id || '');
-  if (!commentBody) {
-    return c.json({ ok: false, error: 'body is required.' }, 400);
-  }
-  if (!thread.messages.some((message) => message.id === parentMessageId)) {
-    return c.json({ ok: false, error: 'Parent message not found.' }, 400);
-  }
-
-  const bearer = getBearerToken(c);
-  const apiKeyLabel = bearer ? getApiKeyLabel(bearer) : null;
-  const authorName = apiKeyLabel || 'Owner';
-  const timestamp = nowIso();
-
-  thread.messages.push({
-    id: createId(10),
-    parentId: parentMessageId,
-    authorId: '__owner__',
-    authorName,
-    body: commentBody,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  });
-  thread.updatedAt = timestamp;
-  note.updatedAt = timestamp;
-  persistNote(note);
-  broadcastThreadsUpdated(note);
-  return c.json({ ok: true, threads: serializeThreads(note, c) });
-});
-
-app.patch('/api/notes/:id/threads/:threadId', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const thread = note.threads.find((item) => item.id === c.req.param('threadId'));
-  if (!thread) {
-    return c.json({ ok: false, error: 'Thread not found.' }, 404);
-  }
-
-  const body = await readJsonBody(c);
-  thread.resolved = Boolean(body.resolved);
-  thread.updatedAt = nowIso();
-  note.updatedAt = thread.updatedAt;
-  persistNote(note);
-  broadcastThreadsUpdated(note);
-  return c.json({ ok: true, threads: serializeThreads(note, c) });
-});
-
-app.delete('/api/notes/:id/threads/:threadId', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  note.threads = note.threads.filter((item) => item.id !== c.req.param('threadId'));
-  note.updatedAt = nowIso();
-  persistNote(note);
-  broadcastThreadsUpdated(note);
-  return c.json({ ok: true, threads: serializeThreads(note, c) });
-});
-
-app.patch('/api/notes/:id/messages/:messageId', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const located = locateMessage(note, c.req.param('messageId'));
-  if (!located) {
-    return c.json({ ok: false, error: 'Message not found.' }, 404);
-  }
-
-  const body = await readJsonBody(c);
-  const commentBody = normalizeCommentBody(String(body.body || ''));
-  if (!commentBody) {
-    return c.json({ ok: false, error: 'Body is required.' }, 400);
-  }
-
-  located.message.body = commentBody;
-  located.message.updatedAt = nowIso();
-  located.thread.updatedAt = located.message.updatedAt;
-  note.updatedAt = located.message.updatedAt;
-  persistNote(note);
-  broadcastThreadsUpdated(note);
-  return c.json({ ok: true, threads: serializeThreads(note, c) });
-});
-
-app.delete('/api/notes/:id/messages/:messageId', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  const located = locateMessage(note, c.req.param('messageId'));
-  if (!located) {
-    return c.json({ ok: false, error: 'Message not found.' }, 404);
-  }
-
-  located.thread.messages = located.thread.messages.filter((message) => message.id !== located.message.id);
-  if (located.thread.messages.length === 0) {
-    note.threads = note.threads.filter((thread) => thread.id !== located.thread.id);
-  } else {
-    located.thread.updatedAt = nowIso();
-  }
-  note.updatedAt = nowIso();
-  persistNote(note);
-  broadcastThreadsUpdated(note);
-  return c.json({ ok: true, threads: serializeThreads(note, c) });
-});
-
-app.get('/api/notes/:id/collab', (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const note = notes.get(c.req.param('id'));
-  if (!note) {
-    return c.json({ ok: false, error: 'Note not found.' }, 404);
-  }
-
-  return c.json({
-    ok: true,
-    noteId: note.id,
-    title: note.title,
-    shareId: note.shareId,
-    shareUrl: makeShareUrl(c, note.shareId),
-    serverCounter: note.collab.serverCounter,
-    collabState: saveCollabState(note.collab),
-  });
-});
-
-app.post('/api/render', async (c) => {
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Unauthorized.' }, 401);
-  }
-
-  const body = await readJsonBody(c);
-  const html = renderMarkdown(String(body.markdown || ''));
-  const withShiki = await highlightCodeBlocksWithShiki(html, defaultPdfExportSettings);
-  return c.json({ ok: true, html: withShiki });
-});
-
-app.get('/api/share/:shareId/meta', (c) => {
-  const note = requireShareAccess(c, 'view');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-
-  return c.json({
-    ok: true,
-    title: note.title,
-    shareId: note.shareId,
-    shareUrl: makeShareUrl(c, note.shareId),
-    updatedAt: note.updatedAt,
-  });
-});
-
-app.get('/api/share/:shareId', (c) => {
-  const note = requireShareAccess(c, 'view');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-  if (!requireSharedIdentity(c)) {
-    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
-  }
-
-  return c.json({ ok: true, ...serializeNoteForClient(note, c) });
-});
-
-app.get('/api/share/:shareId/note', (c) => {
-  const note = requireShareAccess(c, 'view');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-  if (!requireSharedIdentity(c)) {
-    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
-  }
-
-  return c.json({
-    ok: true,
-    note: {
-      id: note.id,
-      title: note.title,
-      markdown: note.markdown,
-      shareAccess: note.shareAccess,
-      updatedAt: note.updatedAt,
-    },
-    threads: serializeThreads(note, c),
-  });
-});
-
-app.get('/api/share/:shareId/collab', (c) => {
-  const note = requireShareAccess(c, 'edit');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-  if (!requireSharedIdentity(c)) {
-    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
-  }
-
-  return c.json({
-    ok: true,
-    noteId: note.id,
-    title: note.title,
-    shareId: note.shareId,
-    shareUrl: makeShareUrl(c, note.shareId),
-    serverCounter: note.collab.serverCounter,
-    collabState: saveCollabState(note.collab),
-  });
-});
-
-app.post('/api/share/:shareId/edit', async (c) => {
-  const note = requireShareAccess(c, 'edit');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-  if (!requireSharedIdentity(c)) {
-    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
-  }
-
-  const body = await readJsonBody(c);
-  const edits = body.edits;
-  if (!Array.isArray(edits) || edits.length === 0) {
-    return c.json({ ok: false, error: 'edits must be a non-empty array of {oldText, newText}.' }, 400);
-  }
-
-  const result = applyTextEditsToNote(note, edits);
-  if (!result.ok) {
-    return c.json({ ok: false, errors: result.errors }, 400);
-  }
-
-  note.updatedAt = nowIso();
-  persistNote(note, false);
-  if (result.idListUpdates.length > 0) {
-    broadcastEditorMutation(note, {
-      type: 'mutation',
-      senderId: '__api__',
-      senderCounter: result.senderCounter,
-      serverCounter: note.collab.serverCounter,
-      markdown: note.markdown,
-      idListUpdates: result.idListUpdates,
-    });
-  }
-  broadcastNoteUpdate(note);
-  return c.json({ ok: true, savedAt: note.updatedAt });
-});
-
-app.post('/api/share/:shareId/render', async (c) => {
-  const note = requireShareAccess(c, 'view');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-  if (!requireSharedIdentity(c)) {
-    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
-  }
-
-  const body = await readJsonBody(c);
-  const html = renderMarkdown(String(body.markdown || ''));
-  const withShiki = await highlightCodeBlocksWithShiki(html, defaultPdfExportSettings);
-  return c.json({ ok: true, html: withShiki });
-});
-
-app.post('/api/share/:shareId/export/html-preview', async (c) => {
-  const note = requireShareAccess(c, 'view');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-  if (!requireSharedIdentity(c)) {
-    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
-  }
-
-  const body = await readJsonBody(c) as { markdown?: unknown; settings?: unknown };
-  const markdown = typeof body.markdown === 'string' ? body.markdown : note.markdown;
-  const settings = body.settings === undefined ? defaultPdfExportSettings : body.settings;
-  const html = await renderPrintPreviewHtml(markdown, note.title, settings);
-  const baseHref = `${new URL(c.req.url).origin}/`;
-  const outHtml = injectPreviewBaseHref(html, baseHref);
-  return c.body(outHtml, 200, {
-    'Content-Type': 'text/html; charset=utf-8',
-    'Cache-Control': 'no-store',
-  });
-});
-
-app.post('/api/share/:shareId/identity', async (c) => {
-  const note = requireShareAccess(c, 'view');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-
-  const body = await readJsonBody(c);
-  const name = normalizeCommenterName(String(body.name || ''));
-  if (!name) {
-    return c.json({ ok: false, error: 'Name is required.' }, 400);
-  }
-
-  const commenterId = getOrCreateCommenterId(c);
-  setCommenterNameCookie(c, name);
-  return c.json({
-    ok: true,
-    commenterIdSet: Boolean(commenterId),
-    viewer: buildViewerInfo(c, { commenterNameOverride: name, hasCommenterIdentityOverride: true }),
-  });
-});
-
-app.post(
-  '/api/share/:shareId/images',
-  bodyLimit({
-    maxSize: maxImageUploadBytes,
-    onError: (c) => c.json({ ok: false, error: 'Image exceeds the 10 MB upload limit.' }, 413),
-  }),
-  async (c) => {
-    const note = requireShareAccess(c, 'edit');
-    if (!note) {
-      return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-    }
-    if (!requireSharedIdentity(c)) {
-      return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
-    }
-
-    return handleImageUpload(c, note);
-  },
-);
-
-app.post('/api/share/:shareId/threads', async (c) => {
-  const note = requireShareAccess(c, 'comment');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-  if (!requireSharedIdentity(c)) {
-    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
-  }
-
-  const body = await readJsonBody(c);
-  const identity = ensureCommentAuthor(c, body);
-  if (!identity) {
-    return c.json({ ok: false, error: 'Set your name first.' }, 400);
-  }
-
-  const anchor = sanitizeAnchor(body.anchor);
-  const commentBody = normalizeCommentBody(String(body.body || ''));
-  if (!anchor || !commentBody) {
-    return c.json({ ok: false, error: 'Anchor and comment body are required.' }, 400);
-  }
-
-  const timestamp = nowIso();
-  note.threads.push({
-    id: createId(10),
-    resolved: false,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    anchor,
-    messages: [
-      {
-        id: createId(10),
-        parentId: null,
-        authorId: identity.authorId,
-        authorName: identity.authorName,
-        body: commentBody,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      },
-    ],
-  });
-  note.updatedAt = timestamp;
-  persistNote(note);
-  broadcastThreadsUpdated(note);
-  return c.json({ ok: true, threads: serializeThreads(note, c) });
-});
-
-app.post('/api/share/:shareId/threads/:threadId/replies', async (c) => {
-  const note = requireShareAccess(c, 'comment');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-  if (!requireSharedIdentity(c)) {
-    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
-  }
-
-  const thread = note.threads.find((item) => item.id === c.req.param('threadId'));
-  if (!thread) {
-    return c.json({ ok: false, error: 'Thread not found.' }, 404);
-  }
-
-  const body = await readJsonBody(c);
-  const identity = ensureCommentAuthor(c, body);
-  if (!identity) {
-    return c.json({ ok: false, error: 'Set your name first.' }, 400);
-  }
-
-  const commentBody = normalizeCommentBody(String(body.body || ''));
-  if (!commentBody) {
-    return c.json({ ok: false, error: 'Reply body is required.' }, 400);
-  }
-
-  const requestedParentId = typeof body.parentMessageId === 'string' ? String(body.parentMessageId) : '';
-  const parentMessageId = requestedParentId || thread.messages[0]?.id || '';
-  if (!parentMessageId || !thread.messages.some((message) => message.id === parentMessageId)) {
-    return c.json({ ok: false, error: 'Parent message not found.' }, 400);
-  }
-
-  const timestamp = nowIso();
-  thread.messages.push({
-    id: createId(10),
-    parentId: parentMessageId,
-    authorId: identity.authorId,
-    authorName: identity.authorName,
-    body: commentBody,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  });
-  thread.updatedAt = timestamp;
-  note.updatedAt = timestamp;
-  persistNote(note);
-  broadcastThreadsUpdated(note);
-  return c.json({ ok: true, threads: serializeThreads(note, c) });
-});
-
-app.patch('/api/share/:shareId/threads/:threadId', async (c) => {
-  const note = requireShareAccess(c, 'comment');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-  if (!requireSharedIdentity(c)) {
-    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
-  }
-
-  const thread = note.threads.find((item) => item.id === c.req.param('threadId'));
-  if (!thread) {
-    return c.json({ ok: false, error: 'Thread not found.' }, 404);
-  }
-
-  if (!canManageThread(c, thread)) {
-    return c.json({ ok: false, error: 'Not allowed.' }, 403);
-  }
-
-  const body = await readJsonBody(c);
-  thread.resolved = Boolean(body.resolved);
-  thread.updatedAt = nowIso();
-  note.updatedAt = thread.updatedAt;
-  persistNote(note);
-  broadcastThreadsUpdated(note);
-  return c.json({ ok: true, threads: serializeThreads(note, c) });
-});
-
-app.delete('/api/share/:shareId/threads/:threadId', (c) => {
-  const note = requireShareAccess(c, 'comment');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-  if (!requireSharedIdentity(c)) {
-    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
-  }
-
-  const thread = note.threads.find((item) => item.id === c.req.param('threadId'));
-  if (!thread) {
-    return c.json({ ok: false, error: 'Thread not found.' }, 404);
-  }
-
-  if (!isOwnerAuthenticated(c)) {
-    return c.json({ ok: false, error: 'Only the owner can delete a whole thread.' }, 403);
-  }
-
-  note.threads = note.threads.filter((item) => item.id !== thread.id);
-  note.updatedAt = nowIso();
-  persistNote(note);
-  broadcastThreadsUpdated(note);
-  return c.json({ ok: true, threads: serializeThreads(note, c) });
-});
-
-app.patch('/api/share/:shareId/messages/:messageId', async (c) => {
-  const note = requireShareAccess(c, 'comment');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-  if (!requireSharedIdentity(c)) {
-    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
-  }
-
-  const located = locateMessage(note, c.req.param('messageId'));
-  if (!located) {
-    return c.json({ ok: false, error: 'Message not found.' }, 404);
-  }
-
-  if (!canManageMessage(c, located.message)) {
-    return c.json({ ok: false, error: 'Not allowed.' }, 403);
-  }
-
-  const body = await readJsonBody(c);
-  const commentBody = normalizeCommentBody(String(body.body || ''));
-  if (!commentBody) {
-    return c.json({ ok: false, error: 'Body is required.' }, 400);
-  }
-
-  located.message.body = commentBody;
-  located.message.updatedAt = nowIso();
-  located.thread.updatedAt = located.message.updatedAt;
-  note.updatedAt = located.message.updatedAt;
-  persistNote(note);
-  broadcastThreadsUpdated(note);
-  return c.json({ ok: true, threads: serializeThreads(note, c) });
-});
-
-app.delete('/api/share/:shareId/messages/:messageId', (c) => {
-  const note = requireShareAccess(c, 'comment');
-  if (!note) {
-    return c.json({ ok: false, error: 'Shared note not found.' }, 404);
-  }
-  if (!requireSharedIdentity(c)) {
-    return c.json({ ok: false, error: 'Set your name first.', requiresIdentity: true }, 401);
-  }
-
-  const located = locateMessage(note, c.req.param('messageId'));
-  if (!located) {
-    return c.json({ ok: false, error: 'Message not found.' }, 404);
-  }
-
-  if (!canManageMessage(c, located.message)) {
-    return c.json({ ok: false, error: 'Not allowed.' }, 403);
-  }
-
-  located.thread.messages = located.thread.messages.filter((message) => message.id !== located.message.id);
-  if (located.thread.messages.length === 0) {
-    note.threads = note.threads.filter((thread) => thread.id !== located.thread.id);
-  } else {
-    located.thread.updatedAt = nowIso();
-  }
-  note.updatedAt = nowIso();
-  persistNote(note);
-  broadcastThreadsUpdated(note);
-  return c.json({ ok: true, threads: serializeThreads(note, c) });
-});
-
-const staticFileContentTypes: Record<string, string> = {
-  '.html': 'text/html',
-  '.js': 'application/javascript',
-  '.css': 'text/css',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-  '.woff2': 'font/woff2',
-  '.json': 'application/json',
+type ClientConn = {
+  ws: WebSocket;
+  kind: "editor" | "public-editor" | "public-viewer";
+  noteId: string;
+  shareId: string;
+  clientId: string;
+  name: string;
+  color: string;
+  alive: boolean;
+  selection?: ClientPresenceMessage["selection"];
 };
 
-app.notFound((c) => {
-  if (c.req.path.startsWith('/api/') || c.req.path === '/health') {
-    return c.json({ ok: false, error: 'Not found.' }, 404);
-  }
+import { registerNotesRoutes } from "./routes/notes.js";
+import { registerSharedRoutes } from "./routes/shared-notes.js";
+import {
+  clients,
+  initCollabWs,
+  setupHeartbeat,
+  nextClientId,
+  pickColor,
+  handleDisconnect,
+  handleEditorMessage,
+  sendServerMessage,
+  buildHelloMessage,
+  sendExistingPresence,
+  broadcastShareParticipants,
+} from "./lib/collab-ws.js";
+import { initAuthPaths } from "./lib/auth.js";
+import { FsNoteStore } from "./lib/note-store.js";
 
-  if (frontendDistExists) {
-    const requestedPath = c.req.path === '/' ? '/index.html' : c.req.path;
-    const filePath = path.join(frontendDist, requestedPath);
-    const resolved = path.resolve(filePath);
+initAuthPaths(dataDir);
+const noteStore = new FsNoteStore(dataDir);
+registerNotesRoutes(app, noteStore);
+registerSharedRoutes(app, noteStore);
 
-    if (resolved.startsWith(frontendDist) && fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
-      const ext = path.extname(resolved).toLowerCase();
-      return c.body(fs.readFileSync(resolved), 200, {
-        'Content-Type': staticFileContentTypes[ext] || 'application/octet-stream',
-      });
-    }
-
-    // SPA fallback: serve index.html for paths without a file extension
-    const indexPath = path.join(frontendDist, 'index.html');
-    if (!path.extname(c.req.path) && fs.existsSync(indexPath)) {
-      return c.body(fs.readFileSync(indexPath), 200, {
-        'Content-Type': 'text/html',
-      });
-    }
-  }
-
-  return c.text('Not found.', 404);
-});
-
-app.onError((error, c) => {
-  console.error(error);
-  if (c.req.path.startsWith('/api/')) {
-    return c.json({ ok: false, error: 'Internal server error.' }, 500);
-  }
-  return c.text('Internal server error.', 500);
-});
+initCollabWs(noteStore);
 
 const listener = getRequestListener(app.fetch);
 const server = http.createServer(listener);
 const wss = new WebSocketServer({ noServer: true });
 
-const heartbeatInterval = setInterval(() => {
-  for (const conn of clients) {
-    if (!conn.alive) {
-      conn.ws.terminate();
-      continue;
-    }
-    conn.alive = false;
-    if (conn.ws.readyState === 1) {
-      conn.ws.ping();
-    }
-  }
-}, 30000);
+setupHeartbeat(wss);
 
-wss.on('close', () => clearInterval(heartbeatInterval));
-
-server.on('upgrade', (req, socket, head) => {
-  const url = new URL(req.url || '/', `http://localhost:${port}`);
-  if (url.pathname !== '/ws') {
+server.on("upgrade", (req, socket, head) => {
+  const url = new URL(req.url || "/", `http://localhost:${port}`);
+  if (url.pathname !== "/ws") {
     socket.destroy();
     return;
   }
 
   wss.handleUpgrade(req, socket, head, (ws) => {
-    wss.emit('connection', ws, req);
+    wss.emit("connection", ws, req);
   });
 });
 
-wss.on('connection', (ws, req) => {
-  const url = new URL(req.url || '/', `http://localhost:${port}`);
-  const noteId = url.searchParams.get('noteId') || '';
-  const shareId = url.searchParams.get('shareId') || '';
+wss.on("connection", (ws, req) => {
+  const url = new URL(req.url || "/", `http://localhost:${port}`);
+  const noteId = url.searchParams.get("noteId") || "";
+  const shareId = url.searchParams.get("shareId") || "";
 
   if (noteId) {
     if (!isOwnerAuthenticatedIncomingRequest(req)) {
@@ -1598,21 +244,21 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
-    const note = notes.get(noteId);
+    const note = noteStore.getNote(noteId);
     if (!note) {
       ws.close();
       return;
     }
 
-    const clientId = `c${++clientIdCounter}`;
-    const color = CURSOR_COLORS[nextColorIndex++ % CURSOR_COLORS.length];
+    const clientId = nextClientId();
+    const color = pickColor();
     const conn: ClientConn = {
       ws,
-      kind: 'editor',
+      kind: "editor",
       noteId: note.id,
       shareId: note.shareId,
       clientId,
-      name: 'Owner',
+      name: "Owner",
       color,
       alive: true,
     };
@@ -1621,31 +267,33 @@ wss.on('connection', (ws, req) => {
     sendExistingPresence(conn);
     broadcastShareParticipants(note.id);
 
-    ws.on('pong', () => { conn.alive = true; });
-    ws.on('message', (data) => handleEditorMessage(conn, String(data)));
-    ws.on('close', () => handleDisconnect(conn));
-    ws.on('error', () => handleDisconnect(conn));
+    ws.on("pong", () => {
+      conn.alive = true;
+    });
+    ws.on("message", (data) => handleEditorMessage(conn, String(data)));
+    ws.on("close", () => handleDisconnect(conn));
+    ws.on("error", () => handleDisconnect(conn));
     return;
   }
 
   if (shareId) {
-    const note = findNoteByShareId(shareId);
-    if (!note || note.shareAccess === 'none') {
+    const note = noteStore.findByShareId(shareId);
+    if (!note || note.shareAccess === "none") {
       ws.close();
       return;
     }
 
-    if (note.shareAccess === 'edit') {
+    if (note.shareAccess === "edit") {
       const commenterIdentity = getCommenterIdentityFromHeaders(req.headers);
       if (!commenterIdentity.id || !commenterIdentity.name) {
         ws.close();
         return;
       }
-      const clientId = `c${++clientIdCounter}`;
-      const color = CURSOR_COLORS[nextColorIndex++ % CURSOR_COLORS.length];
+      const clientId = nextClientId();
+      const color = pickColor();
       const conn: ClientConn = {
         ws,
-        kind: 'public-editor',
+        kind: "public-editor",
         noteId: note.id,
         shareId: note.shareId,
         clientId,
@@ -1658,10 +306,12 @@ wss.on('connection', (ws, req) => {
       sendExistingPresence(conn);
       broadcastShareParticipants(note.id);
 
-      ws.on('pong', () => { conn.alive = true; });
-      ws.on('message', (data) => handleEditorMessage(conn, String(data)));
-      ws.on('close', () => handleDisconnect(conn));
-      ws.on('error', () => handleDisconnect(conn));
+      ws.on("pong", () => {
+        conn.alive = true;
+      });
+      ws.on("message", (data) => handleEditorMessage(conn, String(data)));
+      ws.on("close", () => handleDisconnect(conn));
+      ws.on("error", () => handleDisconnect(conn));
       return;
     }
 
@@ -1670,22 +320,24 @@ wss.on('connection', (ws, req) => {
       ws.close();
       return;
     }
-    const clientId = `c${++clientIdCounter}`;
+    const clientId = nextClientId();
     const conn: ClientConn = {
       ws,
-      kind: 'public-viewer',
+      kind: "public-viewer",
       noteId: note.id,
       shareId: note.shareId,
       clientId,
       name: commenterIdentity.name,
-      color: '',
+      color: "",
       alive: true,
     };
     clients.push(conn);
     broadcastShareParticipants(note.id);
-    ws.on('pong', () => { conn.alive = true; });
-    ws.on('close', () => handleDisconnect(conn));
-    ws.on('error', () => handleDisconnect(conn));
+    ws.on("pong", () => {
+      conn.alive = true;
+    });
+    ws.on("close", () => handleDisconnect(conn));
+    ws.on("error", () => handleDisconnect(conn));
     return;
   }
 
@@ -1697,7 +349,7 @@ server.listen(port, () => {
   console.log(`data: ${path.resolve(dataDir)}`);
   void warmPdfPreviewEngine()
     .then(() => {
-      console.log('[pdf-preview] browser engine ready');
+      console.log("[pdf-preview] browser engine ready");
     })
     .catch((error) => {
       console.warn(`[pdf-preview] browser engine failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -1705,305 +357,29 @@ server.listen(port, () => {
 });
 
 export function readJsonBody(c: Context) {
-  return c.req.json().catch(() => ({} as Record<string, unknown>)) as Promise<Record<string, unknown>>;
+  return c.req.json().catch(() => ({}) as Record<string, unknown>) as Promise<Record<string, unknown>>;
 }
 
-function isCollaborativeConn(conn: ClientConn, noteId: string) {
-  return (conn.kind === 'editor' || conn.kind === 'public-editor') && conn.noteId === noteId;
-}
-
-function sharePermissionLabel(conn: ClientConn, note: NoteRecord): string {
-  if (conn.kind === 'public-editor') {
-    return 'Edit and comment';
-  }
-  if (conn.kind === 'public-viewer') {
-    if (note.shareAccess === 'comment') {
-      return 'View and comment';
-    }
-    return 'View only';
-  }
-  return 'Owner';
-}
-
-function broadcastShareParticipants(noteId: string) {
-  const note = notes.get(noteId);
-  if (!note) {
-    return;
-  }
-
-  const participants = clients
-    .filter((conn) => conn.noteId === noteId && conn.kind !== 'editor')
-    .map((conn) => ({
-      clientId: conn.clientId,
-      name: conn.name || 'Guest',
-      permissionLabel: sharePermissionLabel(conn, note),
-    }));
-
-  const outgoing: ShareParticipantMessage = {
-    type: 'participants',
-    participants,
-  };
-
-  for (const conn of clients) {
-    if (conn.noteId === noteId) {
-      sendServerMessage(conn.ws, outgoing);
-    }
-  }
-}
-
-function handleDisconnect(conn: ClientConn) {
-  const index = clients.indexOf(conn);
-  if (index !== -1) {
-    clients.splice(index, 1);
-  }
-  if (conn.kind === 'editor' || conn.kind === 'public-editor') {
-    broadcastPresenceLeave(conn);
-  }
-  broadcastShareParticipants(conn.noteId);
-}
-
-function handleEditorMessage(conn: ClientConn, data: string) {
-  let message: ClientMutationMessage | ClientPresenceMessage;
-  try {
-    message = JSON.parse(data) as ClientMutationMessage | ClientPresenceMessage;
-  } catch {
-    return;
-  }
-
-  if (message.type === 'presence') {
-    if (message.clientId !== conn.clientId) {
-      return;
-    }
-    conn.selection = message.selection;
-    broadcastPresence(conn, message);
-    return;
-  }
-
-  if (message.type !== 'mutation' || !message.clientId || !Array.isArray(message.mutations) || message.mutations.length === 0) {
-    return;
-  }
-
-  if (message.clientId !== conn.clientId) {
-    return;
-  }
-
-  const note = notes.get(conn.noteId);
-  if (!note) {
-    return;
-  }
-
-  const senderCounter = message.mutations.at(-1)?.clientCounter || 0;
-  const lastAcknowledgedCounter = note.clientAcks.get(message.clientId) || 0;
-  const freshMutations = message.mutations.filter((mutation) => mutation.clientCounter > lastAcknowledgedCounter);
-
-  if (freshMutations.length === 0) {
-    sendServerMessage(conn.ws, {
-      type: 'mutation',
-      senderId: message.clientId,
-      senderCounter,
-      serverCounter: note.collab.serverCounter,
-      markdown: note.markdown,
-      idListUpdates: [],
-    });
-    return;
-  }
-
-  let result;
-  try {
-    result = applyClientMutations(note.collab, freshMutations);
-  } catch (error) {
-    console.error(error);
-    sendServerMessage(conn.ws, { ...buildHelloMessage(note), clientId: conn.clientId });
-    return;
-  }
-  note.clientAcks.set(message.clientId, senderCounter);
-
-  if (!result.changed) {
-    sendServerMessage(conn.ws, {
-      type: 'mutation',
-      senderId: message.clientId,
-      senderCounter,
-      serverCounter: note.collab.serverCounter,
-      markdown: note.markdown,
-      idListUpdates: [],
-    });
-    return;
-  }
-
-  note.collab = result.state;
-  note.markdown = result.markdown;
-  note.updatedAt = nowIso();
-  persistNote(note, false);
-
-  broadcastEditorMutation(note, {
-    type: 'mutation',
-    senderId: message.clientId,
-    senderCounter,
-    serverCounter: note.collab.serverCounter,
-    markdown: note.markdown,
-    idListUpdates: result.idListUpdates,
-  });
-  broadcastNoteUpdate(note);
-}
-
-function sendServerMessage(ws: WebSocket, message: AnyServerMessage) {
-  if (ws.readyState === 1) {
-    ws.send(JSON.stringify(message));
-  }
-}
-
-function buildHelloMessage(note: NoteRecord): ServerHelloMessage {
-  return {
-    type: 'hello',
-    noteId: note.id,
-    title: note.title,
-    shareId: note.shareId,
-    markdown: note.markdown,
-    idListState: saveCollabState(note.collab).idListState,
-    serverCounter: note.collab.serverCounter,
-  };
-}
-
-function sendExistingPresence(target: ClientConn) {
-  for (const conn of clients) {
-    if (conn === target || !isCollaborativeConn(conn, target.noteId) || !conn.selection) {
-      continue;
-    }
-
-    sendServerMessage(target.ws, {
-      type: 'presence',
-      clientId: conn.clientId,
-      name: conn.name,
-      color: conn.color,
-      selection: conn.selection,
-    });
-  }
-}
-
-function broadcastEditorHello(note: NoteRecord) {
-  const message = buildHelloMessage(note);
-  for (const conn of clients) {
-    if (isCollaborativeConn(conn, note.id)) {
-      sendServerMessage(conn.ws, conn.clientId ? { ...message, clientId: conn.clientId } : message);
-    }
-  }
-}
-
-function broadcastEditorMutation(note: NoteRecord, message: ServerMutationMessage) {
-  for (const conn of clients) {
-    if (isCollaborativeConn(conn, note.id)) {
-      sendServerMessage(conn.ws, message);
-    }
-  }
-}
-
-function enforceShareAccessForConnections(note: NoteRecord) {
-  for (const conn of [...clients]) {
-    if (conn.shareId !== note.shareId) {
-      continue;
-    }
-    if (conn.kind === 'public-editor' && note.shareAccess !== 'edit') {
-      try { conn.ws.close(); } catch {}
-      continue;
-    }
-    if (conn.kind === 'public-viewer' && note.shareAccess === 'none') {
-      try { conn.ws.close(); } catch {}
-    }
-  }
-}
-
-function broadcastNoteUpdate(note: NoteRecord) {
-  const message = {
-    type: 'updated' as const,
-    noteId: note.id,
-    shareId: note.shareId,
-    updatedAt: note.updatedAt,
-  };
-  for (const conn of clients) {
-    if (conn.kind === 'public-viewer' && conn.shareId === note.shareId) {
-      sendServerMessage(conn.ws, message);
-    }
-  }
-}
-
-function broadcastThreadsUpdated(note: NoteRecord) {
-  const message = { type: 'threads-updated' as const, noteId: note.id, shareId: note.shareId };
-  for (const conn of clients) {
-    if (conn.noteId === note.id) {
-      sendServerMessage(conn.ws, message);
-    }
-  }
-}
-
-function broadcastPresence(sender: ClientConn, message: ClientPresenceMessage) {
-  const outgoing: ServerPresenceMessage = {
-    type: 'presence',
-    clientId: sender.clientId,
-    name: sender.name,
-    color: sender.color,
-    selection: message.selection,
-  };
-  for (const conn of clients) {
-    if (conn === sender) {
-      continue;
-    }
-    if (isCollaborativeConn(conn, sender.noteId)) {
-      sendServerMessage(conn.ws, outgoing);
-    }
-  }
-}
-
-function broadcastPresenceLeave(sender: ClientConn) {
-  const outgoing: ServerPresenceLeaveMessage = {
-    type: 'presence-leave',
-    clientId: sender.clientId,
-  };
-  for (const conn of clients) {
-    if (conn === sender) {
-      continue;
-    }
-    if (isCollaborativeConn(conn, sender.noteId)) {
-      sendServerMessage(conn.ws, outgoing);
-    }
-  }
-}
-
-function closeConnectionsForNote(noteId: string) {
-  for (const conn of [...clients]) {
-    if (conn.noteId === noteId) {
-      try { conn.ws.close(); } catch {}
-      handleDisconnect(conn);
-    }
-  }
-}
-
-function ensureDirectories() {
-  fs.mkdirSync(dataDir, { recursive: true });
-  fs.mkdirSync(notesDir, { recursive: true });
-  fs.mkdirSync(noteAssetsDir, { recursive: true });
-  fs.mkdirSync(noteExportsDir, { recursive: true });
-}
-
-function noteAssetDirectory(noteId: string) {
+export function noteAssetDirectory(noteId: string) {
   return path.join(noteAssetsDir, noteId);
 }
 
-function noteExportDirectory(noteId: string) {
+export function noteExportDirectory(noteId: string) {
   return path.join(noteExportsDir, noteId);
 }
 
-function noteAssetPath(noteId: string, fileName: string) {
+export function noteAssetPath(noteId: string, fileName: string) {
   return path.join(noteAssetDirectory(noteId), fileName);
 }
 
-function buildIncrementedExportFileName(noteId: string, noteTitle: string) {
+export function buildIncrementedExportFileName(noteId: string, noteTitle: string) {
   const baseName = sanitizeExportBaseName(noteTitle || noteId);
   const directory = noteExportDirectory(noteId);
   fs.mkdirSync(directory, { recursive: true });
   let nextIndex = 1;
   const existingFiles = fs.existsSync(directory) ? fs.readdirSync(directory) : [];
   for (const file of existingFiles) {
-    const match = file.match(new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:-(\\d+))?\\.pdf$`, 'i'));
+    const match = file.match(new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:-(\\d+))?\\.pdf$`, "i"));
     if (!match) {
       continue;
     }
@@ -2015,89 +391,60 @@ function buildIncrementedExportFileName(noteId: string, noteTitle: string) {
   return nextIndex === 1 ? `${baseName}.pdf` : `${baseName}-${nextIndex}.pdf`;
 }
 
-function sanitizeExportBaseName(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'note';
+export function sanitizeExportBaseName(value: string) {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "note"
+  );
 }
 
-function noteExportPath(noteId: string, fileName: string) {
+export function noteExportPath(noteId: string, fileName: string) {
   return path.join(noteExportDirectory(noteId), fileName);
 }
 
-function noteExportAssetPath(noteId: string, fileName: string, suffix: '.html' | '.css' | '.md' | '.json') {
+export function noteExportAssetPath(noteId: string, fileName: string, suffix: ".html" | ".css" | ".md" | ".json") {
   return path.join(noteExportDirectory(noteId), `${fileName}${suffix}`);
 }
 
-function noteExportReferencePath(noteId: string, fileName: string) {
+export function noteExportReferencePath(noteId: string, fileName: string) {
   return `/api/notes/${encodeURIComponent(noteId)}/exports/${encodeURIComponent(fileName)}`;
 }
 
-function findExportShareToken(noteId: string, fileName: string): string | null {
-  for (const [token, entry] of exportShareTokens) {
-    if (entry.noteId === noteId && entry.fileName === fileName) {
-      return token;
-    }
-  }
-  return null;
-}
-
-function collectNoteExports(note: NoteRecord): NotePdfExportSummary[] {
-  const directory = noteExportDirectory(note.id);
-  if (!fs.existsSync(directory)) {
-    return [];
-  }
-  return fs.readdirSync(directory)
-    .filter((file) => file.toLowerCase().endsWith('.pdf'))
-    .map((fileName) => {
-      const filePath = noteExportPath(note.id, fileName);
-      const stats = fs.statSync(filePath);
-      const baseUrl = noteExportReferencePath(note.id, fileName);
-      const existingToken = findExportShareToken(note.id, fileName);
-      return {
-        fileName,
-        url: `${baseUrl}?inline=1`,
-        downloadUrl: `${baseUrl}?download=1`,
-        debugUrl: `${baseUrl}/debug`,
-        debugHtmlUrl: `${baseUrl}/debug/html`,
-        debugCssUrl: `${baseUrl}/debug/css`,
-        debugMarkdownUrl: `${baseUrl}/debug/markdown`,
-        size: stats.size,
-        createdAt: stats.birthtime.toISOString(),
-        shareToken: existingToken,
-        shareUrl: existingToken ? `/pdf/${existingToken}` : null,
-      } satisfies NotePdfExportSummary;
-    })
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-}
-
-function loadNoteExportDebug(noteId: string, fileName: string) {
-  const metadataPath = noteExportAssetPath(noteId, fileName, '.json');
-  const htmlPath = noteExportAssetPath(noteId, fileName, '.html');
-  const cssPath = noteExportAssetPath(noteId, fileName, '.css');
-  const markdownPath = noteExportAssetPath(noteId, fileName, '.md');
-  if (!fs.existsSync(metadataPath) || !fs.existsSync(htmlPath) || !fs.existsSync(cssPath) || !fs.existsSync(markdownPath)) {
+export function loadNoteExportDebug(noteId: string, fileName: string) {
+  const metadataPath = noteExportAssetPath(noteId, fileName, ".json");
+  const htmlPath = noteExportAssetPath(noteId, fileName, ".html");
+  const cssPath = noteExportAssetPath(noteId, fileName, ".css");
+  const markdownPath = noteExportAssetPath(noteId, fileName, ".md");
+  if (
+    !fs.existsSync(metadataPath) ||
+    !fs.existsSync(htmlPath) ||
+    !fs.existsSync(cssPath) ||
+    !fs.existsSync(markdownPath)
+  ) {
     return null;
   }
   return {
     metadata: readJson<Record<string, unknown> | null>(metadataPath, null),
-    html: fs.readFileSync(htmlPath, 'utf8'),
-    css: fs.readFileSync(cssPath, 'utf8'),
-    markdown: fs.readFileSync(markdownPath, 'utf8'),
+    html: fs.readFileSync(htmlPath, "utf8"),
+    css: fs.readFileSync(cssPath, "utf8"),
+    markdown: fs.readFileSync(markdownPath, "utf8"),
   };
 }
 
-function loadManagedNoteExportFile(noteId: string, rawFileName: string) {
-  const fileName = path.basename(rawFileName);
-  if (!fileName.toLowerCase().endsWith('.pdf')) {
-    return null;
-  }
-  const filePath = noteExportPath(noteId, fileName);
+export function loadManagedNoteExportFile(noteId: string, rawFileName: string) {
+  const baseName = path.basename(rawFileName).replace(/\.pdf$/i, "");
+  const fileName = baseName;
+  const filePath = noteExportPath(noteId, `${fileName}.pdf`);
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
     return null;
   }
   return { fileName, filePath };
 }
 
-function loadManagedDebugExportFile(noteId: string, rawFileName: string) {
+export function loadManagedDebugExportFile(noteId: string, rawFileName: string) {
   const fileName = path.basename(rawFileName);
   const exportFile = loadManagedNoteExportFile(noteId, fileName);
   if (!exportFile) {
@@ -2109,202 +456,32 @@ function loadManagedDebugExportFile(noteId: string, rawFileName: string) {
   }
   return { fileName: exportFile.fileName, debug };
 }
-
-function loadNotesIntoMemory() {
-  notes.clear();
-  const files = fs.readdirSync(notesDir).filter((file) => file.endsWith('.md'));
-
-  for (const file of files) {
-    const id = path.basename(file, '.md');
-    const markdownPath = noteMarkdownPath(id);
-    const metaPath = noteMetaPath(id);
-    if (!fs.existsSync(metaPath)) {
-      continue;
-    }
-
-    const markdown = fs.readFileSync(markdownPath, 'utf8');
-    const meta = readJson<NoteMetaFile | null>(metaPath, null);
-    if (!meta) {
-      continue;
-    }
-
-    const threads = Array.isArray(meta.threads)
-      ? meta.threads.map((thread) => ({
-          ...thread,
-          messages: Array.isArray(thread.messages)
-            ? thread.messages.map((message) => ({
-                ...message,
-                parentId: typeof message.parentId === 'string' ? message.parentId : null,
-              }))
-            : [],
-        }))
-      : [];
-
-    let collab: CollabState;
-    if (meta.collab) {
-      collab = loadCollabState(meta.collab);
-    } else if (meta.collabState) {
-      collab = loadCollabState(meta.collabState);
-    } else {
-      collab = collabFromMarkdown(markdown);
-    }
-
-    notes.set(id, {
-      ...meta,
-      shareAccess: meta.shareAccess || 'none',
-      markdown: collabToMarkdown(collab),
-      threads,
-      collab,
-      clientAcks: new Map(),
-      importedAt: meta.importedAt,
-      importOpenedAt: Object.prototype.hasOwnProperty.call(meta, 'importOpenedAt') ? meta.importOpenedAt ?? null : undefined,
-    });
-  }
-}
-
-function noteMarkdownPath(id: string) {
-  return path.join(notesDir, `${id}.md`);
-}
-
-function noteMetaPath(id: string) {
-  return path.join(notesDir, `${id}.json`);
-}
-
 function readJson<T>(filePath: string, fallback: T) {
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
+    return JSON.parse(fs.readFileSync(filePath, "utf8")) as T;
   } catch {
     return fallback;
   }
 }
 
-function writeJson(filePath: string, value: unknown) {
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+export function writeJson(filePath: string, value: unknown) {
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function createNote() {
-  const timestamp = nowIso();
-  const id = createShortId();
-  const note: NoteRecord = {
-    id,
-    title: 'untitled',
-    shareId: createShortId(14),
-    shareAccess: 'none',
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    markdown: '',
-    threads: [],
-    collab: newCollabState(),
-    clientAcks: new Map(),
-  };
-
-  notes.set(id, note);
-  persistNote(note);
-  return note;
+export function slugifyFileName(value: string) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
 }
-
-function persistNote(note: NoteRecord, broadcastUpdate = true) {
-  note.markdown = collabToMarkdown(note.collab);
-
-  const meta: NoteMetaFile = {
-    id: note.id,
-    title: note.title,
-    shareId: note.shareId,
-    shareAccess: note.shareAccess,
-    createdAt: note.createdAt,
-    updatedAt: note.updatedAt,
-    threads: note.threads,
-    collab: saveCollabState(note.collab),
-    importedAt: note.importedAt,
-    importOpenedAt: note.importOpenedAt,
-  };
-
-  fs.writeFileSync(noteMarkdownPath(note.id), note.markdown, 'utf8');
-  writeJson(noteMetaPath(note.id), meta);
-  if (broadcastUpdate) {
-    broadcastNoteUpdate(note);
-  }
-}
-
-function selectNotesForExport(body: { scope?: unknown; noteIds?: unknown }) {
-  if (body.scope === 'all') {
-    return Array.from(notes.values());
-  }
-  if (body.scope !== 'selected' || !Array.isArray(body.noteIds)) {
-    return [];
-  }
-  const selected: NoteRecord[] = [];
-  for (const id of body.noteIds) {
-    if (typeof id !== 'string') {
-      continue;
-    }
-    const note = notes.get(id);
-    if (note) {
-      selected.push(note);
-    }
-  }
-  return selected;
-}
-
-function buildArchiveNoteInput(note: NoteRecord): ArchiveNoteInput {
-  note.markdown = collabToMarkdown(note.collab);
-  return {
-    id: note.id,
-    title: note.title,
-    markdown: note.markdown,
-    threads: note.threads,
-    assets: collectArchiveAssets(note),
-  };
-}
-
-function collectArchiveAssets(note: NoteRecord): ArchiveNoteInput['assets'] {
-  const directory = noteAssetDirectory(note.id);
-  if (!fs.existsSync(directory)) {
-    return [];
-  }
-  return fs.readdirSync(directory).flatMap((fileName) => {
-    const filePath = noteAssetPath(note.id, fileName);
-    if (!fs.statSync(filePath).isFile()) {
-      return [];
-    }
-    const extension = path.extname(fileName).toLowerCase();
-    const contentType = imageContentTypeFromExtension(extension);
-    if (!contentType) {
-      return [];
-    }
-    return [{ fileName, bytes: fs.readFileSync(filePath), contentType }];
-  });
-}
-
-function slugifyFileName(value: string) {
-  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
-}
-
-function searchNotes(query: string) {
-  const needle = query.trim().toLowerCase();
-  return Array.from(notes.values())
-    .map((note) => summarizeNote(note, needle))
-    .filter((note) => !needle || note.title.toLowerCase().includes(needle) || note.snippet.toLowerCase().includes(needle))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-}
-
-function summarizeNote(note: NoteRecord, needle: string): NoteSummary {
-  return {
-    id: note.id,
-    title: note.title,
-    updatedAt: note.updatedAt,
-    shareId: note.shareId,
-    snippet: buildSnippet(note, needle),
-    isImportedUnread: Boolean(note.importedAt && note.importOpenedAt === null),
-  };
-}
-
-function buildSnippet(note: NoteRecord, needle: string) {
+export function buildSnippet(note: NoteRecord, needle: string) {
   const source = needle
-    ? note.markdown.replace(/\s+/g, ' ').trim()
-    : note.markdown.slice(0, NOTE_LIST_SNIPPET_SOURCE_LIMIT).replace(/\s+/g, ' ').trim();
+    ? note.markdown.replace(/\s+/g, " ").trim()
+    : note.markdown.slice(0, NOTE_LIST_SNIPPET_SOURCE_LIMIT).replace(/\s+/g, " ").trim();
   if (!source) {
-    return '';
+    return "";
   }
   if (!needle) {
     return source.slice(0, 140);
@@ -2317,17 +494,7 @@ function buildSnippet(note: NoteRecord, needle: string) {
   const end = Math.min(source.length, index + needle.length + 80);
   return source.slice(start, end);
 }
-
-function findNoteByShareId(shareId: string) {
-  for (const note of notes.values()) {
-    if (note.shareId === shareId) {
-      return note;
-    }
-  }
-  return null;
-}
-
-function locateMessage(note: NoteRecord, messageId: string) {
+export function locateMessage(note: NoteRecord, messageId: string) {
   for (const thread of note.threads) {
     const message = thread.messages.find((item) => item.id === messageId);
     if (message) {
@@ -2371,7 +538,7 @@ export function buildViewerInfo(
   return getViewerContext(c, overrides).viewer;
 }
 
-function serializeThreads(note: NoteRecord, c: Context, viewerContext = getViewerContext(c)) {
+export function serializeThreads(note: NoteRecord, c: Context, viewerContext = getViewerContext(c)) {
   const viewer = viewerContext.viewer;
   const commenter = viewerContext.commenter;
 
@@ -2407,7 +574,7 @@ function serializeThreads(note: NoteRecord, c: Context, viewerContext = getViewe
     }));
 }
 
-function serializeNoteForClient(note: NoteRecord, c: Context) {
+export function serializeNoteForClient(note: NoteRecord, c: Context) {
   const viewerContext = getViewerContext(c);
   return {
     note: {
@@ -2425,8 +592,8 @@ function serializeNoteForClient(note: NoteRecord, c: Context) {
   };
 }
 
-function requireShareAccess(c: Context, minAccess: ShareAccess) {
-  const note = findNoteByShareId(c.req.param('shareId') || '');
+export function requireShareAccess(c: Context, minAccess: ShareAccess): NoteRecord | null {
+  const note = noteStore.findByShareId(c.req.param("shareId") || "");
   if (!note) {
     return null;
   }
@@ -2436,12 +603,12 @@ function requireShareAccess(c: Context, minAccess: ShareAccess) {
   return note;
 }
 
-function requireSharedIdentity(c: Context) {
+export function requireSharedIdentity(c: Context) {
   const commenter = getCommenterIdentity(c);
   return Boolean(commenter.id && commenter.name);
 }
 
-function countOccurrences(haystack: string, needle: string) {
+export function countOccurrences(haystack: string, needle: string) {
   let count = 0;
   let index = 0;
   while (index < haystack.length) {
@@ -2455,25 +622,26 @@ function countOccurrences(haystack: string, needle: string) {
   return count;
 }
 
-function normalizeTitle(input: string) {
-  return input.trim().slice(0, 160) || 'untitled';
+export function normalizeTitle(input: string) {
+  return input.trim().slice(0, 160) || "untitled";
 }
 
-function normalizeCommentBody(input: string) {
+export function normalizeCommentBody(input: string) {
   return input.trim().slice(0, 5000);
 }
 
-function normalizeCommenterName(input: string) {
+export function normalizeCommenterName(input: string) {
   return input.trim().slice(0, 80);
 }
 
-function listNoteAssets(note: NoteRecord, c: Context): NoteAssetSummary[] {
+export function listNoteAssets(note: NoteRecord, c: Context): NoteAssetSummary[] {
   const directory = noteAssetDirectory(note.id);
   if (!fs.existsSync(directory)) {
     return [];
   }
 
-  return fs.readdirSync(directory)
+  return fs
+    .readdirSync(directory)
     .map((fileName) => {
       const safeFileName = path.basename(fileName);
       const filePath = noteAssetPath(note.id, safeFileName);
@@ -2500,15 +668,15 @@ function assetMarkdownReferencePath(noteId: string, fileName: string) {
   return `/assets/${encodeURIComponent(noteId)}/${encodeURIComponent(fileName)}`;
 }
 
-function sanitizeAnchor(input: unknown) {
-  if (!input || typeof input !== 'object') {
+export function sanitizeAnchor(input: unknown) {
+  if (!input || typeof input !== "object") {
     return null;
   }
 
   const source = input as Record<string, unknown>;
-  const quote = String(source.quote || '').slice(0, 1000);
-  const prefix = String(source.prefix || '').slice(0, 200);
-  const suffix = String(source.suffix || '').slice(0, 200);
+  const quote = String(source.quote || "").slice(0, 1000);
+  const prefix = String(source.prefix || "").slice(0, 200);
+  const suffix = String(source.suffix || "").slice(0, 200);
   const start = Number(source.start);
   const end = Number(source.end);
 
@@ -2519,22 +687,22 @@ function sanitizeAnchor(input: unknown) {
   return { quote, prefix, suffix, start, end } satisfies CommentAnchor;
 }
 
-async function handleImageUpload(c: Context, note: NoteRecord) {
+export async function handleImageUpload(c: Context, note: NoteRecord) {
   const body = await c.req.parseBody();
   const file = body.file;
   if (!(file instanceof File)) {
-    return c.json({ ok: false, error: 'Image file is required.' }, 400);
+    return c.json({ ok: false, error: "Image file is required." }, 400);
   }
 
   const extension = imageMimeExtensions[file.type];
   if (!extension) {
-    return c.json({ ok: false, error: 'Only PNG, JPEG, GIF, WebP, and AVIF images are supported.' }, 400);
+    return c.json({ ok: false, error: "Only PNG, JPEG, GIF, WebP, and AVIF images are supported." }, 400);
   }
   if (file.size <= 0) {
-    return c.json({ ok: false, error: 'Image file is empty.' }, 400);
+    return c.json({ ok: false, error: "Image file is empty." }, 400);
   }
   if (file.size > maxImageUploadBytes) {
-    return c.json({ ok: false, error: 'Image exceeds the 10 MB upload limit.' }, 413);
+    return c.json({ ok: false, error: "Image exceeds the 10 MB upload limit." }, 413);
   }
 
   fs.mkdirSync(noteAssetDirectory(note.id), { recursive: true });
@@ -2551,97 +719,104 @@ async function handleImageUpload(c: Context, note: NoteRecord) {
   });
 }
 
-function escapeMarkdownImageAlt(input: string) {
-  const base = input.trim().replace(/\.[A-Za-z0-9]+$/, '').replace(/[\[\]\\]/g, '').trim();
-  return base || 'image';
+export function escapeMarkdownImageAlt(input: string) {
+  const base = input
+    .trim()
+    .replace(/\.[A-Za-z0-9]+$/, "")
+    .replace(/[[\]\\]/g, "")
+    .trim();
+  return base || "image";
 }
 
-function imageContentTypeFromExtension(extension: string) {
+export function imageContentTypeFromExtension(extension: string) {
   return Object.entries(imageMimeExtensions).find(([, value]) => value === extension)?.[0] || null;
 }
 
-function makeAssetUrl(c: Context, noteId: string, fileName: string) {
+export function makeAssetUrl(c: Context, noteId: string, fileName: string) {
   const url = new URL(c.req.url);
   return `${url.protocol}//${url.host}${assetMarkdownReferencePath(noteId, fileName)}`;
 }
 
-function applyPreviewImageAttributeHints(rawHtml: string) {
-  return rawHtml.replace(/<p>(\s*<img\b[^>]*?)(?:\s*)\{([^{}]+)\}(\s*)<\/p>/gi, (_match, imgHtml: string, attrs: string, trailingSpace: string) => {
-    const title = attrs.replace(/&quot;/g, '"').trim();
-    if (!title) {
-      return `<p>${imgHtml}${trailingSpace}</p>`;
-    }
-    if (/\btitle\s*=/.test(imgHtml)) {
-      return `<p>${imgHtml}${trailingSpace}</p>`;
-    }
-    const escapedTitle = escapeHtml(title);
-    const hintedImgHtml = imgHtml.replace(/\s*\/?>$/, (ending) => ` title="${escapedTitle}"${ending}`);
-    return `<p>${hintedImgHtml}${trailingSpace}</p>`;
-  });
+export function applyPreviewImageAttributeHints(rawHtml: string) {
+  return rawHtml.replace(
+    /<p>(\s*<img\b[^>]*?)(?:\s*)\{([^{}]+)\}(\s*)<\/p>/gi,
+    (_match, imgHtml: string, attrs: string, trailingSpace: string) => {
+      const title = attrs.replace(/&quot;/g, '"').trim();
+      if (!title) {
+        return `<p>${imgHtml}${trailingSpace}</p>`;
+      }
+      if (/\btitle\s*=/.test(imgHtml)) {
+        return `<p>${imgHtml}${trailingSpace}</p>`;
+      }
+      const escapedTitle = escapeHtml(title);
+      const hintedImgHtml = imgHtml.replace(/\s*\/?>$/, (ending) => ` title="${escapedTitle}"${ending}`);
+      return `<p>${hintedImgHtml}${trailingSpace}</p>`;
+    },
+  );
 }
 
-function renderMarkdown(markdown: string) {
+export function renderMarkdown(markdown: string) {
   const rawHtml = applyPreviewImageAttributeHints(marked.parse(markdown) as string);
   return sanitizeHtml(rawHtml, {
     allowedTags: sanitizeHtml.defaults.allowedTags.concat([
-      'img',
-      'h1',
-      'h2',
-      'h3',
-      'h4',
-      'h5',
-      'h6',
-      'pre',
-      'code',
-      'table',
-      'thead',
-      'tbody',
-      'tr',
-      'th',
-      'td',
-      'blockquote',
-      'span',
+      "img",
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+      "h5",
+      "h6",
+      "pre",
+      "code",
+      "table",
+      "thead",
+      "tbody",
+      "tr",
+      "th",
+      "td",
+      "blockquote",
+      "span",
     ]),
     allowedAttributes: {
-      a: ['href', 'name', 'target', 'rel'],
-      img: ['src', 'alt', 'title'],
-      code: ['class'],
-      span: ['class'],
+      a: ["href", "name", "target", "rel"],
+      img: ["src", "alt", "title"],
+      code: ["class"],
+      span: ["class"],
     },
     allowedClasses: {
-      code: ['hljs', /^language-/],
+      code: ["hljs", /^language-/],
       span: [/^hljs.*/],
-      pre: ['mermaid'],
+      pre: ["mermaid"],
     },
-    allowedSchemes: ['http', 'https', 'mailto'],
+    allowedSchemes: ["http", "https", "mailto"],
     transformTags: {
-      a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer', target: '_blank' }),
+      a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer", target: "_blank" }),
     },
   });
 }
 
-async function renderPrintPreviewHtml(markdown: string, title: string, settings: unknown): Promise<string> {
+export async function renderPrintPreviewHtml(markdown: string, title: string, settings: unknown): Promise<string> {
   const merged = mergeSettings(settings);
   const body = renderMarkdown(markdown);
   const css = buildPdfCss(title, merged);
-  const safeTitle = escapeHtml(title || 'Untitled');
+  const safeTitle = escapeHtml(title || "Untitled");
   const highlightedBody = await highlightCodeBlocksWithShiki(body, merged);
   const inlinedBody = inlineCodeBlockStyles(highlightedBody, merged);
   return [
-    '<!DOCTYPE html>',
-    '<html>',
-    '<head>',
+    "<!DOCTYPE html>",
+    "<html>",
+    "<head>",
     `<meta charset="UTF-8">`,
     `<title>${safeTitle}</title>`,
     `<style>${css}</style>`,
-    '</head>',
+    "</head>",
     `<body>${inlinedBody}</body>`,
-    '</html>',
-  ].join('\n');
+    "</html>",
+  ].join("\n");
 }
 
-function inlineCodeBlockStyles(html: string, settings: PdfExportSettings): string {
-  const PRE_BG = codePreStyle(settings.codeWrap === 'wrap' ? 'pre-wrap' : 'pre');
+export function inlineCodeBlockStyles(html: string, settings: PdfExportSettings): string {
+  const PRE_BG = codePreStyle(settings.codeWrap === "wrap" ? "pre-wrap" : "pre");
 
   let result = html;
 
@@ -2658,14 +833,14 @@ function inlineCodeBlockStyles(html: string, settings: PdfExportSettings): strin
     let isBold = false;
     let isItalic = false;
     for (const cls of classList) {
-      if (cls === 'hljs-strong') isBold = true;
-      if (cls === 'hljs-emphasis') isItalic = true;
+      if (cls === "hljs-strong") isBold = true;
+      if (cls === "hljs-emphasis") isItalic = true;
       if (!color && TOKEN_COLORS[cls]) color = TOKEN_COLORS[cls];
     }
-    let styleAdd = '';
+    let styleAdd = "";
     if (color) styleAdd += `color:${color};`;
-    if (isBold) styleAdd += 'font-weight:700;';
-    if (isItalic) styleAdd += 'font-style:italic;';
+    if (isBold) styleAdd += "font-weight:700;";
+    if (isItalic) styleAdd += "font-style:italic;";
 
     if (!styleAdd) {
       return `<span class="${classes}"${attrs}>`;
@@ -2680,12 +855,12 @@ function inlineCodeBlockStyles(html: string, settings: PdfExportSettings): strin
   return result;
 }
 
-function makeShareUrl(c: Context, shareId: string) {
+export function makeShareUrl(c: Context, shareId: string) {
   const url = new URL(c.req.url);
   return `${url.protocol}//${url.host}/s/${shareId}`;
 }
 
-function buildPreviewPaginationScript(): string {
+export function buildPreviewPaginationScript(): string {
   return `<script>
 (() => {
   const root = document.documentElement;
@@ -2971,16 +1146,18 @@ function buildPreviewPaginationScript(): string {
 </script>`;
 }
 
-function buildPreviewClipboardScript(): string {
+export function buildPreviewClipboardScript(): string {
   return `<script>
 (() => {
   const TOKEN_STYLES = {
-    ${Object.entries(TOKEN_COLORS).map(([cls, color]) => {
-      if (cls.startsWith('hljs-')) {
-        return `'${cls}': '${color.startsWith('font-') ? color : `color:${color};`}'`;
-      }
-      return `'${cls}': 'color:${color};'`;
-    }).join(',\n    ')}
+    ${Object.entries(TOKEN_COLORS)
+      .map(([cls, color]) => {
+        if (cls.startsWith("hljs-")) {
+          return `'${cls}': '${color.startsWith("font-") ? color : `color:${color};`}'`;
+        }
+        return `'${cls}': 'color:${color};'`;
+      })
+      .join(",\n    ")}
   };
 
   document.addEventListener('copy', (event) => {
@@ -3025,7 +1202,7 @@ function buildPreviewClipboardScript(): string {
 </script>`;
 }
 
-function buildCopyButtonsScript(): string {
+export function buildCopyButtonsScript(): string {
   return `<script>
 (() => {
   const STYLE = document.createElement('style');
@@ -3048,12 +1225,14 @@ function buildCopyButtonsScript(): string {
   document.head.appendChild(STYLE);
 
   const TOKEN_STYLES = {
-    ${Object.entries(TOKEN_COLORS).map(([cls, color]) => {
-      if (cls.startsWith('hljs-')) {
-        return `'${cls}': '${color.startsWith('font-') ? color : `color:${color};`}'`;
-      }
-      return `'${cls}': 'color:${color};'`;
-    }).join(',\n    ')}
+    ${Object.entries(TOKEN_COLORS)
+      .map(([cls, color]) => {
+        if (cls.startsWith("hljs-")) {
+          return `'${cls}': '${color.startsWith("font-") ? color : `color:${color};`}'`;
+        }
+        return `'${cls}': 'color:${color};'`;
+      })
+      .join(",\n    ")}
   };
 
   function buildClipboardHtml(pre) {
@@ -3180,7 +1359,7 @@ function buildCopyButtonsScript(): string {
 </script>`;
 }
 
-function injectPreviewBaseHref(html: string, baseHref: string) {
+export function injectPreviewBaseHref(html: string, baseHref: string) {
   const baseTag = `<base href="${escapeHtml(baseHref)}">`;
   const previewScript = buildPreviewPaginationScript() + buildPreviewClipboardScript() + buildCopyButtonsScript();
 
@@ -3191,11 +1370,11 @@ function injectPreviewBaseHref(html: string, baseHref: string) {
   return html;
 }
 
-function isAllowedBrowserOrigin(origin: string) {
+export function isAllowedBrowserOrigin(origin: string) {
   try {
     const url = new URL(origin);
-    const isLocalHost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-    if (isLocalHost && url.protocol === 'http:') {
+    const isLocalHost = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    if (isLocalHost && url.protocol === "http:") {
       return true;
     }
   } catch {
@@ -3205,34 +1384,39 @@ function isAllowedBrowserOrigin(origin: string) {
   return false;
 }
 
-function nowIso() {
+export function nowIso() {
   return new Date().toISOString();
 }
 
-function createShortId(length = 8) {
-  return crypto.randomBytes(length).toString('base64url').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, length);
+export function createShortId(length = 8) {
+  return crypto
+    .randomBytes(length)
+    .toString("base64url")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, length);
 }
 
-function createId(length = 12) {
+export function createId(length = 12) {
   return createShortId(length);
 }
 
-function escapeHtml(input: string) {
+export function escapeHtml(input: string) {
   return input
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 export function hashSecret(value: string, salt: string) {
-  return crypto.scryptSync(value, salt, 64).toString('hex');
+  return crypto.scryptSync(value, salt, 64).toString("hex");
 }
 
 export function secureEqualsHex(a: string, b: string) {
-  const left = Buffer.from(a, 'hex');
-  const right = Buffer.from(b, 'hex');
+  const left = Buffer.from(a, "hex");
+  const right = Buffer.from(b, "hex");
   if (left.length !== right.length) {
     return false;
   }
@@ -3281,22 +1465,45 @@ export function loadAuthGuardData(): AuthGuardData {
   const raw = readJson<Record<string, unknown> | null>(authGuardFilePath, null);
   const fallback = defaultAuthGuardData();
   const authGuard: AuthGuardData = {
-    loginEnabled: typeof raw?.loginEnabled === 'boolean' ? raw.loginEnabled : fallback.loginEnabled,
+    loginEnabled: typeof raw?.loginEnabled === "boolean" ? raw.loginEnabled : fallback.loginEnabled,
     globalLock: {
-      active: typeof raw?.globalLock === 'object' && raw?.globalLock !== null && typeof (raw.globalLock as { active?: unknown }).active === 'boolean'
-        ? Boolean((raw.globalLock as { active: boolean }).active)
-        : fallback.globalLock.active,
-      lockedAt: typeof raw?.globalLock === 'object' && raw?.globalLock !== null && typeof (raw.globalLock as { lockedAt?: unknown }).lockedAt === 'string'
-        ? String((raw.globalLock as { lockedAt: string }).lockedAt)
-        : fallback.globalLock.lockedAt,
-      expiresAt: typeof raw?.globalLock === 'object' && raw?.globalLock !== null && typeof (raw.globalLock as { expiresAt?: unknown }).expiresAt === 'string'
-        ? String((raw.globalLock as { expiresAt: string }).expiresAt)
-        : fallback.globalLock.expiresAt,
-      reason: typeof raw?.globalLock === 'object' && raw?.globalLock !== null && typeof (raw.globalLock as { reason?: unknown }).reason === 'string'
-        ? String((raw.globalLock as { reason: string }).reason)
-        : fallback.globalLock.reason,
+      active:
+        typeof raw?.globalLock === "object" &&
+        raw?.globalLock !== null &&
+        typeof (raw.globalLock as { active?: unknown }).active === "boolean"
+          ? Boolean((raw.globalLock as { active: boolean }).active)
+          : fallback.globalLock.active,
+      lockedAt:
+        typeof raw?.globalLock === "object" &&
+        raw?.globalLock !== null &&
+        typeof (raw.globalLock as { lockedAt?: unknown }).lockedAt === "string"
+          ? String((raw.globalLock as { lockedAt: string }).lockedAt)
+          : fallback.globalLock.lockedAt,
+      expiresAt:
+        typeof raw?.globalLock === "object" &&
+        raw?.globalLock !== null &&
+        typeof (raw.globalLock as { expiresAt?: unknown }).expiresAt === "string"
+          ? String((raw.globalLock as { expiresAt: string }).expiresAt)
+          : fallback.globalLock.expiresAt,
+      reason:
+        typeof raw?.globalLock === "object" &&
+        raw?.globalLock !== null &&
+        typeof (raw.globalLock as { reason?: unknown }).reason === "string"
+          ? String((raw.globalLock as { reason: string }).reason)
+          : fallback.globalLock.reason,
     },
-    bannedIps: Array.isArray(raw?.bannedIps) ? raw.bannedIps.filter((item): item is AuthGuardIpBan => Boolean(item && typeof item === 'object' && typeof (item as AuthGuardIpBan).ip === 'string' && typeof (item as AuthGuardIpBan).bannedAt === 'string' && typeof (item as AuthGuardIpBan).expiresAt === 'string' && typeof (item as AuthGuardIpBan).reason === 'string')) : [],
+    bannedIps: Array.isArray(raw?.bannedIps)
+      ? raw.bannedIps.filter((item): item is AuthGuardIpBan =>
+          Boolean(
+            item &&
+            typeof item === "object" &&
+            typeof (item as AuthGuardIpBan).ip === "string" &&
+            typeof (item as AuthGuardIpBan).bannedAt === "string" &&
+            typeof (item as AuthGuardIpBan).expiresAt === "string" &&
+            typeof (item as AuthGuardIpBan).reason === "string",
+          ),
+        )
+      : [],
   };
   if (!fs.existsSync(authGuardFilePath)) {
     saveAuthGuardData(authGuard);
@@ -3314,7 +1521,7 @@ export function loadAuthGuardRuntime(): AuthGuardRuntime {
     return runtime;
   }
 
-  const content = fs.readFileSync(authGuardLogFilePath, 'utf8');
+  const content = fs.readFileSync(authGuardLogFilePath, "utf8");
   for (const line of content.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed) {
@@ -3322,17 +1529,17 @@ export function loadAuthGuardRuntime(): AuthGuardRuntime {
     }
     try {
       const event = JSON.parse(trimmed) as Partial<AuthGuardEvent>;
-      if (typeof event.ip !== 'string' || typeof event.timestamp !== 'string' || typeof event.type !== 'string') {
+      if (typeof event.ip !== "string" || typeof event.timestamp !== "string" || typeof event.type !== "string") {
         continue;
       }
       const timestamp = Date.parse(event.timestamp);
       if (Number.isNaN(timestamp)) {
         continue;
       }
-      if (event.type === 'login-requested' && timestamp >= loginRequestCutoff) {
+      if (event.type === "login-requested" && timestamp >= loginRequestCutoff) {
         runtime.loginRequests.push({ ip: event.ip, timestamp: event.timestamp });
       }
-      if (event.type === 'login-failed' && timestamp >= failedLoginCutoff) {
+      if (event.type === "login-failed" && timestamp >= failedLoginCutoff) {
         runtime.failedLogins.push({ ip: event.ip, timestamp: event.timestamp });
       }
     } catch {
@@ -3368,9 +1575,11 @@ export function pruneAuthGuardData(authGuard: AuthGuardData, now = Date.now()) {
     };
   }
 
-  return authGuard.bannedIps.length !== bannedIpCount
-    || authGuard.loginEnabled !== previousLoginEnabled
-    || JSON.stringify(authGuard.globalLock) !== previousGlobalLock;
+  return (
+    authGuard.bannedIps.length !== bannedIpCount ||
+    authGuard.loginEnabled !== previousLoginEnabled ||
+    JSON.stringify(authGuard.globalLock) !== previousGlobalLock
+  );
 }
 
 export function pruneAuthGuardRuntimeEntries(runtime: AuthGuardRuntime, now = Date.now()) {
@@ -3391,17 +1600,17 @@ export function pruneAuthGuardRuntime(now = Date.now()) {
 }
 
 export function appendAuthGuardEvent(event: AuthGuardEvent) {
-  fs.appendFileSync(authGuardLogFilePath, `${JSON.stringify(event)}\n`, 'utf8');
+  fs.appendFileSync(authGuardLogFilePath, `${JSON.stringify(event)}\n`, "utf8");
 }
 
 export function recordAuthGuardLoginRequest(ip: string, timestamp: string) {
   pruneAuthGuardRuntime();
   authGuardRuntime.loginRequests.push({ ip, timestamp });
   appendAuthGuardEvent({
-    type: 'login-requested',
+    type: "login-requested",
     ip,
     timestamp,
-    detail: 'Owner login request received.',
+    detail: "Owner login request received.",
   });
 }
 
@@ -3409,10 +1618,10 @@ export function recordAuthGuardFailedLogin(ip: string, timestamp: string) {
   pruneAuthGuardRuntime();
   authGuardRuntime.failedLogins.push({ ip, timestamp });
   appendAuthGuardEvent({
-    type: 'login-failed',
+    type: "login-failed",
     ip,
     timestamp,
-    detail: 'Invalid owner password.',
+    detail: "Invalid owner password.",
   });
 }
 
@@ -3452,7 +1661,7 @@ export function passwordMatches(password: string) {
 }
 
 export function initializeOwnerAuth(password: string) {
-  const salt = crypto.randomBytes(16).toString('hex');
+  const salt = crypto.randomBytes(16).toString("hex");
   const auth: AuthData = {
     passwordSalt: salt,
     passwordHash: hashSecret(password, salt),
@@ -3466,11 +1675,11 @@ export function initializeOwnerAuth(password: string) {
 export function issueOwnerToken() {
   const auth = loadAuthData();
   if (!auth) {
-    throw new Error('Password not configured.');
+    throw new Error("Password not configured.");
   }
 
-  const token = crypto.randomBytes(32).toString('base64url');
-  const salt = crypto.randomBytes(16).toString('hex');
+  const token = crypto.randomBytes(32).toString("base64url");
+  const salt = crypto.randomBytes(16).toString("hex");
   const timestamp = nowIso();
   auth.tokens.push({
     id: createId(10),
@@ -3540,8 +1749,8 @@ export function parseCookies(header: string | undefined) {
   if (!header) {
     return cookies;
   }
-  for (const item of header.split(';')) {
-    const index = item.indexOf('=');
+  for (const item of header.split(";")) {
+    const index = item.indexOf("=");
     if (index === -1) {
       continue;
     }
@@ -3564,7 +1773,7 @@ export function forwardedForToIp(value: string | null) {
   if (!value) {
     return null;
   }
-  return value.split(',')[0]?.trim() || null;
+  return value.split(",")[0]?.trim() || null;
 }
 
 export function forwardedHeaderToIp(value: string | null) {
@@ -3572,20 +1781,22 @@ export function forwardedHeaderToIp(value: string | null) {
     return null;
   }
   const match = value.match(/for=(?:"?)(\[[^\]]+\]|[^;,"]+)/i);
-  return match?.[1]?.replace(/^\[/, '').replace(/\]$/, '').trim() || null;
+  return match?.[1]?.replace(/^\[/, "").replace(/\]$/, "").trim() || null;
 }
 
 export function getClientIp(c: Context) {
-  return forwardedForToIp(c.req.header('cf-connecting-ip') || null)
-    || forwardedForToIp(c.req.header('x-real-ip') || null)
-    || forwardedForToIp(c.req.header('x-forwarded-for') || null)
-    || forwardedHeaderToIp(c.req.header('forwarded') || null)
-    || 'unknown';
+  return (
+    forwardedForToIp(c.req.header("cf-connecting-ip") || null) ||
+    forwardedForToIp(c.req.header("x-real-ip") || null) ||
+    forwardedForToIp(c.req.header("x-forwarded-for") || null) ||
+    forwardedHeaderToIp(c.req.header("forwarded") || null) ||
+    "unknown"
+  );
 }
 
 export function getBearerTokenFromHeaders(headers: http.IncomingHttpHeaders) {
   const header = headerValue(headers.authorization);
-  if (!header || !header.startsWith('Bearer ')) {
+  if (!header || !header.startsWith("Bearer ")) {
     return null;
   }
   return header.slice(7).trim() || null;
@@ -3596,17 +1807,17 @@ export function getOwnerSessionToken(c: Context) {
 }
 
 export function isSecureRequest(c: Context) {
-  const forwarded = c.req.header('x-forwarded-proto');
+  const forwarded = c.req.header("x-forwarded-proto");
   if (forwarded) {
-    return forwarded.split(',')[0]?.trim() === 'https';
+    return forwarded.split(",")[0]?.trim() === "https";
   }
-  return new URL(c.req.url).protocol === 'https:';
+  return new URL(c.req.url).protocol === "https:";
 }
 
 export function setOwnerSessionCookie(c: Context, token: string) {
   setCookie(c, ownerSessionCookieName, token, {
-    path: '/',
-    sameSite: 'Lax',
+    path: "/",
+    sameSite: "Lax",
     maxAge: ownerCookieMaxAgeSeconds,
     httpOnly: true,
     secure: isSecureRequest(c),
@@ -3615,7 +1826,7 @@ export function setOwnerSessionCookie(c: Context, token: string) {
 
 export function clearOwnerSessionCookie(c: Context) {
   deleteCookie(c, ownerSessionCookieName, {
-    path: '/',
+    path: "/",
     secure: isSecureRequest(c),
   });
 }
@@ -3643,8 +1854,8 @@ export function isOwnerAuthenticatedIncomingRequest(req: http.IncomingMessage) {
 }
 
 export function getBearerToken(c: Context) {
-  const header = c.req.header('authorization');
-  if (!header || !header.startsWith('Bearer ')) {
+  const header = c.req.header("authorization");
+  if (!header || !header.startsWith("Bearer ")) {
     return null;
   }
   return header.slice(7).trim() || null;
@@ -3687,17 +1898,17 @@ export function getApiKeyLabel(key: string) {
 export function createApiKey(label: string) {
   const auth = loadAuthData();
   if (!auth) {
-    throw new Error('Password not configured.');
+    throw new Error("Password not configured.");
   }
   if (!auth.apiKeys) {
     auth.apiKeys = [];
   }
 
-  const rawKey = crypto.randomBytes(32).toString('base64url');
-  const salt = crypto.randomBytes(16).toString('hex');
+  const rawKey = crypto.randomBytes(32).toString("base64url");
+  const salt = crypto.randomBytes(16).toString("hex");
   const apiKey: ApiKey = {
     id: createId(10),
-    label: label.trim().slice(0, 80) || 'unnamed',
+    label: label.trim().slice(0, 80) || "unnamed",
     keySalt: salt,
     keyHash: hashSecret(rawKey, salt),
     createdAt: nowIso(),
@@ -3751,10 +1962,10 @@ export function getOrCreateCommenterId(c: Context) {
   if (existing) {
     return existing;
   }
-  const created = crypto.randomBytes(24).toString('base64url');
+  const created = crypto.randomBytes(24).toString("base64url");
   setCookie(c, commenterIdCookieName, created, {
-    path: '/',
-    sameSite: 'Lax',
+    path: "/",
+    sameSite: "Lax",
     maxAge: commenterCookieMaxAgeSeconds,
     httpOnly: true,
     secure: isSecureRequest(c),
@@ -3764,8 +1975,8 @@ export function getOrCreateCommenterId(c: Context) {
 
 export function setCommenterNameCookie(c: Context, name: string) {
   setCookie(c, commenterNameCookieName, name, {
-    path: '/',
-    sameSite: 'Lax',
+    path: "/",
+    sameSite: "Lax",
     maxAge: commenterCookieMaxAgeSeconds,
     httpOnly: true,
     secure: isSecureRequest(c),
@@ -3774,11 +1985,11 @@ export function setCommenterNameCookie(c: Context, name: string) {
 
 export function ensureCommentAuthor(c: Context, body: Record<string, unknown>) {
   if (isOwnerAuthenticated(c)) {
-    return { authorId: '__owner__', authorName: 'Owner' };
+    return { authorId: "__owner__", authorName: "Owner" };
   }
 
   const commenter = getCommenterIdentity(c);
-  const name = commenter.name || normalizeCommenterName(String(body.name || ''));
+  const name = commenter.name || normalizeCommenterName(String(body.name || ""));
   if (!name) {
     return null;
   }
@@ -3803,17 +2014,17 @@ export function canManageThread(c: Context, thread: CommentThread) {
   return Boolean(commenter.id && thread.messages.some((message) => message.authorId === commenter.id));
 }
 
-function applyTextEditsToNote(note: NoteRecord, edits: unknown[]) {
+export function applyTextEditsToNote(note: NoteRecord, edits: unknown[]) {
   let workingCollab = note.collab;
   let markdown = note.markdown;
   let senderCounter = 0;
   const errors: string[] = [];
-  const idListUpdates: ServerMutationMessage['idListUpdates'] = [];
+  const idListUpdates: ServerMutationMessage["idListUpdates"] = [];
 
   for (let index = 0; index < edits.length; index++) {
     const edit = edits[index] as Record<string, unknown>;
-    const oldText = String(edit?.oldText || '');
-    const newText = String(edit?.newText || '');
+    const oldText = String(edit?.oldText || "");
+    const newText = String(edit?.newText || "");
 
     if (!oldText) {
       errors.push(`Edit ${index}: oldText is empty.`);
@@ -3836,7 +2047,7 @@ function applyTextEditsToNote(note: NoteRecord, edits: unknown[]) {
     const mutations: ClientMutation[] = [];
 
     mutations.push({
-      name: 'delete',
+      name: "delete",
       clientCounter: nextClientCounter++,
       args: {
         startId: idAtIndex(workingCollab, firstIndex),
@@ -3847,7 +2058,7 @@ function applyTextEditsToNote(note: NoteRecord, edits: unknown[]) {
 
     if (newText.length > 0) {
       mutations.push({
-        name: 'insert',
+        name: "insert",
         clientCounter: nextClientCounter++,
         args: {
           before: firstIndex > 0 ? idBeforeIndex(workingCollab, firstIndex) : null,
@@ -3866,7 +2077,12 @@ function applyTextEditsToNote(note: NoteRecord, edits: unknown[]) {
   }
 
   if (errors.length > 0) {
-    return { ok: false as const, errors, senderCounter: 0, idListUpdates: [] as ServerMutationMessage['idListUpdates'] };
+    return {
+      ok: false as const,
+      errors,
+      senderCounter: 0,
+      idListUpdates: [] as ServerMutationMessage["idListUpdates"],
+    };
   }
 
   note.collab = workingCollab;

@@ -1,23 +1,41 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiRequest, requestRenderedHtmlPreview, type NoteAsset, type NotePayload, type ShareAccess, type Thread, type ThreadAnchor, uploadImage } from '../lib/api';
-import { type CollabEditorHandle, type ShareParticipant } from '../lib/collab-editor';
-import { CollabTextarea } from '../components/CollabTextarea';
-import { PdfExportModal } from '../features/pdf/PdfExportModal';
-import { copyRenderedPreviewToClipboard } from '../features/clipboard';
-import { buildOwnerAgentModal } from '../features/agent-instructions';
-import { AnchoredCommentCanvas } from '../features/comments/AnchoredCommentCanvas';
-import { preparePreviewHtml } from '../features/prepare-preview-html';
-import { usePreviewScrollSyncController, type PreviewMode, type ScrollMetrics } from '../hooks/usePreviewScrollSyncController';
-import { NoteExplorer } from './NotesListPage';
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AgentSetupModal,
-  ImageAssetsModal,
-  NewCommentThreadModal,
-  RenderedPreview,
-} from '../components/shared-ui';
-import { broadcastNotesListRefresh, getStoredEditorWrapEnabled, getStoredPreviewMode, hasScrolledToNewViewport, renderHistoryBadge, setStoredEditorWrapEnabled, setStoredPreviewMode, type EditorHistoryState, useDocumentTitle } from './page-utils';
-import { PreviewControls } from '../features/preview/PreviewControls';
-import { useRenderedPdfPreview } from '../hooks/useRenderedPdfPreview';
+  apiRequest,
+  requestRenderedHtmlPreview,
+  type NoteAsset,
+  type NotePayload,
+  type ShareAccess,
+  type Thread,
+  type ThreadAnchor,
+  uploadImage,
+} from "../lib/api";
+import { type CollabEditorHandle, type ShareParticipant } from "../lib/collab-editor";
+import { CollabTextarea } from "../components/CollabTextarea";
+import { PdfExportModal } from "../features/pdf/PdfExportModal";
+import { copyRenderedPreviewToClipboard } from "../features/clipboard";
+import { buildOwnerAgentModal } from "../features/agent-instructions";
+import { AnchoredCommentCanvas } from "../features/comments/AnchoredCommentCanvas";
+import { preparePreviewHtml } from "../features/prepare-preview-html";
+import {
+  usePreviewScrollSyncController,
+  type PreviewMode,
+  type ScrollMetrics,
+} from "../hooks/usePreviewScrollSyncController";
+import { NoteExplorer } from "./NotesListPage";
+import { AgentSetupModal, ImageAssetsModal, NewCommentThreadModal, RenderedPreview } from "../components/shared-ui";
+import {
+  broadcastNotesListRefresh,
+  getStoredEditorWrapEnabled,
+  getStoredPreviewMode,
+  hasScrolledToNewViewport,
+  renderHistoryBadge,
+  setStoredEditorWrapEnabled,
+  setStoredPreviewMode,
+  type EditorHistoryState,
+  useDocumentTitle,
+} from "./page-utils";
+import { PreviewControls } from "../features/preview/PreviewControls";
+import { useRenderedPdfPreview } from "../hooks/useRenderedPdfPreview";
 
 export function OwnerNotePage({
   noteId,
@@ -36,13 +54,13 @@ export function OwnerNotePage({
 }) {
   const [payload, setPayload] = useState<NotePayload | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [title, setTitle] = useState('');
-  useDocumentTitle(title || 'Untitled');
-  const [shareAccess, setShareAccess] = useState<ShareAccess>('none');
-  const [markdown, setMarkdown] = useState('');
-  const [renderedHtml, setRenderedHtml] = useState('');
-  const [saveStatus, setSaveStatus] = useState('Saved');
+  const [error, setError] = useState("");
+  const [title, setTitle] = useState("");
+  useDocumentTitle(title || "Untitled");
+  const [shareAccess, setShareAccess] = useState<ShareAccess>("none");
+  const [markdown, setMarkdown] = useState("");
+  const [renderedHtml, setRenderedHtml] = useState("");
+  const [saveStatus, setSaveStatus] = useState("Saved");
   const [metaSaving, setMetaSaving] = useState(false);
   const [connected, setConnected] = useState(false);
   const [showShare, setShowShare] = useState(false);
@@ -79,7 +97,7 @@ export function OwnerNotePage({
     renderPreview: renderedPdfPreview,
   });
 
-  const [copyPreviewStatus, setCopyPreviewStatus] = useState('Copy');
+  const [copyPreviewStatus, setCopyPreviewStatus] = useState("Copy");
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [agentApiKey, setAgentApiKey] = useState<string | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -92,21 +110,29 @@ export function OwnerNotePage({
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [pendingThreadAnchor, setPendingThreadAnchor] = useState<ThreadAnchor | null>(null);
   const editorHandleRef = useRef<CollabEditorHandle | null>(null);
-  const [editorHistory, setEditorHistory] = useState<EditorHistoryState>({ canUndo: false, canRedo: false, undoLabel: null, redoLabel: null });
+  const [editorHistory, setEditorHistory] = useState<EditorHistoryState>({
+    canUndo: false,
+    canRedo: false,
+    undoLabel: null,
+    redoLabel: null,
+  });
   const lastEditorScrollMetricsRef = useRef<ScrollMetrics | null>(null);
 
-  const handleEditorScrollMetricsChange = useCallback((metrics: ScrollMetrics) => {
-    const previousMetrics = lastEditorScrollMetricsRef.current;
-    lastEditorScrollMetricsRef.current = metrics;
-    if (!hasScrolledToNewViewport(previousMetrics, metrics)) {
-      return;
-    }
+  const handleEditorScrollMetricsChange = useCallback(
+    (metrics: ScrollMetrics) => {
+      const previousMetrics = lastEditorScrollMetricsRef.current;
+      lastEditorScrollMetricsRef.current = metrics;
+      if (!hasScrolledToNewViewport(previousMetrics, metrics)) {
+        return;
+      }
 
-    handleEditorScrollChange({
-      metrics,
-      anchor: scrollWithMarkdownEnabled ? editorHandleRef.current?.getScrollAnchor() ?? null : null,
-    });
-  }, [handleEditorScrollChange, scrollWithMarkdownEnabled]);
+      handleEditorScrollChange({
+        metrics,
+        anchor: scrollWithMarkdownEnabled ? (editorHandleRef.current?.getScrollAnchor() ?? null) : null,
+      });
+    },
+    [handleEditorScrollChange, scrollWithMarkdownEnabled],
+  );
 
   const handleToggleScrollWithMarkdown = useCallback(() => {
     const nextEnabled = !scrollWithMarkdownEnabled;
@@ -134,34 +160,37 @@ export function OwnerNotePage({
     }
   }, [noteId]);
 
-  const loadNote = useCallback(async (options?: { background?: boolean }) => {
-    if (!options?.background) {
-      setLoading(true);
-      setError('');
-      setPayload(null);
-      setTitle('');
-      setShareAccess('none');
-      setMarkdown('');
-      setRenderedHtml('');
-      setSaveStatus('Saved');
-    }
-    try {
-      const nextPayload = await apiRequest<NotePayload>(`/api/notes/${noteId}`);
-      setPayload(nextPayload);
-      setTitle(nextPayload.note.title);
-      setShareAccess(nextPayload.note.shareAccess);
-      setMarkdown(nextPayload.note.markdown);
-      setRenderedHtml(nextPayload.note.renderedHtml ? preparePreviewHtml(nextPayload.note.renderedHtml) : '');
-      setSaveStatus('Saved');
-      broadcastNotesListRefresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Failed to load note.');
-    } finally {
+  const loadNote = useCallback(
+    async (options?: { background?: boolean }) => {
       if (!options?.background) {
-        setLoading(false);
+        setLoading(true);
+        setError("");
+        setPayload(null);
+        setTitle("");
+        setShareAccess("none");
+        setMarkdown("");
+        setRenderedHtml("");
+        setSaveStatus("Saved");
       }
-    }
-  }, [noteId]);
+      try {
+        const nextPayload = await apiRequest<NotePayload>(`/api/notes/${noteId}`);
+        setPayload(nextPayload);
+        setTitle(nextPayload.note.title);
+        setShareAccess(nextPayload.note.shareAccess);
+        setMarkdown(nextPayload.note.markdown);
+        setRenderedHtml(nextPayload.note.renderedHtml ? preparePreviewHtml(nextPayload.note.renderedHtml) : "");
+        setSaveStatus("Saved");
+        broadcastNotesListRefresh();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Failed to load note.");
+      } finally {
+        if (!options?.background) {
+          setLoading(false);
+        }
+      }
+    },
+    [noteId],
+  );
 
   useEffect(() => {
     void loadNote();
@@ -174,7 +203,7 @@ export function OwnerNotePage({
   }, [loadAssets, showAssetsModal]);
 
   useEffect(() => {
-    if (!payload || !showPreview || previewMode !== 'markdown') {
+    if (!payload || !showPreview || previewMode !== "markdown") {
       return;
     }
 
@@ -186,8 +215,8 @@ export function OwnerNotePage({
     const renderDebounce = markdown.length > 50000 ? 600 : markdown.length > 20000 ? 400 : 200;
     const timer = window.setTimeout(async () => {
       try {
-        const renderPayload = await apiRequest<{ ok: true; html: string }>('/api/render', {
-          method: 'POST',
+        const renderPayload = await apiRequest<{ ok: true; html: string }>("/api/render", {
+          method: "POST",
           body: { markdown },
         });
         setRenderedHtml(preparePreviewHtml(renderPayload.html));
@@ -211,20 +240,24 @@ export function OwnerNotePage({
     }
 
     setMetaSaving(true);
-    setSaveStatus('Saving');
+    setSaveStatus("Saving");
     try {
       await apiRequest(`/api/notes/${noteId}`, {
-        method: 'PUT',
+        method: "PUT",
         body: { title: nextTitle, shareAccess: nextShareAccess },
       });
-      setPayload((current) => current ? {
-        ...current,
-        note: { ...current.note, title: nextTitle, shareAccess: nextShareAccess },
-      } : current);
-      setSaveStatus('Saved');
+      setPayload((current) =>
+        current
+          ? {
+              ...current,
+              note: { ...current.note, title: nextTitle, shareAccess: nextShareAccess },
+            }
+          : current,
+      );
+      setSaveStatus("Saved");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Failed to save note settings.');
-      setSaveStatus('Error');
+      setError(cause instanceof Error ? cause.message : "Failed to save note settings.");
+      setSaveStatus("Error");
     } finally {
       setMetaSaving(false);
     }
@@ -232,48 +265,55 @@ export function OwnerNotePage({
 
   async function createThread(anchor: ThreadAnchor, body: string) {
     const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/threads`, {
-      method: 'POST',
+      method: "POST",
       body: { anchor, quote: anchor.quote, body },
     });
     setPendingThreadAnchor(null);
-    setPayload((current) => current ? { ...current, threads: response.threads } : current);
+    setPayload((current) => (current ? { ...current, threads: response.threads } : current));
   }
 
   async function replyToThread(threadId: string, parentMessageId: string, body: string) {
-    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/threads/${threadId}/replies`, {
-      method: 'POST',
-      body: { parentMessageId, body },
-    });
-    setPayload((current) => current ? { ...current, threads: response.threads } : current);
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(
+      `/api/notes/${noteId}/threads/${threadId}/replies`,
+      {
+        method: "POST",
+        body: { parentMessageId, body },
+      },
+    );
+    setPayload((current) => (current ? { ...current, threads: response.threads } : current));
   }
 
   async function setThreadResolved(threadId: string, resolved: boolean) {
     const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/threads/${threadId}`, {
-      method: 'PATCH',
+      method: "PATCH",
       body: { resolved },
     });
-    setPayload((current) => current ? { ...current, threads: response.threads } : current);
+    setPayload((current) => (current ? { ...current, threads: response.threads } : current));
   }
 
   async function deleteThread(threadId: string) {
-    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/threads/${threadId}`, { method: 'DELETE' });
-    setPayload((current) => current ? { ...current, threads: response.threads } : current);
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/threads/${threadId}`, {
+      method: "DELETE",
+    });
+    setPayload((current) => (current ? { ...current, threads: response.threads } : current));
   }
 
   async function editMessage(messageId: string, body: string) {
     const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/messages/${messageId}`, {
-      method: 'PATCH',
+      method: "PATCH",
       body: { body },
     });
-    setPayload((current) => current ? { ...current, threads: response.threads } : current);
+    setPayload((current) => (current ? { ...current, threads: response.threads } : current));
   }
 
   async function deleteMessage(messageId: string) {
-    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/messages/${messageId}`, { method: 'DELETE' });
-    setPayload((current) => current ? { ...current, threads: response.threads } : current);
+    const response = await apiRequest<{ ok: true; threads: Thread[] }>(`/api/notes/${noteId}/messages/${messageId}`, {
+      method: "DELETE",
+    });
+    setPayload((current) => (current ? { ...current, threads: response.threads } : current));
   }
 
-  const shareUrl = payload ? `${window.location.origin}/s/${payload.note.shareId}` : '';
+  const shareUrl = payload ? `${window.location.origin}/s/${payload.note.shareId}` : "";
 
   async function copyShareUrl() {
     if (!shareUrl) {
@@ -284,14 +324,14 @@ export function OwnerNotePage({
   }
 
   async function handleCopyRenderedPreview() {
-    setCopyPreviewStatus('Copying...');
+    setCopyPreviewStatus("Copying...");
     try {
       await copyRenderedPreviewToClipboard(pdfPreviewFrameNodeRef.current);
-      setCopyPreviewStatus('Copied!');
+      setCopyPreviewStatus("Copied!");
     } catch (cause) {
-      setCopyPreviewStatus(cause instanceof Error ? cause.message : 'Copy failed');
+      setCopyPreviewStatus(cause instanceof Error ? cause.message : "Copy failed");
     } finally {
-      window.setTimeout(() => setCopyPreviewStatus('Copy'), 2000);
+      window.setTimeout(() => setCopyPreviewStatus("Copy"), 2000);
     }
   }
 
@@ -300,9 +340,12 @@ export function OwnerNotePage({
   }
 
   async function handleDeleteAsset(fileName: string) {
-    const response = await apiRequest<{ ok: true; assets: NoteAsset[] }>(`/api/notes/${noteId}/assets/${encodeURIComponent(fileName)}`, {
-      method: 'DELETE',
-    });
+    const response = await apiRequest<{ ok: true; assets: NoteAsset[] }>(
+      `/api/notes/${noteId}/assets/${encodeURIComponent(fileName)}`,
+      {
+        method: "DELETE",
+      },
+    );
     setAssets(response.assets);
   }
 
@@ -318,7 +361,9 @@ export function OwnerNotePage({
       <div className="page-shell simple-page">
         <div className="simple-page-content">
           <p>{error}</p>
-          <button type="button" onClick={onBack}>Back</button>
+          <button type="button" onClick={onBack}>
+            Back
+          </button>
         </div>
       </div>
     );
@@ -333,10 +378,18 @@ export function OwnerNotePage({
           <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onBack}>
             Back
           </button>
-          <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => setExplorerOpen((current) => !current)}>
-            {explorerOpen ? 'Hide notes' : 'Notes'}
+          <button
+            type="button"
+            className="documine-btn documine-btn--sm documine-btn--ghost"
+            onClick={() => setExplorerOpen((current) => !current)}
+          >
+            {explorerOpen ? "Hide notes" : "Notes"}
           </button>
-          <button type="button" className="documine-btn documine-btn--sm documine-btn--primary" onClick={() => void onCreateNote()}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--sm documine-btn--primary"
+            onClick={() => void onCreateNote()}
+          >
             New note
           </button>
           <input
@@ -346,12 +399,16 @@ export function OwnerNotePage({
             onBlur={() => void saveMeta({ title })}
             placeholder="Untitled"
           />
-          <span className="status-text">{metaSaving ? 'Saving...' : saveStatus}</span>
+          <span className="status-text">{metaSaving ? "Saving..." : saveStatus}</span>
           {renderHistoryBadge(editorHistory)}
         </div>
         <div className="topbar-right">
           <div className="share-popover-wrap">
-            <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowShare((current) => !current)}>
+            <button
+              type="button"
+              className="documine-btn documine-btn--md documine-btn--ghost"
+              onClick={() => setShowShare((current) => !current)}
+            >
               Share
             </button>
             {showShare ? (
@@ -370,7 +427,7 @@ export function OwnerNotePage({
                     <option value="comment">View and comment</option>
                     <option value="edit">Edit and comment</option>
                   </select>
-                  <button type="button" onClick={() => void copyShareUrl()} disabled={shareAccess === 'none'}>
+                  <button type="button" onClick={() => void copyShareUrl()} disabled={shareAccess === "none"}>
                     Copy link
                   </button>
                 </div>
@@ -378,58 +435,112 @@ export function OwnerNotePage({
               </div>
             ) : null}
           </div>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowExportModal(true)}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost"
+            onClick={() => setShowExportModal(true)}
+          >
             Print
           </button>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowAssetsModal(true)}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost"
+            onClick={() => setShowAssetsModal(true)}
+          >
             Images
           </button>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowComments((current) => !current)}>
-            {showComments ? 'Hide comments' : 'Show comments'}
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost"
+            onClick={() => setShowComments((current) => !current)}
+          >
+            {showComments ? "Hide comments" : "Show comments"}
           </button>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowResolved((current) => !current)} disabled={!showComments}>
-            {showResolved ? 'Hide resolved' : 'Show resolved'}
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost"
+            onClick={() => setShowResolved((current) => !current)}
+            disabled={!showComments}
+          >
+            {showResolved ? "Hide resolved" : "Show resolved"}
           </button>
           <div className="documine-segmented-control" role="group" aria-label="Edit history">
-            <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => editorHandleRef.current?.undo()} disabled={!editorHistory.canUndo} title="Undo (Ctrl+Z)">
+            <button
+              type="button"
+              className="documine-btn documine-btn--md documine-btn--ghost"
+              onClick={() => editorHandleRef.current?.undo()}
+              disabled={!editorHistory.canUndo}
+              title="Undo (Ctrl+Z)"
+            >
               Undo
             </button>
-            <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => editorHandleRef.current?.redo()} disabled={!editorHistory.canRedo} title="Redo (Ctrl+Y or Ctrl+Shift+Z)">
+            <button
+              type="button"
+              className="documine-btn documine-btn--md documine-btn--ghost"
+              onClick={() => editorHandleRef.current?.redo()}
+              disabled={!editorHistory.canRedo}
+              title="Redo (Ctrl+Y or Ctrl+Shift+Z)"
+            >
               Redo
             </button>
           </div>
           <div className="documine-segmented-control" role="group" aria-label="Editor line wrapping">
-            <button type="button" className={`documine-btn documine-btn--md ${editorWrapEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => {
-              setEditorWrapEnabled(true);
-              setStoredEditorWrapEnabled(true);
-            }}>
+            <button
+              type="button"
+              className={`documine-btn documine-btn--md ${editorWrapEnabled ? "documine-btn--primary" : "documine-btn--ghost"}`}
+              onClick={() => {
+                setEditorWrapEnabled(true);
+                setStoredEditorWrapEnabled(true);
+              }}
+            >
               Wrap
             </button>
-            <button type="button" className={`documine-btn documine-btn--md ${!editorWrapEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={() => {
-              setEditorWrapEnabled(false);
-              setStoredEditorWrapEnabled(false);
-            }}>
+            <button
+              type="button"
+              className={`documine-btn documine-btn--md ${!editorWrapEnabled ? "documine-btn--primary" : "documine-btn--ghost"}`}
+              onClick={() => {
+                setEditorWrapEnabled(false);
+                setStoredEditorWrapEnabled(false);
+              }}
+            >
               No wrap
             </button>
           </div>
           <button
             type="button"
-            className={`documine-btn documine-btn--md ${scrollWithMarkdownEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`}
+            className={`documine-btn documine-btn--md ${scrollWithMarkdownEnabled ? "documine-btn--primary" : "documine-btn--ghost"}`}
             aria-pressed={scrollWithMarkdownEnabled}
             onClick={handleToggleScrollWithMarkdown}
           >
-            {scrollWithMarkdownEnabled ? 'Following markdown' : 'Follow markdown'}
+            {scrollWithMarkdownEnabled ? "Following markdown" : "Follow markdown"}
           </button>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowAgentModal(true)}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost"
+            onClick={() => setShowAgentModal(true)}
+          >
             Agent
           </button>
-          <button type="button" id="previewFab" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowPreview(true)}>
+          <button
+            type="button"
+            id="previewFab"
+            className="documine-btn documine-btn--md documine-btn--ghost"
+            onClick={() => setShowPreview(true)}
+          >
             Preview
           </button>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost theme-toggle" onClick={onToggleTheme}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost theme-toggle"
+            onClick={onToggleTheme}
+          >
             Theme
           </button>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => void onLogout()}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost"
+            onClick={() => void onLogout()}
+          >
             Logout
           </button>
           {shareParticipants.length ? (
@@ -441,7 +552,7 @@ export function OwnerNotePage({
                   title={`${participant.name} · ${participant.permissionLabel}`}
                   aria-label={`${participant.name}. ${participant.permissionLabel}`}
                 >
-                  {participant.name.trim().charAt(0).toUpperCase() || '?'}
+                  {participant.name.trim().charAt(0).toUpperCase() || "?"}
                 </div>
               ))}
             </div>
@@ -449,13 +560,9 @@ export function OwnerNotePage({
         </div>
       </header>
 
-      <div className={`workspace ${explorerOpen ? 'workspace--with-explorer' : ''}`}>
+      <div className={`workspace ${explorerOpen ? "workspace--with-explorer" : ""}`}>
         {explorerOpen ? (
-          <NoteExplorer
-            activeNoteId={noteId}
-            onOpenNote={onOpenNote}
-            onCreateNote={onCreateNote}
-          />
+          <NoteExplorer activeNoteId={noteId} onOpenNote={onOpenNote} onCreateNote={onCreateNote} />
         ) : null}
         <div className="editor-pane">
           {noteReady ? (
@@ -481,7 +588,7 @@ export function OwnerNotePage({
                 }}
                 onTextChange={(nextMarkdown) => {
                   setMarkdown(nextMarkdown);
-                  setSaveStatus('Live');
+                  setSaveStatus("Live");
                 }}
                 onConnectionChange={setConnected}
                 onThreadsUpdated={() => void loadNote({ background: true })}
@@ -500,7 +607,7 @@ export function OwnerNotePage({
           )}
         </div>
 
-        <section className={`preview-stage ${showPreview ? 'preview-open' : ''}`}>
+        <section className={`preview-stage ${showPreview ? "preview-open" : ""}`}>
           <PreviewControls
             previewMode={previewMode}
             onPreviewModeChange={handlePreviewModeChange}
@@ -519,8 +626,15 @@ export function OwnerNotePage({
           />
           {!noteReady ? (
             <div className="preview-loading-state">Loading preview...</div>
-          ) : previewMode === 'rendered-pdf' ? (
-            <RenderedPreview url={renderedPdfUrl} zoom={renderedPdfZoom} loading={renderedPdfLoading} error={renderedPdfError} dirty={renderedPdfDirty} iframeRef={pdfPreviewFrameRef} />
+          ) : previewMode === "rendered-pdf" ? (
+            <RenderedPreview
+              url={renderedPdfUrl}
+              zoom={renderedPdfZoom}
+              loading={renderedPdfLoading}
+              error={renderedPdfError}
+              dirty={renderedPdfDirty}
+              iframeRef={pdfPreviewFrameRef}
+            />
           ) : (
             <AnchoredCommentCanvas
               renderedHtml={renderedHtml}
@@ -548,10 +662,16 @@ export function OwnerNotePage({
           onClose={() => setPendingThreadAnchor(null)}
         />
       ) : null}
-      {showExportModal ? <PdfExportModal noteId={noteId} markdown={markdown} onClose={() => {
-        setShowExportModal(false);
-        markRenderedPdfDirty();
-      }} /> : null}
+      {showExportModal ? (
+        <PdfExportModal
+          noteId={noteId}
+          markdown={markdown}
+          onClose={() => {
+            setShowExportModal(false);
+            markRenderedPdfDirty();
+          }}
+        />
+      ) : null}
       {showAssetsModal ? (
         <ImageAssetsModal
           assets={assets}

@@ -65,7 +65,12 @@ export type ServerMutationMessage = {
 
 export type PresenceSelection =
   | { type: "cursor"; cursor: { bunchId: string; counter: number } | null }
-  | { type: "range"; start: { bunchId: string; counter: number } | null; end: { bunchId: string; counter: number } | null; direction: "forward" | "backward" };
+  | {
+      type: "range";
+      start: { bunchId: string; counter: number } | null;
+      end: { bunchId: string; counter: number } | null;
+      direction: "forward" | "backward";
+    };
 
 export type ClientPresenceMessage = {
   type: "presence";
@@ -108,7 +113,10 @@ export class TrackedIdList {
   private _idList: IdList;
   private updates: IdListUpdate[] = [];
 
-  constructor(idList: IdList, readonly trackChanges: boolean) {
+  constructor(
+    idList: IdList,
+    readonly trackChanges: boolean,
+  ) {
     this._idList = idList;
   }
 
@@ -263,11 +271,7 @@ export function idBeforeIndex(state: CollabState, index: number): ElementId | nu
   return state.idList.at(index - 1);
 }
 
-function applyInsertMutation(
-  trackedIds: TrackedIdList,
-  chars: Map<string, string>,
-  mutation: ClientInsertMutation,
-) {
+function applyInsertMutation(trackedIds: TrackedIdList, chars: Map<string, string>, mutation: ClientInsertMutation) {
   const { before, id, content, isInWord } = mutation.args;
   if (!content) {
     return;
@@ -284,28 +288,23 @@ function applyInsertMutation(
 
   trackedIds.insertAfter(before, id, content.length);
   for (let offset = 0; offset < content.length; offset++) {
-    chars.set(
-      charKey({ bunchId: id.bunchId, counter: id.counter + offset }),
-      content[offset],
-    );
+    chars.set(charKey({ bunchId: id.bunchId, counter: id.counter + offset }), content[offset]);
   }
 }
 
-function applyDeleteMutation(
-  trackedIds: TrackedIdList,
-  mutation: ClientDeleteMutation,
-) {
+function applyDeleteMutation(trackedIds: TrackedIdList, mutation: ClientDeleteMutation) {
   const { startId, endId, contentLength } = mutation.args;
   if (!trackedIds.idList.isKnown(startId)) {
     return;
   }
 
   const startIndex = trackedIds.idList.indexOf(startId, "right");
-  const endIndex = endId === undefined
-    ? startIndex
-    : trackedIds.idList.isKnown(endId)
-      ? trackedIds.idList.indexOf(endId, "left")
-      : startIndex - 1;
+  const endIndex =
+    endId === undefined
+      ? startIndex
+      : trackedIds.idList.isKnown(endId)
+        ? trackedIds.idList.indexOf(endId, "left")
+        : startIndex - 1;
 
   if (endIndex < startIndex) {
     return;

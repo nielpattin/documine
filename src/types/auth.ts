@@ -39,7 +39,16 @@ export type AuthGuardIpBan = {
 };
 
 export type AuthGuardEvent = {
-  type: 'login-requested' | 'login-failed' | 'login-succeeded' | 'login-blocked' | 'ip-banned' | 'ip-unbanned' | 'login-enabled' | 'login-disabled' | 'login-locked';
+  type:
+    | "login-requested"
+    | "login-failed"
+    | "login-succeeded"
+    | "login-blocked"
+    | "ip-banned"
+    | "ip-unbanned"
+    | "login-enabled"
+    | "login-disabled"
+    | "login-locked";
   ip: string;
   timestamp: string;
   detail: string;

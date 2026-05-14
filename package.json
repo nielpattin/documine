@@ -1,6 +1,25 @@
 {
   "name": "@nielpattin/documine",
   "version": "1.1.3",
+  "description": "Self-hosted collaborative markdown editor (pdf preview) with inline comment threads",
+  "keywords": [
+    "collaborative",
+    "comments",
+    "editor",
+    "markdown",
+    "pdf",
+    "realtime",
+    "self-hosted"
+  ],
+  "homepage": "https://github.com/nielpattin/documine#readme",
+  "bugs": {
+    "url": "https://github.com/nielpattin/documine/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nielpattin/documine.git"
+  },
   "bin": {
     "documine": "cli/documine.mjs"
   },
@@ -13,31 +32,9 @@
     "apps/web/dist",
     "cli/documine.mjs"
   ],
-  "description": "Self-hosted collaborative markdown editor (pdf preview) with inline comment threads",
-  "license": "MIT",
-  "engines": {
-    "node": ">=18"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/nielpattin/documine.git"
-  },
-  "homepage": "https://github.com/nielpattin/documine#readme",
-  "bugs": {
-    "url": "https://github.com/nielpattin/documine/issues"
-  },
   "publishConfig": {
     "access": "public"
   },
-  "keywords": [
-    "markdown",
-    "pdf",
-    "editor",
-    "collaborative",
-    "self-hosted",
-    "comments",
-    "realtime"
-  ],
   "scripts": {
     "dev": "node --env-file-if-exists=.env ./node_modules/concurrently/dist/bin/concurrently.js \"pnpm dev:api\" \"pnpm dev:web\"",
     "dev:api": "tsx watch src/server.ts",
@@ -45,6 +42,12 @@
     "build": "pnpm build:web && pnpm build:api",
     "build:api": "tsc",
     "build:web": "pnpm --filter @documine/web build",
+    "test": "bun test",
+    "lint": "node --no-warnings node_modules/oxlint/bin/oxlint -c oxlint.config.ts --tsconfig tsconfig.json --format json && node --no-warnings node_modules/oxlint/bin/oxlint -c oxlint.config.ts --tsconfig apps/web/tsconfig.json apps/web/src/ --format json",
+    "lint:fix": "node --no-warnings node_modules/oxlint/bin/oxlint -c oxlint.config.ts --tsconfig tsconfig.json --fix --format json",
+    "fmt": "node --no-warnings node_modules/oxfmt/bin/oxfmt -c oxfmt.config.ts",
+    "fmt:check": "node --no-warnings node_modules/oxfmt/bin/oxfmt -c oxfmt.config.ts --check",
+    "check": "pnpm run fmt:check && pnpm run lint && pnpm run test",
     "prepublishOnly": "pnpm build",
     "release:patch": "pnpm version patch -m \"chore: release %s\" && git push origin HEAD --follow-tags",
     "release:minor": "pnpm version minor -m \"chore: release %s\" && git push origin HEAD --follow-tags",
@@ -70,8 +73,14 @@
     "@types/node": "^24.12.4",
     "@types/sanitize-html": "^2.16.1",
     "@types/ws": "^8.18.1",
+    "oxfmt": "^0.48.0",
+    "oxlint": "^1.63.0",
+    "oxlint-tsgolint": "^0.22.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "packageManager": "pnpm@11.1.0+sha512.0c44e842e5686b2c061a81adda8b2258bd8818e9704b2cf2c63d56b931a7b2e910092e085027003b96ca3911ab56a07f6df5abaed2be9925034cdd686a535b14"
 }

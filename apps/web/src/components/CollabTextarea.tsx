@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { createCollabEditor, type CollabEditorHandle, type ShareParticipant } from '../lib/collab-editor';
+import { useEffect, useRef } from "react";
+import { createCollabEditor, type CollabEditorHandle, type ShareParticipant } from "../lib/collab-editor";
 
 export type EditorHistoryState = {
   canUndo: boolean;
@@ -43,12 +43,39 @@ export function CollabTextarea({
   const horizontalScrollRef = useRef<HTMLDivElement | null>(null);
   const horizontalScrollSpacerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<CollabEditorHandle | null>(null);
-  const callbacksRef = useRef({ onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onHistoryChange, onScrollMetricsChange, onUploadImage });
+  const callbacksRef = useRef({
+    onReady,
+    onTextChange,
+    onConnectionChange,
+    onThreadsUpdated,
+    onParticipantsChange,
+    onHistoryChange,
+    onScrollMetricsChange,
+    onUploadImage,
+  });
   const onEditorMountRef = useRef(onEditorMount);
 
   useEffect(() => {
-    callbacksRef.current = { onReady, onTextChange, onConnectionChange, onThreadsUpdated, onParticipantsChange, onHistoryChange, onScrollMetricsChange, onUploadImage };
-  }, [onConnectionChange, onHistoryChange, onParticipantsChange, onReady, onScrollMetricsChange, onTextChange, onThreadsUpdated, onUploadImage]);
+    callbacksRef.current = {
+      onReady,
+      onTextChange,
+      onConnectionChange,
+      onThreadsUpdated,
+      onParticipantsChange,
+      onHistoryChange,
+      onScrollMetricsChange,
+      onUploadImage,
+    };
+  }, [
+    onConnectionChange,
+    onHistoryChange,
+    onParticipantsChange,
+    onReady,
+    onScrollMetricsChange,
+    onTextChange,
+    onThreadsUpdated,
+    onUploadImage,
+  ]);
 
   useEffect(() => {
     onEditorMountRef.current = onEditorMount;
@@ -76,7 +103,8 @@ export function CollabTextarea({
     editorRef.current = createCollabEditor(textarea, {
       noteId,
       shareId,
-      onReady: (payload: { markdown: string; title: string; shareId: string }) => callbacksRef.current.onReady?.(payload),
+      onReady: (payload: { markdown: string; title: string; shareId: string }) =>
+        callbacksRef.current.onReady?.(payload),
       onTextChange: (nextMarkdown: string) => {
         callbacksRef.current.onTextChange(nextMarkdown);
         callbacksRef.current.onScrollMetricsChange?.({
@@ -87,7 +115,8 @@ export function CollabTextarea({
       },
       onConnectionChange: (connected: boolean) => callbacksRef.current.onConnectionChange(connected),
       onThreadsUpdated: () => callbacksRef.current.onThreadsUpdated?.(),
-      onParticipantsChange: (participants: ShareParticipant[]) => callbacksRef.current.onParticipantsChange?.(participants),
+      onParticipantsChange: (participants: ShareParticipant[]) =>
+        callbacksRef.current.onParticipantsChange?.(participants),
       onHistoryChange: (history: EditorHistoryState) => callbacksRef.current.onHistoryChange?.(history),
       onUploadImage: callbacksRef.current.onUploadImage
         ? (file: File) => callbacksRef.current.onUploadImage!(file)
@@ -100,7 +129,7 @@ export function CollabTextarea({
       editorRef.current = null;
       onEditorMountRef.current?.(null);
     };
-  }, [noteId, shareId]);
+  }, [noteId, shareId, initialValue]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -131,28 +160,32 @@ export function CollabTextarea({
     };
 
     syncMetrics();
-    textarea.addEventListener('scroll', syncFromTextarea);
-    textarea.addEventListener('input', syncMetrics);
-    horizontalScroll.addEventListener('scroll', syncFromScrollbar);
+    textarea.addEventListener("scroll", syncFromTextarea);
+    textarea.addEventListener("input", syncMetrics);
+    horizontalScroll.addEventListener("scroll", syncFromScrollbar);
 
     const resizeObserver = new ResizeObserver(syncMetrics);
     resizeObserver.observe(textarea);
 
     return () => {
-      textarea.removeEventListener('scroll', syncFromTextarea);
-      textarea.removeEventListener('input', syncMetrics);
-      horizontalScroll.removeEventListener('scroll', syncFromScrollbar);
+      textarea.removeEventListener("scroll", syncFromTextarea);
+      textarea.removeEventListener("input", syncMetrics);
+      horizontalScroll.removeEventListener("scroll", syncFromScrollbar);
       resizeObserver.disconnect();
     };
   }, [wrapEnabled, initialValue]);
 
   return (
-    <div className={`editor-textarea-shell ${wrapEnabled ? '' : 'editor-textarea-shell--nowrap'}`.trim()}>
-      <textarea ref={textareaRef} className={`editor-textarea ${wrapEnabled ? '' : 'editor-textarea--nowrap'}`.trim()} spellCheck={false} wrap={wrapEnabled ? 'soft' : 'off'} />
+    <div className={`editor-textarea-shell ${wrapEnabled ? "" : "editor-textarea-shell--nowrap"}`.trim()}>
+      <textarea
+        ref={textareaRef}
+        className={`editor-textarea ${wrapEnabled ? "" : "editor-textarea--nowrap"}`.trim()}
+        spellCheck={false}
+        wrap={wrapEnabled ? "soft" : "off"}
+      />
       <div ref={horizontalScrollRef} className="editor-horizontal-scroll" aria-hidden={wrapEnabled}>
         <div ref={horizontalScrollSpacerRef} className="editor-horizontal-scroll-spacer" />
       </div>
     </div>
   );
 }
-

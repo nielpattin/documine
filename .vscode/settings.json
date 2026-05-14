@@ -1,3 +1,15 @@
 {
-    "js/ts.tsdk.path": "node_modules\\typescript\\lib"
+  "js/ts.tsdk.path": "node_modules/typescript/lib",
+  "oxc.path.tsgolint": "node_modules/.bin/tsgolint.cmd",
+  "editor.defaultFormatter": "oxc.oxc-vscode",
+  "editor.formatOnSave": true,
+  "editor.formatOnSaveMode": "file",
+  "oxc.fmt.configPath": "oxfmt.config.ts",
+  "oxc.configPath": "oxlint.config.ts",
+  "editor.codeActionsOnSave": {
+    "source.format.oxc": "always"
+  },
+  "oxc.requireConfig": true,
+  "oxc.typeAware": true,
+  "oxc.tsConfigPath": "tsconfig.json"
 }

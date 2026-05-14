@@ -1,5 +1,5 @@
-import { useState, type FormEvent, type KeyboardEvent, type RefCallback } from 'react';
-import { apiRequest, formatDate, type NoteAsset, type ThreadAnchor } from '../lib/api';
+import { useState, type FormEvent, type KeyboardEvent, type RefCallback } from "react";
+import { apiRequest, formatDate, type NoteAsset, type ThreadAnchor } from "../lib/api";
 
 export type AgentModalConfig = {
   title: string;
@@ -27,8 +27,8 @@ export function AgentSetupModal({
     setIsGenerating(true);
     try {
       const payload = await apiRequest<{ ok: true; id: string; key: string }>(`/api/keys`, {
-        method: 'POST',
-        body: { label: 'agent-cli' },
+        method: "POST",
+        body: { label: "agent-cli" },
       });
       setApiKey(payload.key);
       onApiKeyGenerated?.(payload.key);
@@ -53,16 +53,32 @@ export function AgentSetupModal({
         <p className="agent-hint">{config.hint}</p>
         {config.requiresApiKey ? (
           <>
-            <div className="modal-actions" style={{ marginBottom: '0.75rem' }}>
-              <button type="button" className="documine-btn documine-btn--md documine-btn--primary" onClick={() => void generateApiKey()} disabled={isGenerating}>
-                {isGenerating ? 'Generating...' : apiKey ? 'Generate another API key' : 'Generate API key'}
+            <div className="modal-actions" style={{ marginBottom: "0.75rem" }}>
+              <button
+                type="button"
+                className="documine-btn documine-btn--md documine-btn--primary"
+                onClick={() => void generateApiKey()}
+                disabled={isGenerating}
+              >
+                {isGenerating ? "Generating..." : apiKey ? "Generate another API key" : "Generate API key"}
               </button>
             </div>
-            {apiKey ? <pre className="agent-instructions"><code>{apiKey}</code></pre> : null}
+            {apiKey ? (
+              <pre className="agent-instructions">
+                <code>{apiKey}</code>
+              </pre>
+            ) : null}
           </>
         ) : null}
-        <pre className="agent-instructions"><code>{instructions}</code></pre>
-        <button type="button" className="documine-btn documine-btn--md documine-btn--primary" onClick={() => void copyInstructions()} disabled={Boolean(config.requiresApiKey && !apiKey)}>
+        <pre className="agent-instructions">
+          <code>{instructions}</code>
+        </pre>
+        <button
+          type="button"
+          className="documine-btn documine-btn--md documine-btn--primary"
+          onClick={() => void copyInstructions()}
+          disabled={Boolean(config.requiresApiKey && !apiKey)}
+        >
           Copy to clipboard
         </button>
       </div>
@@ -88,7 +104,9 @@ export function OwnerAuthGuardToast({ message, onDismiss }: { message: string | 
   return (
     <div className="auth-guard-toast" role="status" aria-live="polite">
       <span>{message}</span>
-      <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onDismiss}>Dismiss</button>
+      <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onDismiss}>
+        Dismiss
+      </button>
     </div>
   );
 }
@@ -132,11 +150,17 @@ export function ImageAssetsModal({
         </div>
         <div className="settings-section-header">
           <h3 className="settings-section-title">Current note assets</h3>
-          <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => void onRefresh()}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--sm documine-btn--ghost"
+            onClick={() => void onRefresh()}
+          >
             Refresh
           </button>
         </div>
-        <p className="api-keys-empty">Used images are currently referenced in the note. Remove them from the markdown before deleting them.</p>
+        <p className="api-keys-empty">
+          Used images are currently referenced in the note. Remove them from the markdown before deleting them.
+        </p>
         {loading ? <p className="api-keys-empty">Loading...</p> : null}
         {!loading && assets.length === 0 ? <p className="api-keys-empty">No uploaded images yet.</p> : null}
         <div className="image-asset-list">
@@ -146,12 +170,20 @@ export function ImageAssetsModal({
               <div className="image-asset-info">
                 <div className="image-asset-title-row">
                   <strong className="api-key-label">{asset.fileName}</strong>
-                  <span className={`image-asset-badge ${asset.inUse ? 'used' : 'unused'}`}>{asset.inUse ? 'In use' : 'Unused'}</span>
+                  <span className={`image-asset-badge ${asset.inUse ? "used" : "unused"}`}>
+                    {asset.inUse ? "In use" : "Unused"}
+                  </span>
                 </div>
-                <div className="api-key-meta">{Math.max(1, Math.round(asset.size / 1024))} KB • {formatDate(asset.updatedAt)}</div>
+                <div className="api-key-meta">
+                  {Math.max(1, Math.round(asset.size / 1024))} KB • {formatDate(asset.updatedAt)}
+                </div>
                 <code className="image-asset-markdown">{asset.markdown}</code>
                 <div className="modal-actions">
-                  <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => onInsert(asset.markdown)}>
+                  <button
+                    type="button"
+                    className="documine-btn documine-btn--sm documine-btn--ghost"
+                    onClick={() => onInsert(asset.markdown)}
+                  >
                     Insert into note
                   </button>
                   {confirmDeleteFile === asset.fileName ? (
@@ -170,7 +202,7 @@ export function ImageAssetsModal({
                         onClick={() => void handleConfirmDelete(asset.fileName)}
                         disabled={deletingFile === asset.fileName}
                       >
-                        {deletingFile === asset.fileName ? 'Deleting...' : 'Delete'}
+                        {deletingFile === asset.fileName ? "Deleting..." : "Delete"}
                       </button>
                     </div>
                   ) : (
@@ -193,8 +225,19 @@ export function ImageAssetsModal({
   );
 }
 
-export function handleCommentTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>, canSubmit: boolean, submit: () => void) {
-  if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing) {
+export function handleCommentTextareaKeyDown(
+  event: KeyboardEvent<HTMLTextAreaElement>,
+  canSubmit: boolean,
+  submit: () => void,
+) {
+  if (
+    event.key !== "Enter" ||
+    event.shiftKey ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.nativeEvent.isComposing
+  ) {
     return;
   }
   event.preventDefault();
@@ -203,7 +246,21 @@ export function handleCommentTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaEl
   }
 }
 
-export function RenderedPreview({ url, zoom, loading, error, dirty, iframeRef }: { url: string; zoom: number; loading: boolean; error: string; dirty: boolean; iframeRef: RefCallback<HTMLIFrameElement> }) {
+export function RenderedPreview({
+  url,
+  zoom,
+  loading,
+  error,
+  dirty,
+  iframeRef,
+}: {
+  url: string;
+  zoom: number;
+  loading: boolean;
+  error: string;
+  dirty: boolean;
+  iframeRef: RefCallback<HTMLIFrameElement>;
+}) {
   return (
     <div className="preview-scroll preview-scroll--pdf">
       <div className="pdf-preview-shell">
@@ -256,18 +313,27 @@ export function RequiredShareIdentityPage({
               <h1>Enter your name</h1>
               <p>Set your name before opening this shared note.</p>
             </div>
-            <button type="button" className="documine-btn documine-btn--md documine-btn--ghost theme-toggle" onClick={onToggleTheme}>
+            <button
+              type="button"
+              className="documine-btn documine-btn--md documine-btn--ghost theme-toggle"
+              onClick={onToggleTheme}
+            >
               Theme
             </button>
           </div>
           <form onSubmit={(event) => void handleSubmit(event)}>
             <div className="field">
-              <input value={name} onChange={(event) => onNameChange(event.target.value)} placeholder="Your name" autoFocus />
+              <input
+                value={name}
+                onChange={(event) => onNameChange(event.target.value)}
+                placeholder="Your name"
+                autoFocus
+              />
             </div>
             {error ? <div className="inline-error">{error}</div> : null}
             <div className="modal-actions">
               <button type="submit" className="primary" disabled={saving || !name.trim()}>
-                {saving ? 'Opening...' : 'Open shared note'}
+                {saving ? "Opening..." : "Open shared note"}
               </button>
             </div>
           </form>
@@ -289,7 +355,7 @@ export function CommentIdentityModal({
   onClose: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
 
   async function handleSave() {
     if (!name.trim()) {
@@ -297,11 +363,11 @@ export function CommentIdentityModal({
     }
 
     setBusy(true);
-    setError('');
+    setError("");
     try {
       await onSave();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Failed to save your name.');
+      setError(cause instanceof Error ? cause.message : "Failed to save your name.");
     } finally {
       setBusy(false);
     }
@@ -321,7 +387,7 @@ export function CommentIdentityModal({
             Cancel
           </button>
           <button type="button" className="primary" onClick={() => void handleSave()} disabled={busy || !name.trim()}>
-            {busy ? 'Saving...' : 'Save name'}
+            {busy ? "Saving..." : "Save name"}
           </button>
         </div>
       </div>
@@ -338,9 +404,9 @@ export function NewCommentThreadModal({
   onSubmit: (anchor: ThreadAnchor, body: string) => Promise<void>;
   onClose: () => void;
 }) {
-  const [body, setBody] = useState('');
+  const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
 
   async function handleSubmit() {
     if (!body.trim()) {
@@ -348,12 +414,12 @@ export function NewCommentThreadModal({
     }
 
     setBusy(true);
-    setError('');
+    setError("");
     try {
       await onSubmit(anchor, body);
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Failed to add comment.');
+      setError(cause instanceof Error ? cause.message : "Failed to add comment.");
     } finally {
       setBusy(false);
     }
@@ -364,12 +430,16 @@ export function NewCommentThreadModal({
       <div className="modal compact" onClick={(event) => event.stopPropagation()}>
         <h2>New comment thread</h2>
         <p>Comment on the selected text.</p>
-        <pre className="agent-instructions"><code>{anchor.quote}</code></pre>
+        <pre className="agent-instructions">
+          <code>{anchor.quote}</code>
+        </pre>
         <div className="field">
           <textarea
             value={body}
             onChange={(event) => setBody(event.target.value)}
-            onKeyDown={(event) => handleCommentTextareaKeyDown(event, !busy && !!body.trim(), () => void handleSubmit())}
+            onKeyDown={(event) =>
+              handleCommentTextareaKeyDown(event, !busy && !!body.trim(), () => void handleSubmit())
+            }
             placeholder="Comment"
           />
         </div>
@@ -379,7 +449,7 @@ export function NewCommentThreadModal({
             Cancel
           </button>
           <button type="button" className="primary" onClick={() => void handleSubmit()} disabled={busy || !body.trim()}>
-            {busy ? 'Saving...' : 'Add comment'}
+            {busy ? "Saving..." : "Add comment"}
           </button>
         </div>
       </div>

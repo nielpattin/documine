@@ -1,35 +1,36 @@
-import { execFile } from 'node:child_process';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { promisify } from 'node:util';
+import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
-import puppeteer from 'puppeteer';
-import { codeToHtml, bundledLanguages, type BundledLanguage } from 'shiki';
-import { TOKEN_COLORS, CODE_CHROME, codePreStyle, codeCodeStyle } from './code-block-style';
+import puppeteer from "puppeteer";
+import { codeToHtml, bundledLanguages, type BundledLanguage } from "shiki";
+import { CODE_CHROME, codePreStyle, codeCodeStyle } from "./code-block-style.js";
 
 const execFileAsync = promisify(execFile);
 
-const MARKDOWN_FROM = 'markdown+hard_line_breaks+raw_attribute+link_attributes+fenced_divs+bracketed_spans+grid_tables+pipe_tables+simple_tables+multiline_tables';
-const PDF_STYLE_PRESETS = ['report', 'academic', 'clean', 'compact'] as const;
-const PDF_PAGE_SIZES = ['A4', 'Letter', 'Legal'] as const;
-const PDF_ENGINES = ['browser'] as const;
-const PDF_ORIENTATIONS = ['portrait', 'landscape'] as const;
-const PDF_FONT_FAMILIES = ['Times New Roman', 'Georgia', 'Arial', 'Inter', 'system-ui'] as const;
-const PDF_HEADER_MODES = ['none', 'title', 'date', 'title-date'] as const;
-const PDF_CODE_WRAP_MODES = ['wrap', 'scroll'] as const;
-const PDF_IMAGE_ALIGNMENTS = ['left', 'center', 'right'] as const;
+const MARKDOWN_FROM =
+  "markdown+hard_line_breaks+raw_attribute+link_attributes+fenced_divs+bracketed_spans+grid_tables+pipe_tables+simple_tables+multiline_tables";
+const PDF_STYLE_PRESETS = ["report", "academic", "clean", "compact"] as const;
+const PDF_PAGE_SIZES = ["A4", "Letter", "Legal"] as const;
+const PDF_ENGINES = ["browser"] as const;
+const PDF_ORIENTATIONS = ["portrait", "landscape"] as const;
+const PDF_FONT_FAMILIES = ["Times New Roman", "Georgia", "Arial", "Inter", "system-ui"] as const;
+const PDF_HEADER_MODES = ["none", "title", "date", "title-date"] as const;
+const PDF_CODE_WRAP_MODES = ["wrap", "scroll"] as const;
+const PDF_IMAGE_ALIGNMENTS = ["left", "center", "right"] as const;
 const SHIKI_LANGUAGES = new Set<string>(Object.keys(bundledLanguages));
 
-type PdfStylePreset = typeof PDF_STYLE_PRESETS[number];
-type PdfPageSize = typeof PDF_PAGE_SIZES[number];
-type PdfEngine = typeof PDF_ENGINES[number];
-type PdfOrientation = typeof PDF_ORIENTATIONS[number];
-type PdfFontFamily = typeof PDF_FONT_FAMILIES[number];
-type PdfHeaderMode = typeof PDF_HEADER_MODES[number];
-type PdfCodeWrapMode = typeof PDF_CODE_WRAP_MODES[number];
-type PdfImageAlignment = typeof PDF_IMAGE_ALIGNMENTS[number];
+type PdfStylePreset = (typeof PDF_STYLE_PRESETS)[number];
+type PdfPageSize = (typeof PDF_PAGE_SIZES)[number];
+type PdfEngine = (typeof PDF_ENGINES)[number];
+type PdfOrientation = (typeof PDF_ORIENTATIONS)[number];
+type PdfFontFamily = (typeof PDF_FONT_FAMILIES)[number];
+type PdfHeaderMode = (typeof PDF_HEADER_MODES)[number];
+type PdfCodeWrapMode = (typeof PDF_CODE_WRAP_MODES)[number];
+type PdfImageAlignment = (typeof PDF_IMAGE_ALIGNMENTS)[number];
 
 export type PdfExportSettings = {
   stylePreset: PdfStylePreset;
@@ -74,7 +75,7 @@ export type ExportPdfInput = {
   settings: unknown;
   assetDirectory: string;
   signal?: AbortSignal;
-  onStageTiming?: (stage: 'pandoc' | 'browser' | 'total', durationMs: number) => void;
+  onStageTiming?: (stage: "pandoc" | "browser" | "total", durationMs: number) => void;
 };
 
 export type ExportPdfResult = {
@@ -99,14 +100,14 @@ export type ExportHtmlPreviewResult = {
 };
 
 export const defaultPdfExportSettings: PdfExportSettings = {
-  stylePreset: 'report',
-  pageSize: 'A4',
-  orientation: 'portrait',
-  engine: 'browser',
+  stylePreset: "report",
+  pageSize: "A4",
+  orientation: "portrait",
+  engine: "browser",
   toc: false,
   includeTitle: false,
   includeDate: false,
-  fontFamily: 'Times New Roman',
+  fontFamily: "Times New Roman",
   fontSizePt: 12,
   lineHeight: 1.45,
   marginsCm: {
@@ -115,15 +116,15 @@ export const defaultPdfExportSettings: PdfExportSettings = {
     bottom: 2.54,
     left: 2.54,
   },
-  headerMode: 'none',
+  headerMode: "none",
   justifyText: true,
   imageMaxWidthPercent: 100,
-  imageAlign: 'left',
-  codeWrap: 'wrap',
+  imageAlign: "left",
+  codeWrap: "wrap",
 };
 
 function isOneOf<T extends readonly string[]>(value: unknown, allowed: T): value is T[number] {
-  return typeof value === 'string' && allowed.includes(value);
+  return typeof value === "string" && allowed.includes(value);
 }
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
@@ -135,19 +136,23 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
 }
 
 export function mergeSettings(input: unknown): PdfExportSettings {
-  const source = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-  const marginSource = source.marginsCm && typeof source.marginsCm === 'object'
-    ? source.marginsCm as Record<string, unknown>
-    : {};
+  const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const marginSource =
+    source.marginsCm && typeof source.marginsCm === "object" ? (source.marginsCm as Record<string, unknown>) : {};
 
   return {
-    stylePreset: isOneOf(source.stylePreset, PDF_STYLE_PRESETS) ? source.stylePreset : defaultPdfExportSettings.stylePreset,
+    stylePreset: isOneOf(source.stylePreset, PDF_STYLE_PRESETS)
+      ? source.stylePreset
+      : defaultPdfExportSettings.stylePreset,
     pageSize: isOneOf(source.pageSize, PDF_PAGE_SIZES) ? source.pageSize : defaultPdfExportSettings.pageSize,
-    orientation: isOneOf(source.orientation, PDF_ORIENTATIONS) ? source.orientation : defaultPdfExportSettings.orientation,
+    orientation: isOneOf(source.orientation, PDF_ORIENTATIONS)
+      ? source.orientation
+      : defaultPdfExportSettings.orientation,
     engine: isOneOf(source.engine, PDF_ENGINES) ? source.engine : defaultPdfExportSettings.engine,
-    toc: typeof source.toc === 'boolean' ? source.toc : defaultPdfExportSettings.toc,
-    includeTitle: typeof source.includeTitle === 'boolean' ? source.includeTitle : defaultPdfExportSettings.includeTitle,
-    includeDate: typeof source.includeDate === 'boolean' ? source.includeDate : defaultPdfExportSettings.includeDate,
+    toc: typeof source.toc === "boolean" ? source.toc : defaultPdfExportSettings.toc,
+    includeTitle:
+      typeof source.includeTitle === "boolean" ? source.includeTitle : defaultPdfExportSettings.includeTitle,
+    includeDate: typeof source.includeDate === "boolean" ? source.includeDate : defaultPdfExportSettings.includeDate,
     fontFamily: isOneOf(source.fontFamily, PDF_FONT_FAMILIES) ? source.fontFamily : defaultPdfExportSettings.fontFamily,
     fontSizePt: clampNumber(source.fontSizePt, defaultPdfExportSettings.fontSizePt, 9, 18),
     lineHeight: clampNumber(source.lineHeight, defaultPdfExportSettings.lineHeight, 1.1, 2),
@@ -158,16 +163,23 @@ export function mergeSettings(input: unknown): PdfExportSettings {
       left: clampNumber(marginSource.left, defaultPdfExportSettings.marginsCm.left, 0.5, 5),
     },
     headerMode: isOneOf(source.headerMode, PDF_HEADER_MODES) ? source.headerMode : defaultPdfExportSettings.headerMode,
-    justifyText: typeof source.justifyText === 'boolean' ? source.justifyText : defaultPdfExportSettings.justifyText,
-    imageMaxWidthPercent: clampNumber(source.imageMaxWidthPercent, defaultPdfExportSettings.imageMaxWidthPercent, 30, 100),
-    imageAlign: isOneOf(source.imageAlign, PDF_IMAGE_ALIGNMENTS) ? source.imageAlign : defaultPdfExportSettings.imageAlign,
+    justifyText: typeof source.justifyText === "boolean" ? source.justifyText : defaultPdfExportSettings.justifyText,
+    imageMaxWidthPercent: clampNumber(
+      source.imageMaxWidthPercent,
+      defaultPdfExportSettings.imageMaxWidthPercent,
+      30,
+      100,
+    ),
+    imageAlign: isOneOf(source.imageAlign, PDF_IMAGE_ALIGNMENTS)
+      ? source.imageAlign
+      : defaultPdfExportSettings.imageAlign,
     codeWrap: isOneOf(source.codeWrap, PDF_CODE_WRAP_MODES) ? source.codeWrap : defaultPdfExportSettings.codeWrap,
   };
 }
 
 export async function loadPdfExportSettings(filePath: string): Promise<PdfExportSettings> {
   try {
-    const raw = await fs.readFile(filePath, 'utf8');
+    const raw = await fs.readFile(filePath, "utf8");
     const parsed = JSON.parse(raw) as { defaults?: unknown };
     return mergeSettings(parsed.defaults);
   } catch {
@@ -178,7 +190,7 @@ export async function loadPdfExportSettings(filePath: string): Promise<PdfExport
 export async function savePdfExportSettings(filePath: string, settingsInput: unknown): Promise<PdfExportSettings> {
   const settings = mergeSettings(settingsInput);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify({ version: 1, defaults: settings }, null, 2)}\n`, 'utf8');
+  await fs.writeFile(filePath, `${JSON.stringify({ version: 1, defaults: settings }, null, 2)}\n`, "utf8");
   return settings;
 }
 
@@ -186,7 +198,7 @@ let cachedCapabilities: PdfExportCapabilities | null = null;
 
 async function hasExecutable(command: string): Promise<boolean> {
   try {
-    await execFileAsync(command, ['--version']);
+    await execFileAsync(command, ["--version"]);
     return true;
   } catch {
     return false;
@@ -196,7 +208,7 @@ async function hasExecutable(command: string): Promise<boolean> {
 async function launchPdfBrowser() {
   return puppeteer.launch({
     headless: true,
-    args: ['--allow-file-access-from-files', '--no-sandbox', '--disable-setuid-sandbox'],
+    args: ["--allow-file-access-from-files", "--no-sandbox", "--disable-setuid-sandbox"],
   });
 }
 
@@ -211,21 +223,27 @@ function pageDimensionsPx(pageSize: PdfPageSize, orientation: PdfOrientation) {
     Legal: { width: 816, height: 1344 },
   };
   const base = dimensionsBySize[pageSize];
-  return orientation === 'landscape' ? { width: base.height, height: base.width } : base;
+  return orientation === "landscape" ? { width: base.height, height: base.width } : base;
 }
 
 function rewriteMarkdownAssetPaths(markdown: string, noteId: string, assetDirectory: string): string {
-  const escapedNoteId = encodeURIComponent(noteId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedNoteId = encodeURIComponent(noteId).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const assetPrefixPattern = String.raw`(?:https?:\/\/[^\s)"']+)?\/assets\/${escapedNoteId}\/`;
   return markdown
-    .replace(new RegExp(`(!\\[[^\\]]*\\]\\()${assetPrefixPattern}([^\\)]+)(\\))`, 'g'), (_match, prefix: string, fileName: string, suffix: string) => {
-      const assetPath = path.join(assetDirectory, decodeURIComponent(fileName));
-      return `${prefix}<${pathToFileURL(assetPath).toString()}>${suffix}`;
-    })
-    .replace(new RegExp(`(<img[^>]*src=["'])${assetPrefixPattern}([^"']+)(["'][^>]*>)`, 'gi'), (_match, prefix: string, fileName: string, suffix: string) => {
-      const assetPath = path.join(assetDirectory, decodeURIComponent(fileName));
-      return `${prefix}${pathToFileURL(assetPath).toString()}${suffix}`;
-    });
+    .replace(
+      new RegExp(`(!\\[[^\\]]*\\]\\()${assetPrefixPattern}([^\\)]+)(\\))`, "g"),
+      (_match, prefix: string, fileName: string, suffix: string) => {
+        const assetPath = path.join(assetDirectory, decodeURIComponent(fileName));
+        return `${prefix}<${pathToFileURL(assetPath).toString()}>${suffix}`;
+      },
+    )
+    .replace(
+      new RegExp(`(<img[^>]*src=["'])${assetPrefixPattern}([^"']+)(["'][^>]*>)`, "gi"),
+      (_match, prefix: string, fileName: string, suffix: string) => {
+        const assetPath = path.join(assetDirectory, decodeURIComponent(fileName));
+        return `${prefix}${pathToFileURL(assetPath).toString()}${suffix}`;
+      },
+    );
 }
 
 function prependExportHeader(markdown: string, title: string, settings: PdfExportSettings): string {
@@ -234,64 +252,64 @@ function prependExportHeader(markdown: string, title: string, settings: PdfExpor
     lines.push(title);
   }
   if (settings.includeDate) {
-    lines.push(new Date().toLocaleDateString('en-CA'));
+    lines.push(new Date().toLocaleDateString("en-CA"));
   }
   if (lines.length === 0) {
     return markdown;
   }
-  return `${lines.join('\n\n')}\n\n${markdown}`;
+  return `${lines.join("\n\n")}\n\n${markdown}`;
 }
 
 function imageMarginForAlignment(alignment: PdfImageAlignment): string {
   switch (alignment) {
-    case 'center':
-      return '0.6em auto';
-    case 'right':
-      return '0.6em 0 0.6em auto';
+    case "center":
+      return "0.6em auto";
+    case "right":
+      return "0.6em 0 0.6em auto";
     default:
-      return '0.6em 0';
+      return "0.6em 0";
   }
 }
 
 function imageTextAlign(alignment: PdfImageAlignment): string {
   switch (alignment) {
-    case 'center':
-      return 'center';
-    case 'right':
-      return 'right';
+    case "center":
+      return "center";
+    case "right":
+      return "right";
     default:
-      return 'left';
+      return "left";
   }
 }
 
 function imageAutoMargin(alignment: PdfImageAlignment): string {
   switch (alignment) {
-    case 'center':
-      return '0 auto';
-    case 'right':
-      return '0 0 0 auto';
+    case "center":
+      return "0 auto";
+    case "right":
+      return "0 0 0 auto";
     default:
-      return '0 auto 0 0';
+      return "0 auto 0 0";
   }
 }
 
 function basePresetCss(preset: PdfStylePreset): string {
   switch (preset) {
-    case 'academic':
+    case "academic":
       return `
 html, body { color: #111827; }
 h1, h2, h3, h4, h5, h6 { color: #111827; letter-spacing: 0.01em; }
 blockquote { border-left: 3px solid #9ca3af; color: #374151; }
 table { font-size: 10.5pt; }
 `;
-    case 'clean':
+    case "clean":
       return `
 html, body { font-family: Arial, Helvetica, sans-serif; color: #111827; }
 h1, h2, h3, h4, h5, h6 { font-family: Arial, Helvetica, sans-serif; color: #0f172a; }
 pre, code { font-family: Consolas, "Courier New", monospace; }
 blockquote { border-left: 3px solid #cbd5e1; color: #334155; }
 `;
-    case 'compact':
+    case "compact":
       return `
 html, body { color: #000; }
 h1, h2, h3, h4, h5, h6 { margin-top: 0.8em; margin-bottom: 0.3em; }
@@ -299,21 +317,21 @@ p, li { margin-top: 0.2em; margin-bottom: 0.35em; }
 table { margin: 0.45em 0; font-size: 10pt; }
 `;
     default:
-      return '';
+      return "";
   }
 }
 
 function headerCss(title: string, settings: PdfExportSettings): string {
-  let content = '';
-  if (settings.headerMode === 'title') {
+  let content = "";
+  if (settings.headerMode === "title") {
     content = JSON.stringify(title);
-  } else if (settings.headerMode === 'date') {
-    content = JSON.stringify(new Date().toLocaleDateString('en-CA'));
-  } else if (settings.headerMode === 'title-date') {
-    content = JSON.stringify(`${title} • ${new Date().toLocaleDateString('en-CA')}`);
+  } else if (settings.headerMode === "date") {
+    content = JSON.stringify(new Date().toLocaleDateString("en-CA"));
+  } else if (settings.headerMode === "title-date") {
+    content = JSON.stringify(`${title} • ${new Date().toLocaleDateString("en-CA")}`);
   }
   if (!content) {
-    return '.documine-export-header { display: none; }';
+    return ".documine-export-header { display: none; }";
   }
   return `
 body { padding-top: 2.2em; }
@@ -379,11 +397,13 @@ function screenPreviewCss(): string {
 }
 
 export function buildPdfCss(title: string, settings: PdfExportSettings): string {
-  const family = settings.fontFamily === 'system-ui'
-    ? 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-    : JSON.stringify(settings.fontFamily);
+  const family =
+    settings.fontFamily === "system-ui"
+      ? 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+      : JSON.stringify(settings.fontFamily);
   const dimensions = pageDimensionsPx(settings.pageSize, settings.orientation);
-  return `
+  return (
+    `
 :root {
   --documine-page-width: ${dimensions.width}px;
   --documine-page-height: ${dimensions.height}px;
@@ -406,7 +426,7 @@ html, body {
 }
 
 body {
-  ${settings.justifyText ? 'text-align: justify;' : ''}
+  ${settings.justifyText ? "text-align: justify;" : ""}
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -419,7 +439,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 p, li {
-  ${settings.justifyText ? 'text-align: justify;' : ''}
+  ${settings.justifyText ? "text-align: justify;" : ""}
 }
 
 nav#TOC {
@@ -476,9 +496,9 @@ div.sourceCode pre,
 .hljs,
 code.hljs,
 .shiki {
-  white-space: ${settings.codeWrap === 'wrap' ? 'pre-wrap' : 'pre'};
-  overflow-x: ${settings.codeWrap === 'wrap' ? 'hidden' : 'auto'};
-  ${settings.codeWrap === 'wrap' ? 'overflow-wrap: anywhere;\n  word-break: break-word;' : ''}
+  white-space: ${settings.codeWrap === "wrap" ? "pre-wrap" : "pre"};
+  overflow-x: ${settings.codeWrap === "wrap" ? "hidden" : "auto"};
+  ${settings.codeWrap === "wrap" ? "overflow-wrap: anywhere;\n  word-break: break-word;" : ""}
   background-color: ${CODE_CHROME.backgroundColor};
   color: ${CODE_CHROME.color};
   border-radius: ${CODE_CHROME.borderRadius};
@@ -584,30 +604,36 @@ img {
 ${basePresetCss(settings.stylePreset)}
 ${headerCss(title, settings)}
 ${screenPreviewCss()}
-`.trim() + '\n';
+`.trim() + "\n"
+  );
 }
 
 function normalizeCodeLanguage(value: string): BundledLanguage | null {
-  const normalized = value.toLowerCase().replace(/^language-/, '').replace(/^sourcecode\s+/, '');
-  const language = normalized === 'cs' || normalized === 'c#' ? 'csharp' : normalized === 'ts' ? 'typescript' : normalized;
-  return SHIKI_LANGUAGES.has(language) ? language as BundledLanguage : null;
+  const normalized = value
+    .toLowerCase()
+    .replace(/^language-/, "")
+    .replace(/^sourcecode\s+/, "");
+  const language =
+    normalized === "cs" || normalized === "c#" ? "csharp" : normalized === "ts" ? "typescript" : normalized;
+  return SHIKI_LANGUAGES.has(language) ? (language as BundledLanguage) : null;
 }
 
 function decodeHtmlText(value: string): string {
   return value
-    .replace(/<a\b[^>]*><\/a>/gi, '')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
+    .replace(/<a\b[^>]*><\/a>/gi, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&');
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }
 
 export async function highlightCodeBlocksWithShiki(bodyHtml: string, settings: PdfExportSettings): Promise<string> {
-  const blockPattern = /(?:<div class="sourceCode"[^>]*>\s*)?<pre\b([^>]*)>\s*<code\b([^>]*)>([\s\S]*?)<\/code>\s*<\/pre>(?:\s*<\/div>)?/gi;
-  let result = '';
+  const blockPattern =
+    /(?:<div class="sourceCode"[^>]*>\s*)?<pre\b([^>]*)>\s*<code\b([^>]*)>([\s\S]*?)<\/code>\s*<\/pre>(?:\s*<\/div>)?/gi;
+  let result = "";
   let lastIndex = 0;
 
   for (const match of bodyHtml.matchAll(blockPattern)) {
@@ -618,10 +644,7 @@ export async function highlightCodeBlocksWithShiki(bodyHtml: string, settings: P
 
     const attrs = `${match[1]} ${match[2]}`;
     const classMatch = attrs.match(/class=(["'])(.*?)\1/i);
-    const language = classMatch?.[2]
-      .split(/\s+/)
-      .map(normalizeCodeLanguage)
-      .find(Boolean) ?? null;
+    const language = classMatch?.[2].split(/\s+/).map(normalizeCodeLanguage).find(Boolean) ?? null;
 
     if (!language) {
       result += fullMatch;
@@ -631,17 +654,19 @@ export async function highlightCodeBlocksWithShiki(bodyHtml: string, settings: P
     const code = decodeHtmlText(match[3]);
     const highlighted = await codeToHtml(code, {
       lang: language,
-      theme: 'dark-plus',
-      transformers: [{
-        pre(node) {
-          this.addClassToHast(node, 'documine-shiki');
+      theme: "dark-plus",
+      transformers: [
+        {
+          pre(node) {
+            this.addClassToHast(node, "documine-shiki");
+          },
+          code(node) {
+            node.properties.style = codeCodeStyle();
+          },
         },
-        code(node) {
-          node.properties.style = codeCodeStyle();
-        },
-      }],
+      ],
     });
-    const preStyle = codePreStyle(settings.codeWrap === 'wrap' ? 'pre-wrap' : 'pre');
+    const preStyle = codePreStyle(settings.codeWrap === "wrap" ? "pre-wrap" : "pre");
     result += highlighted.replace(/<pre\b([^>]*?)\sstyle="[^"]*"/i, `<pre$1 style="${preStyle}"`);
   }
 
@@ -656,12 +681,18 @@ async function transformExportHtml(bodyHtml: string, settings: PdfExportSettings
 
   const withOrderedToc = bodyHtml.replace(/<nav id="TOC"\b[^>]*>[\s\S]*?<\/nav>/i, (tocHtml) => {
     return tocHtml
-      .replace(/<(\/?)ul\b/gi, '<$1ol')
-      .replace(/<a\b([^>]*?)\shref=(["'])(#[^'"]+)\2([^>]*)>([\s\S]*?)<\/a>/gi, '<span class="documine-toc-link" data-target="$3">$5</span>');
+      .replace(/<(\/?)ul\b/gi, "<$1ol")
+      .replace(
+        /<a\b([^>]*?)\shref=(["'])(#[^'"]+)\2([^>]*)>([\s\S]*?)<\/a>/gi,
+        '<span class="documine-toc-link" data-target="$3">$5</span>',
+      );
   });
   const withShikiCode = await highlightCodeBlocksWithShiki(withOrderedToc, settings);
   const withStyledFigures = withShikiCode.replace(/<figure>/g, `<figure style="${figureStyle}">`);
-  const withStyledCaptions = withStyledFigures.replace(/<figcaption(\b[^>]*)>/gi, `<figcaption$1 style="${figcaptionStyle}">`);
+  const withStyledCaptions = withStyledFigures.replace(
+    /<figcaption(\b[^>]*)>/gi,
+    `<figcaption$1 style="${figcaptionStyle}">`,
+  );
 
   return withStyledCaptions.replace(/<img\b([^>]*?)\s*\/?>(?![^<]*<\/img>)/gi, (match, attrs: string) => {
     const styleMatch = attrs.match(/\sstyle=(["'])(.*?)\1/i);
@@ -677,31 +708,29 @@ async function transformExportHtml(bodyHtml: string, settings: PdfExportSettings
   });
 }
 
-async function markdownToHtmlString(source: string, cssContent: string, settings: PdfExportSettings, toc: boolean, cwd: string, options?: { signal?: AbortSignal }): Promise<string> {
-  const args = [
-    source,
-    '--from',
-    MARKDOWN_FROM,
-    '--to',
-    'html5',
-    '--standalone',
-    '--metadata',
-    'title=',
-  ];
+async function markdownToHtmlString(
+  source: string,
+  cssContent: string,
+  settings: PdfExportSettings,
+  toc: boolean,
+  cwd: string,
+  options?: { signal?: AbortSignal },
+): Promise<string> {
+  const args = [source, "--from", MARKDOWN_FROM, "--to", "html5", "--standalone", "--metadata", "title="];
   if (toc) {
-    args.push('--toc');
+    args.push("--toc");
   }
 
-  const { stdout } = await execFileAsync('pandoc', args, {
+  const { stdout } = await execFileAsync("pandoc", args, {
     cwd,
     maxBuffer: 20 * 1024 * 1024,
     env: { ...process.env },
     signal: options?.signal,
   });
   const standaloneHtml = String(stdout);
-  const withoutBundledStyles = standaloneHtml.replace(/\s*<style>[\s\S]*?<\/style>\s*/i, '\n');
-  const withInjectedStyles = withoutBundledStyles.includes('</head>')
-    ? withoutBundledStyles.replace('</head>', `  <style>\n${cssContent}  </style>\n</head>`)
+  const withoutBundledStyles = standaloneHtml.replace(/\s*<style>[\s\S]*?<\/style>\s*/i, "\n");
+  const withInjectedStyles = withoutBundledStyles.includes("</head>")
+    ? withoutBundledStyles.replace("</head>", `  <style>\n${cssContent}  </style>\n</head>`)
     : withoutBundledStyles;
   const bodyMatch = withInjectedStyles.match(/<body(\b[^>]*)>([\s\S]*?)<\/body>/i);
   if (!bodyMatch) {
@@ -716,7 +745,7 @@ async function markdownToHtmlString(source: string, cssContent: string, settings
 
 async function htmlToPdfWithBrowser(htmlPath: string, pdfPath: string, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) {
-    throw new Error('PDF export superseded by a newer request.');
+    throw new Error("PDF export superseded by a newer request.");
   }
 
   const browser = await launchPdfBrowser();
@@ -724,11 +753,11 @@ async function htmlToPdfWithBrowser(htmlPath: string, pdfPath: string, signal?: 
   try {
     const page = await browser.newPage();
     if (signal?.aborted) {
-      throw new Error('PDF export superseded by a newer request.');
+      throw new Error("PDF export superseded by a newer request.");
     }
-    await page.goto(pathToFileURL(htmlPath).toString(), { waitUntil: 'networkidle0' });
-    await page.emulateMediaType('print');
-    await page.evaluateHandle('document.fonts.ready');
+    await page.goto(pathToFileURL(htmlPath).toString(), { waitUntil: "networkidle0" });
+    await page.emulateMediaType("print");
+    await page.evaluateHandle("document.fonts.ready");
     await page.pdf({
       path: pdfPath,
       printBackground: true,
@@ -741,31 +770,53 @@ async function htmlToPdfWithBrowser(htmlPath: string, pdfPath: string, signal?: 
 }
 
 function sanitizeFileNameSegment(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'note';
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "note"
+  );
 }
 
 function previewWorkspaceSegment(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120) || 'note';
+  return (
+    value
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 120) || "note"
+  );
 }
 
-async function ensurePreviewWorkspace(noteId: string): Promise<{ tempDir: string }> {
-  const rootDir = path.join(os.tmpdir(), 'documine-pdf-preview-cache', previewWorkspaceSegment(noteId));
-  const rendersDir = path.join(rootDir, 'renders');
+async function _ensurePreviewWorkspace(noteId: string): Promise<{ tempDir: string }> {
+  const rootDir = path.join(os.tmpdir(), "documine-pdf-preview-cache", previewWorkspaceSegment(noteId));
+  const rendersDir = path.join(rootDir, "renders");
   await fs.mkdir(rendersDir, { recursive: true });
-  const tempDir = await fs.mkdtemp(path.join(rendersDir, 'render-'));
+  const tempDir = await fs.mkdtemp(path.join(rendersDir, "render-"));
   return { tempDir };
 }
 
-async function renderMarkdownToHtmlFile(input: ExportPdfInput, tempDir: string, htmlPath: string, options?: { signal?: AbortSignal }): Promise<{ markdown: string; css: string; html: string }> {
+async function renderMarkdownToHtmlFile(
+  input: ExportPdfInput,
+  tempDir: string,
+  htmlPath: string,
+  options?: { signal?: AbortSignal },
+): Promise<{ markdown: string; css: string; html: string }> {
   const settings = mergeSettings(input.settings);
-  const title = input.noteTitle || 'Untitled';
-  const rewrittenMarkdown = rewriteMarkdownAssetPaths(prependExportHeader(input.markdown, title, settings), input.noteId, input.assetDirectory);
-  const markdownPath = path.join(tempDir, 'note.md');
+  const title = input.noteTitle || "Untitled";
+  const rewrittenMarkdown = rewriteMarkdownAssetPaths(
+    prependExportHeader(input.markdown, title, settings),
+    input.noteId,
+    input.assetDirectory,
+  );
+  const markdownPath = path.join(tempDir, "note.md");
   const cssContent = buildPdfCss(title, settings);
 
-  await fs.writeFile(markdownPath, rewrittenMarkdown, 'utf8');
-  await markdownToHtmlString(markdownPath, cssContent, settings, settings.toc, tempDir, { signal: options?.signal }).then((html) => fs.writeFile(htmlPath, html, 'utf8'));
-  const html = await fs.readFile(htmlPath, 'utf8');
+  await fs.writeFile(markdownPath, rewrittenMarkdown, "utf8");
+  await markdownToHtmlString(markdownPath, cssContent, settings, settings.toc, tempDir, {
+    signal: options?.signal,
+  }).then((html) => fs.writeFile(htmlPath, html, "utf8"));
+  const html = await fs.readFile(htmlPath, "utf8");
   return { markdown: rewrittenMarkdown, css: cssContent, html };
 }
 
@@ -774,11 +825,11 @@ export async function detectPdfExportCapabilities(): Promise<PdfExportCapabiliti
     return cachedCapabilities;
   }
 
-  const pandoc = await hasExecutable('pandoc');
+  const pandoc = await hasExecutable("pandoc");
   cachedCapabilities = {
     pandoc,
     browser: true,
-    availableEngines: ['browser'],
+    availableEngines: ["browser"],
     styles: [...PDF_STYLE_PRESETS],
     pageSizes: [...PDF_PAGE_SIZES],
     fontFamilies: [...PDF_FONT_FAMILIES],
@@ -791,21 +842,20 @@ export async function detectPdfExportCapabilities(): Promise<PdfExportCapabiliti
 
 function resolvePdfEngine(_requested: PdfEngine, capabilities: PdfExportCapabilities): PdfEngine {
   if (!capabilities.browser) {
-    throw new Error('No supported PDF engine found. Install a Chromium browser.');
+    throw new Error("No supported PDF engine found. Install a Chromium browser.");
   }
-  return 'browser';
+  return "browser";
 }
 
 export async function renderMarkdownToExportHtml(input: ExportPdfInput): Promise<ExportHtmlPreviewResult> {
   const capabilities = await detectPdfExportCapabilities();
   if (!capabilities.pandoc) {
-    throw new Error('pandoc is required but was not found in PATH.');
+    throw new Error("pandoc is required but was not found in PATH.");
   }
 
-  const settings = mergeSettings(input.settings);
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'documine-export-preview-'));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "documine-export-preview-"));
   try {
-    const htmlPath = path.join(tempDir, 'export.html');
+    const htmlPath = path.join(tempDir, "export.html");
     const result = await renderMarkdownToHtmlFile(input, tempDir, htmlPath, { signal: input.signal });
     return {
       markdown: result.markdown,
@@ -821,27 +871,27 @@ async function renderMarkdownToPdfBuffer(input: ExportPdfInput): Promise<ExportP
   const totalStartedAt = performance.now();
   const capabilities = await detectPdfExportCapabilities();
   if (!capabilities.pandoc) {
-    throw new Error('pandoc is required but was not found in PATH.');
+    throw new Error("pandoc is required but was not found in PATH.");
   }
 
   const settings = mergeSettings(input.settings);
   resolvePdfEngine(settings.engine, capabilities);
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'documine-pdf-'));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "documine-pdf-"));
   try {
-    const htmlPath = path.join(tempDir, 'export.html');
-    const pdfPath = path.join(tempDir, 'export.pdf');
-    const title = input.noteTitle || 'Untitled';
+    const htmlPath = path.join(tempDir, "export.html");
+    const pdfPath = path.join(tempDir, "export.pdf");
+    const title = input.noteTitle || "Untitled";
 
     const pandocStartedAt = performance.now();
     const { markdown, css, html } = await renderMarkdownToHtmlFile(input, tempDir, htmlPath, { signal: input.signal });
-    input.onStageTiming?.('pandoc', performance.now() - pandocStartedAt);
+    input.onStageTiming?.("pandoc", performance.now() - pandocStartedAt);
 
     const browserStartedAt = performance.now();
     await htmlToPdfWithBrowser(htmlPath, pdfPath, input.signal);
-    input.onStageTiming?.('browser', performance.now() - browserStartedAt);
+    input.onStageTiming?.("browser", performance.now() - browserStartedAt);
 
     const pdf = await fs.readFile(pdfPath);
-    input.onStageTiming?.('total', performance.now() - totalStartedAt);
+    input.onStageTiming?.("total", performance.now() - totalStartedAt);
     return {
       fileName: `${sanitizeFileNameSegment(title)}.pdf`,
       pdf,
