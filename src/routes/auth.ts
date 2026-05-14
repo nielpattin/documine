@@ -24,9 +24,6 @@ import {
   createApiKey,
   deleteApiKey,
   listApiKeys,
-} from "../lib/auth.js";
-
-import {
   loadAuthGuardData,
   pruneAuthGuardData,
   saveAuthGuardData,
@@ -36,8 +33,9 @@ import {
   recordAuthGuardFailedLogin,
   clearAuthGuardFailedLoginsForIp,
   getActiveIpBan,
-  exportSettingsFilePath,
-} from "../server.js";
+} from "../lib/auth.js";
+
+import { exportSettingsFilePath } from "../lib/config.js";
 
 import {
   loadPdfExportSettings,

@@ -94,6 +94,24 @@ export function writeJson(filePath: string, value: unknown) {
 }
 
 // ---------------------------------------------------------------------------
+// Origin validation
+// ---------------------------------------------------------------------------
+
+export function isAllowedBrowserOrigin(origin: string) {
+  try {
+    const url = new URL(origin);
+    const isLocalHost = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    if (isLocalHost && url.protocol === "http:") {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Hono request body reader
 // ---------------------------------------------------------------------------
 

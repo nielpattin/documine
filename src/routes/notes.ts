@@ -37,11 +37,8 @@ import {
 
 import type { NoteStore } from "../lib/note-store.js";
 
+import { exportSettingsFilePath, maxNotesImportZipBytes, maxImageUploadBytes } from "../lib/config.js";
 import {
-  activePdfPreviewControllers,
-  exportSettingsFilePath,
-  loadManagedNoteExportFile,
-  loadManagedDebugExportFile,
   serializeNoteForClient,
   serializeThreads,
   handleImageUpload,
@@ -49,14 +46,49 @@ import {
   applyTextEditsToNote,
   locateMessage,
   makeShareUrl,
-  maxNotesImportZipBytes,
-  maxImageUploadBytes,
-  renderPrintPreviewHtml,
-  renderMarkdown,
-  injectPreviewBaseHref,
-} from "../server.js";
+} from "../lib/note-utils.js";
+import { renderMarkdown, renderPrintPreviewHtml, injectPreviewBaseHref } from "../lib/markdown.js";
+
+const activePdfPreviewControllers = new Map<string, AbortController>();
+
+function readJson<T>(filePath: string, fallback: T): T {
+  try { return JSON.parse(fs.readFileSync(filePath, "utf8")); } catch { return fallback; }
+}
 
 export function registerNotesRoutes(app: Hono, store: NoteStore) {
+
+  function loadManagedNoteExportFile(noteId: string, rawFileName: string) {
+    const baseName = path.basename(rawFileName).replace(/\.pdf$/i, "");
+    const filePath = path.join(store.noteExportDirectory(noteId), `${baseName}.pdf`);
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      return null;
+    }
+    return { fileName: baseName, filePath };
+  }
+
+  function loadManagedDebugExportFile(noteId: string, rawFileName: string) {
+    const fileName = path.basename(rawFileName);
+    const exportFile = loadManagedNoteExportFile(noteId, fileName);
+    if (!exportFile) {
+      return null;
+    }
+    const metadataPath = store.noteExportAssetPath(noteId, exportFile.fileName, "json");
+    const htmlPath = store.noteExportAssetPath(noteId, exportFile.fileName, "html");
+    const cssPath = store.noteExportAssetPath(noteId, exportFile.fileName, "css");
+    const markdownPath = store.noteExportAssetPath(noteId, exportFile.fileName, "md");
+    if (!fs.existsSync(metadataPath) || !fs.existsSync(htmlPath) || !fs.existsSync(cssPath) || !fs.existsSync(markdownPath)) {
+      return null;
+    }
+    return {
+      fileName: exportFile.fileName,
+      debug: {
+        metadata: readJson(metadataPath, null),
+        html: fs.readFileSync(htmlPath, "utf8"),
+        css: fs.readFileSync(cssPath, "utf8"),
+        markdown: fs.readFileSync(markdownPath, "utf8"),
+      },
+    };
+  }
   app.get("/api/notes", (c) => {
     if (!isOwnerAuthenticated(c)) {
       return c.json({ ok: false, error: "Unauthorized." }, 401);

@@ -17,10 +17,7 @@ import {
   canManageThread,
 } from "../lib/auth.js";
 
-import { requireShareAccess, requireSharedIdentity } from "../server.js";
-
-import { broadcastEditorMutation, broadcastNoteUpdate, broadcastThreadsUpdated } from "../lib/collab-ws.js";
-
+import { maxImageUploadBytes } from "../lib/config.js";
 import {
   serializeNoteForClient,
   serializeThreads,
@@ -28,16 +25,17 @@ import {
   applyTextEditsToNote,
   handleImageUpload,
   sanitizeAnchor,
-  renderPrintPreviewHtml,
-  injectPreviewBaseHref,
-  maxImageUploadBytes,
   locateMessage,
-  renderMarkdown,
-} from "../server.js";
+  requireShareAccess,
+  requireSharedIdentity,
+} from "../lib/note-utils.js";
+import { renderMarkdown, renderPrintPreviewHtml, injectPreviewBaseHref } from "../lib/markdown.js";
+
+import { broadcastEditorMutation, broadcastNoteUpdate, broadcastThreadsUpdated } from "../lib/collab-ws.js";
 
 export function registerSharedRoutes(app: Hono, store: NoteStore) {
   app.get("/api/share/:shareId/meta", (c) => {
-    const note = requireShareAccess(c, "view");
+    const note = requireShareAccess(c, "view", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
@@ -52,7 +50,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
   });
 
   app.get("/api/share/:shareId", (c) => {
-    const note = requireShareAccess(c, "view");
+    const note = requireShareAccess(c, "view", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
@@ -64,7 +62,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
   });
 
   app.get("/api/share/:shareId/note", (c) => {
-    const note = requireShareAccess(c, "view");
+    const note = requireShareAccess(c, "view", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
@@ -86,7 +84,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
   });
 
   app.get("/api/share/:shareId/collab", (c) => {
-    const note = requireShareAccess(c, "edit");
+    const note = requireShareAccess(c, "edit", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
@@ -106,7 +104,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
   });
 
   app.post("/api/share/:shareId/edit", async (c) => {
-    const note = requireShareAccess(c, "edit");
+    const note = requireShareAccess(c, "edit", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
@@ -142,7 +140,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
   });
 
   app.post("/api/share/:shareId/render", async (c) => {
-    const note = requireShareAccess(c, "view");
+    const note = requireShareAccess(c, "view", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
@@ -157,7 +155,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
   });
 
   app.post("/api/share/:shareId/export/html-preview", async (c) => {
-    const note = requireShareAccess(c, "view");
+    const note = requireShareAccess(c, "view", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
@@ -178,7 +176,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
   });
 
   app.post("/api/share/:shareId/identity", async (c) => {
-    const note = requireShareAccess(c, "view");
+    const note = requireShareAccess(c, "view", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
@@ -208,7 +206,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
       onError: (c) => c.json({ ok: false, error: "Image exceeds the 10 MB upload limit." }, 413),
     }),
     async (c) => {
-      const note = requireShareAccess(c, "edit");
+      const note = requireShareAccess(c, "edit", store);
       if (!note) {
         return c.json({ ok: false, error: "Shared note not found." }, 404);
       }
@@ -221,7 +219,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
   );
 
   app.post("/api/share/:shareId/threads", async (c) => {
-    const note = requireShareAccess(c, "comment");
+    const note = requireShareAccess(c, "comment", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
@@ -267,7 +265,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
   });
 
   app.post("/api/share/:shareId/threads/:threadId/replies", async (c) => {
-    const note = requireShareAccess(c, "comment");
+    const note = requireShareAccess(c, "comment", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
@@ -315,7 +313,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
   });
 
   app.patch("/api/share/:shareId/threads/:threadId", async (c) => {
-    const note = requireShareAccess(c, "comment");
+    const note = requireShareAccess(c, "comment", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
@@ -342,7 +340,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
   });
 
   app.delete("/api/share/:shareId/threads/:threadId", (c) => {
-    const note = requireShareAccess(c, "comment");
+    const note = requireShareAccess(c, "comment", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
@@ -367,7 +365,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
   });
 
   app.patch("/api/share/:shareId/messages/:messageId", async (c) => {
-    const note = requireShareAccess(c, "comment");
+    const note = requireShareAccess(c, "comment", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
@@ -400,7 +398,7 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
   });
 
   app.delete("/api/share/:shareId/messages/:messageId", (c) => {
-    const note = requireShareAccess(c, "comment");
+    const note = requireShareAccess(c, "comment", store);
     if (!note) {
       return c.json({ ok: false, error: "Shared note not found." }, 404);
     }
