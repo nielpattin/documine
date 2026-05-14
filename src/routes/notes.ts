@@ -456,8 +456,6 @@ export function registerNotesRoutes(app: Hono, store: NoteStore) {
     activePdfPreviewControllers.get(previewKey)?.abort();
     const controller = new AbortController();
     activePdfPreviewControllers.set(previewKey, controller);
-    const requestStartedAt = performance.now();
-
     try {
       const markdown = typeof body.markdown === "string" ? body.markdown : note.markdown;
       const settings = body.settings === undefined ? savedSettings : body.settings;
@@ -467,7 +465,6 @@ export function registerNotesRoutes(app: Hono, store: NoteStore) {
       }
       const baseHref = `${new URL(c.req.url).origin}/`;
       const outHtml = injectPreviewBaseHref(html, baseHref);
-      console.log(`[html-preview] note=${note.id} total=${Math.round(performance.now() - requestStartedAt)}ms`);
       return c.body(outHtml, 200, {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store",
@@ -478,14 +475,8 @@ export function registerNotesRoutes(app: Hono, store: NoteStore) {
       }
       const message = error instanceof Error ? error.message : "Preview failed.";
       if (controller.signal.aborted) {
-        console.log(
-          `[html-preview] note=${note.id} cancelled after ${Math.round(performance.now() - requestStartedAt)}ms`,
-        );
         return c.json({ ok: false, error: "Preview superseded by a newer request." }, 409);
       }
-      console.log(
-        `[html-preview] note=${note.id} failed after ${Math.round(performance.now() - requestStartedAt)}ms error=${message}`,
-      );
       return c.json({ ok: false, error: message }, 500);
     }
   });
