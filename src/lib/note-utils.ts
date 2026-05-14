@@ -3,13 +3,15 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Context } from "hono";
 
-import type {
-  CommentAnchor,
-  NoteRecord,
-  ShareAccess,
-} from "../types/notes.js";
+import type { CommentAnchor, NoteRecord, ShareAccess } from "../types/notes.js";
 
-import { applyClientMutations, idAtIndex, idBeforeIndex, type ClientMutation, type ServerMutationMessage } from "../collab.js";
+import {
+  applyClientMutations,
+  idAtIndex,
+  idBeforeIndex,
+  type ClientMutation,
+  type ServerMutationMessage,
+} from "../collab.js";
 import { escapeMarkdownImageAlt, countOccurrences } from "../shared.js";
 
 import {
@@ -134,7 +136,11 @@ export function serializeNoteForClient(note: NoteRecord, c: Context) {
 // Share access
 // ---------------------------------------------------------------------------
 
-export function requireShareAccess(c: Context, minAccess: ShareAccess, store: { findByShareId(id: string): NoteRecord | undefined }): NoteRecord | null {
+export function requireShareAccess(
+  c: Context,
+  minAccess: ShareAccess,
+  store: { findByShareId(id: string): NoteRecord | undefined },
+): NoteRecord | null {
   const note = store.findByShareId(c.req.param("shareId") || "");
   if (!note) {
     return null;

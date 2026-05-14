@@ -6,7 +6,6 @@ import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
 import { WebSocketServer, type WebSocket } from "ws";
 
-
 import type { ClientPresenceMessage } from "./collab.js";
 
 import { registerAuthRoutes } from "./routes/auth.js";
@@ -25,7 +24,12 @@ import {
   sendExistingPresence,
   broadcastShareParticipants,
 } from "./lib/collab-ws.js";
-import { initAuthPaths, isOwnerAuthenticated, isOwnerAuthenticatedIncomingRequest, getCommenterIdentityFromHeaders } from "./lib/auth.js";
+import {
+  initAuthPaths,
+  isOwnerAuthenticated,
+  isOwnerAuthenticatedIncomingRequest,
+  getCommenterIdentityFromHeaders,
+} from "./lib/auth.js";
 import { FsNoteStore } from "./lib/note-store.js";
 import { port, dataDir } from "./lib/config.js";
 import { isAllowedBrowserOrigin } from "./shared.js";
@@ -264,5 +268,4 @@ wss.on("connection", (ws, req) => {
 server.listen(port, () => {
   console.log(`documine api listening on http://localhost:${port}`);
   console.log(`data: ${path.resolve(dataDir)}`);
-
 });

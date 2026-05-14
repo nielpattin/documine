@@ -493,8 +493,6 @@ code, pre {
 pre,
 pre.sourceCode,
 div.sourceCode pre,
-.hljs,
-code.hljs,
 .shiki {
   white-space: ${settings.codeWrap === "wrap" ? "pre-wrap" : "pre"};
   overflow-x: ${settings.codeWrap === "wrap" ? "hidden" : "auto"};
@@ -523,7 +521,6 @@ code.sourceCode {
   border-radius: 4px;
 }
 
-.hljs,
 .sourceCode {
   color: #d4d4d4;
   background: transparent;
@@ -550,25 +547,6 @@ code.sourceCode {
 .sourceCode .sc { color: #ce9178; }
 .sourceCode .vs { color: #ce9178; }
 .sourceCode .sh { color: #ce9178; }
-.hljs-keyword { color: #569cd6 }
-.hljs-selector-tag { color: #569cd6 }
-.hljs-built_in { color: #569cd6 }
-.hljs-name { color: #569cd6 }
-.hljs-literal { color: #569cd6 }
-.hljs-string { color: #ce9178 }
-.hljs-title { color: #dcdcaa }
-.hljs-section { color: #dcdcaa }
-.hljs-attribute { color: #ce9178 }
-.hljs-comment { color: #6a9955 }
-.hljs-quote { color: #6a9955 }
-.hljs-number { color: #b5cea8 }
-.hljs-symbol { color: #b5cea8 }
-.hljs-bullet { color: #b5cea8 }
-.hljs-type { color: #4ec9b0 }
-.hljs-variable { color: #9cdcfe }
-.hljs-template-variable { color: #9cdcfe }
-.hljs-emphasis { font-style: italic }
-.hljs-strong { font-weight: 700 }
 
 figure {
   display: block;

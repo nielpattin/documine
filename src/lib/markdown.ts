@@ -1,13 +1,7 @@
-import hljs from "highlight.js";
 import { marked, type Tokens } from "marked";
 import sanitizeHtml from "sanitize-html";
 
-import {
-  buildPdfCss,
-  highlightCodeBlocksWithShiki,
-  mergeSettings,
-  type PdfExportSettings,
-} from "../pdf-export.js";
+import { buildPdfCss, highlightCodeBlocksWithShiki, mergeSettings, type PdfExportSettings } from "../pdf-export.js";
 import { TOKEN_COLORS, CODE_CHROME, codePreStyle } from "../code-block-style.js";
 import { escapeHtml } from "../shared.js";
 
@@ -21,10 +15,8 @@ codeRenderer.code = ({ text, lang }: Tokens.Code) => {
   if (language === "mermaid") {
     return `<pre class="mermaid">${escapeHtml(text)}</pre>`;
   }
-  const validLanguage = language && hljs.getLanguage(language) ? language : null;
-  const highlighted = validLanguage ? hljs.highlight(text, { language: validLanguage }).value : escapeHtml(text);
-  const languageClass = validLanguage ? ` class="hljs language-${escapeHtml(validLanguage)}"` : ' class="hljs"';
-  return `<pre><code${languageClass}>${highlighted}</code></pre>`;
+  const languageClass = language ? ` class="language-${escapeHtml(language)}"` : "";
+  return `<pre><code${languageClass}>${escapeHtml(text)}</code></pre>`;
 };
 
 marked.setOptions({
@@ -114,26 +106,17 @@ export function inlineCodeBlockStyles(html: string, settings: PdfExportSettings)
   result = result.replace(/<span class="([^"]*)"([^>]*)>/gi, (_, classes, attrs) => {
     const classList = classes.split(/\s+/);
     let color: string | null = null;
-    let isBold = false;
-    let isItalic = false;
     for (const cls of classList) {
-      if (cls === "hljs-strong") isBold = true;
-      if (cls === "hljs-emphasis") isItalic = true;
       if (!color && TOKEN_COLORS[cls]) color = TOKEN_COLORS[cls];
     }
-    let styleAdd = "";
-    if (color) styleAdd += `color:${color};`;
-    if (isBold) styleAdd += "font-weight:700;";
-    if (isItalic) styleAdd += "font-style:italic;";
-
-    if (!styleAdd) {
+    if (!color) {
       return `<span class="${classes}"${attrs}>`;
     }
 
     if (/style\s*=\s*["']/i.test(attrs)) {
-      return `<span class="${classes}"${attrs.replace(/(style\s*=\s*["'])([^"']*)(["'])/i, `$1$2;${styleAdd}$3`)}>`;
+      return `<span class="${classes}"${attrs.replace(/(style\s*=\s*["'])([^"']*)(["'])/i, `$1$2;color:${color};$3`)}>`;
     }
-    return `<span class="${classes}"${attrs} style="${styleAdd}">`;
+    return `<span class="${classes}"${attrs} style="color:${color};">`;
   });
 
   return result;

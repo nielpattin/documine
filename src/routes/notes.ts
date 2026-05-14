@@ -52,11 +52,14 @@ import { renderMarkdown, renderPrintPreviewHtml, injectPreviewBaseHref } from ".
 const activePdfPreviewControllers = new Map<string, AbortController>();
 
 function readJson<T>(filePath: string, fallback: T): T {
-  try { return JSON.parse(fs.readFileSync(filePath, "utf8")); } catch { return fallback; }
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return fallback;
+  }
 }
 
 export function registerNotesRoutes(app: Hono, store: NoteStore) {
-
   function loadManagedNoteExportFile(noteId: string, rawFileName: string) {
     const baseName = path.basename(rawFileName).replace(/\.pdf$/i, "");
     const filePath = path.join(store.noteExportDirectory(noteId), `${baseName}.pdf`);
@@ -76,7 +79,12 @@ export function registerNotesRoutes(app: Hono, store: NoteStore) {
     const htmlPath = store.noteExportAssetPath(noteId, exportFile.fileName, "html");
     const cssPath = store.noteExportAssetPath(noteId, exportFile.fileName, "css");
     const markdownPath = store.noteExportAssetPath(noteId, exportFile.fileName, "md");
-    if (!fs.existsSync(metadataPath) || !fs.existsSync(htmlPath) || !fs.existsSync(cssPath) || !fs.existsSync(markdownPath)) {
+    if (
+      !fs.existsSync(metadataPath) ||
+      !fs.existsSync(htmlPath) ||
+      !fs.existsSync(cssPath) ||
+      !fs.existsSync(markdownPath)
+    ) {
       return null;
     }
     return {

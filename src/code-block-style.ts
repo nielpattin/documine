@@ -4,8 +4,7 @@
  */
 
 // Shared token color mapping.
-// Matches Shiki's `dark-plus` theme colors for Pandoc (`.sourceCode .kw`, etc.)
-// and Highlight.js (`.hljs-keyword`, etc.) classes.
+// Matches Shiki's `dark-plus` theme colors for Pandoc (`.sourceCode .kw`, etc.) classes.
 export const TOKEN_COLORS: Record<string, string> = {
   // Keywords / Storage / Selector
   kw: "#569cd6",
@@ -29,29 +28,6 @@ export const TOKEN_COLORS: Record<string, string> = {
   sc: "#ce9178",
   vs: "#ce9178",
   sh: "#ce9178",
-
-  // Highlight.js equivalents
-  "hljs-keyword": "#569cd6",
-  "hljs-selector-tag": "#569cd6",
-  "hljs-built_in": "#569cd6",
-  "hljs-name": "#569cd6",
-  "hljs-literal": "#569cd6",
-  "hljs-string": "#ce9178",
-  "hljs-title": "#dcdcaa",
-  "hljs-section": "#dcdcaa",
-  "hljs-attribute": "#dcdcaa",
-  "hljs-comment": "#6a9955",
-  "hljs-quote": "#6a9955",
-  "hljs-number": "#b5cea8",
-  "hljs-symbol": "#b5cea8",
-  "hljs-bullet": "#b5cea8",
-  "hljs-type": "#4ec9b0",
-  "hljs-variable": "#9cdcfe",
-  "hljs-template-variable": "#9cdcfe",
-
-  // Misc
-  "hljs-emphasis": "font-style: italic",
-  "hljs-strong": "font-weight: 700",
 };
 
 // Common code block "chrome" styles.
