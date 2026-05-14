@@ -569,6 +569,7 @@ export function OwnerNotePage({
             <>
               {!connected ? <div className="editor-disconnected">Reconnecting...</div> : null}
               <CollabTextarea
+                key={noteId}
                 noteId={noteId}
                 initialValue={markdown}
                 wrapEnabled={editorWrapEnabled}

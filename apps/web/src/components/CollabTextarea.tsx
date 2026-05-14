@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
 import { createCollabEditor, type CollabEditorHandle, type ShareParticipant } from "../lib/collab-editor";
+import { useMountEffect } from "../hooks/useMountEffect";
 
 export type EditorHistoryState = {
   canUndo: boolean;
@@ -43,6 +44,9 @@ export function CollabTextarea({
   const horizontalScrollRef = useRef<HTMLDivElement | null>(null);
   const horizontalScrollSpacerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<CollabEditorHandle | null>(null);
+
+  // Store latest callbacks in ref for external system (collab editor) to use
+  // This avoids stale closures without recreating the editor
   const callbacksRef = useRef({
     onReady,
     onTextChange,
@@ -53,59 +57,31 @@ export function CollabTextarea({
     onScrollMetricsChange,
     onUploadImage,
   });
-  const onEditorMountRef = useRef(onEditorMount);
-
-  useEffect(() => {
-    callbacksRef.current = {
-      onReady,
-      onTextChange,
-      onConnectionChange,
-      onThreadsUpdated,
-      onParticipantsChange,
-      onHistoryChange,
-      onScrollMetricsChange,
-      onUploadImage,
-    };
-  }, [
-    onConnectionChange,
-    onHistoryChange,
-    onParticipantsChange,
+  callbacksRef.current = {
     onReady,
-    onScrollMetricsChange,
     onTextChange,
+    onConnectionChange,
     onThreadsUpdated,
+    onParticipantsChange,
+    onHistoryChange,
+    onScrollMetricsChange,
     onUploadImage,
-  ]);
+  };
 
-  useEffect(() => {
-    onEditorMountRef.current = onEditorMount;
-    onEditorMount?.(editorRef.current);
-  }, [onEditorMount]);
+  const onEditorMountRef = useRef(onEditorMount);
+  onEditorMountRef.current = onEditorMount;
 
-  useEffect(() => {
+  // Editor creation: mount-time external system setup
+  useMountEffect(() => {
     const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-
-    if (!editorRef.current) {
-      textarea.value = initialValue;
-    }
-  }, [initialValue]);
-
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
+    if (!textarea) return;
 
     textarea.value = initialValue;
     editorRef.current = createCollabEditor(textarea, {
       noteId,
       shareId,
-      onReady: (payload: { markdown: string; title: string; shareId: string }) =>
-        callbacksRef.current.onReady?.(payload),
-      onTextChange: (nextMarkdown: string) => {
+      onReady: (payload) => callbacksRef.current.onReady?.(payload),
+      onTextChange: (nextMarkdown) => {
         callbacksRef.current.onTextChange(nextMarkdown);
         callbacksRef.current.onScrollMetricsChange?.({
           scrollTop: textarea.scrollTop,
@@ -113,13 +89,12 @@ export function CollabTextarea({
           clientHeight: textarea.clientHeight,
         });
       },
-      onConnectionChange: (connected: boolean) => callbacksRef.current.onConnectionChange(connected),
+      onConnectionChange: (connected) => callbacksRef.current.onConnectionChange(connected),
       onThreadsUpdated: () => callbacksRef.current.onThreadsUpdated?.(),
-      onParticipantsChange: (participants: ShareParticipant[]) =>
-        callbacksRef.current.onParticipantsChange?.(participants),
-      onHistoryChange: (history: EditorHistoryState) => callbacksRef.current.onHistoryChange?.(history),
+      onParticipantsChange: (participants) => callbacksRef.current.onParticipantsChange?.(participants),
+      onHistoryChange: (history) => callbacksRef.current.onHistoryChange?.(history),
       onUploadImage: callbacksRef.current.onUploadImage
-        ? (file: File) => callbacksRef.current.onUploadImage!(file)
+        ? (file) => callbacksRef.current.onUploadImage!(file)
         : undefined,
     });
     onEditorMountRef.current?.(editorRef.current);
@@ -129,51 +104,59 @@ export function CollabTextarea({
       editorRef.current = null;
       onEditorMountRef.current?.(null);
     };
-  }, [noteId, shareId, initialValue]);
+  });
 
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    const horizontalScroll = horizontalScrollRef.current;
-    const spacer = horizontalScrollSpacerRef.current;
-    if (!textarea || !horizontalScroll || !spacer) {
-      return;
-    }
+  // Horizontal scroll sync: DOM side effect via callback ref (React 19+ cleanup)
+  const horizontalScrollCallbackRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      horizontalScrollRef.current = node;
+      if (!node) return;
 
-    const emitScrollMetrics = () => {
-      callbacksRef.current.onScrollMetricsChange?.({
-        scrollTop: textarea.scrollTop,
-        scrollHeight: textarea.scrollHeight,
-        clientHeight: textarea.clientHeight,
-      });
-    };
-    const syncMetrics = () => {
-      spacer.style.width = `${Math.max(textarea.scrollWidth, textarea.clientWidth)}px`;
-      horizontalScroll.scrollLeft = textarea.scrollLeft;
-      emitScrollMetrics();
-    };
-    const syncFromTextarea = () => {
-      horizontalScroll.scrollLeft = textarea.scrollLeft;
+      const textarea = textareaRef.current;
+      const spacer = horizontalScrollSpacerRef.current;
+      if (!textarea || !spacer) return;
+
+      const emitScrollMetrics = () => {
+        callbacksRef.current.onScrollMetricsChange?.({
+          scrollTop: textarea.scrollTop,
+          scrollHeight: textarea.scrollHeight,
+          clientHeight: textarea.clientHeight,
+        });
+      };
+      const syncMetrics = () => {
+        spacer.style.width = `${Math.max(textarea.scrollWidth, textarea.clientWidth)}px`;
+        node.scrollLeft = textarea.scrollLeft;
+        emitScrollMetrics();
+      };
+      const syncFromTextarea = () => {
+        node.scrollLeft = textarea.scrollLeft;
+        syncMetrics();
+      };
+      const syncFromScrollbar = () => {
+        textarea.scrollLeft = node.scrollLeft;
+      };
+
       syncMetrics();
-    };
-    const syncFromScrollbar = () => {
-      textarea.scrollLeft = horizontalScroll.scrollLeft;
-    };
+      textarea.addEventListener("scroll", syncFromTextarea);
+      textarea.addEventListener("input", syncMetrics);
+      node.addEventListener("scroll", syncFromScrollbar);
 
-    syncMetrics();
-    textarea.addEventListener("scroll", syncFromTextarea);
-    textarea.addEventListener("input", syncMetrics);
-    horizontalScroll.addEventListener("scroll", syncFromScrollbar);
+      const resizeObserver = new ResizeObserver(syncMetrics);
+      resizeObserver.observe(textarea);
 
-    const resizeObserver = new ResizeObserver(syncMetrics);
-    resizeObserver.observe(textarea);
+      return () => {
+        textarea.removeEventListener("scroll", syncFromTextarea);
+        textarea.removeEventListener("input", syncMetrics);
+        node.removeEventListener("scroll", syncFromScrollbar);
+        resizeObserver.disconnect();
+      };
+    },
+    [],
+  );
 
-    return () => {
-      textarea.removeEventListener("scroll", syncFromTextarea);
-      textarea.removeEventListener("input", syncMetrics);
-      horizontalScroll.removeEventListener("scroll", syncFromScrollbar);
-      resizeObserver.disconnect();
-    };
-  }, [wrapEnabled, initialValue]);
+  const horizontalScrollSpacerCallbackRef = useCallback((node: HTMLDivElement | null) => {
+    horizontalScrollSpacerRef.current = node;
+  }, []);
 
   return (
     <div className={`editor-textarea-shell ${wrapEnabled ? "" : "editor-textarea-shell--nowrap"}`.trim()}>
@@ -183,8 +166,8 @@ export function CollabTextarea({
         spellCheck={false}
         wrap={wrapEnabled ? "soft" : "off"}
       />
-      <div ref={horizontalScrollRef} className="editor-horizontal-scroll" aria-hidden={wrapEnabled}>
-        <div ref={horizontalScrollSpacerRef} className="editor-horizontal-scroll-spacer" />
+      <div ref={horizontalScrollCallbackRef} className="editor-horizontal-scroll" aria-hidden={wrapEnabled}>
+        <div ref={horizontalScrollSpacerCallbackRef} className="editor-horizontal-scroll-spacer" />
       </div>
     </div>
   );

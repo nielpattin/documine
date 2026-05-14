@@ -435,6 +435,7 @@ export function SharedNotePage({ shareId, onToggleTheme }: { shareId: string; on
           <div className="editor-pane">
             {!connected ? <div className="editor-disconnected">Reconnecting...</div> : null}
             <CollabTextarea
+              key={shareId}
               shareId={shareId}
               initialValue={markdown}
               wrapEnabled={editorWrapEnabled}
