@@ -1,45 +1,45 @@
-import { useCallback, useState, useSyncExternalStore } from 'react';
-import { apiRequest, type NoteSummary, type ViewerPayload } from './lib/api';
-import { broadcastNotesListRefresh } from './pages/page-utils';
-import { LoginPage } from './pages/LoginPage';
-import { NotesListPage } from './pages/NotesListPage';
-import { OwnerNotePage } from './pages/OwnerNotePage';
-import { SharedNotePage } from './pages/SharedNotePage';
-import { LoadingPage, OwnerAuthGuardToast } from './components/shared-ui';
+import { useCallback, useState, useSyncExternalStore } from "react";
+import { apiRequest, type NoteSummary, type ViewerPayload } from "./lib/api";
+import { broadcastNotesListRefresh } from "./pages/page-utils";
+import { LoginPage } from "./pages/LoginPage";
+import { NotesListPage } from "./pages/NotesListPage";
+import { OwnerNotePage } from "./pages/OwnerNotePage";
+import { SharedNotePage } from "./pages/SharedNotePage";
+import { LoadingPage, OwnerAuthGuardToast } from "./components/shared-ui";
 
-const OWNER_TOKEN_KEY = 'documine_owner_token';
+const OWNER_TOKEN_KEY = "documine_owner_token";
 
 type Route =
-  | { kind: 'login' }
-  | { kind: 'list' }
-  | { kind: 'note'; noteId: string }
-  | { kind: 'share'; shareId: string };
+  | { kind: "login" }
+  | { kind: "list" }
+  | { kind: "note"; noteId: string }
+  | { kind: "share"; shareId: string };
 
 function parseRoute(pathname: string): Route {
-  if (pathname === '/login') {
-    return { kind: 'login' };
+  if (pathname === "/login") {
+    return { kind: "login" };
   }
 
   const noteMatch = pathname.match(/^\/notes\/([^/]+)$/);
   if (noteMatch) {
-    return { kind: 'note', noteId: decodeURIComponent(noteMatch[1]) };
+    return { kind: "note", noteId: decodeURIComponent(noteMatch[1]) };
   }
 
   const shareMatch = pathname.match(/^\/s\/([^/]+)$/);
   if (shareMatch) {
-    return { kind: 'share', shareId: decodeURIComponent(shareMatch[1]) };
+    return { kind: "share", shareId: decodeURIComponent(shareMatch[1]) };
   }
 
-  return { kind: 'list' };
+  return { kind: "list" };
 }
 
 function getStoredTheme() {
-  return window.localStorage.getItem('md_theme') || 'dark';
+  return window.localStorage.getItem("md_theme") || "dark";
 }
 
 function applyTheme(theme: string) {
-  document.documentElement.setAttribute('data-theme', theme);
-  window.localStorage.setItem('md_theme', theme);
+  document.documentElement.setAttribute("data-theme", theme);
+  window.localStorage.setItem("md_theme", theme);
 }
 
 type ViewerStoreSnapshot = {
@@ -51,13 +51,13 @@ type AuthGuardToastSnapshot = {
   message: string | null;
 };
 
-const routeServerSnapshot: Route = { kind: 'list' };
+const routeServerSnapshot: Route = { kind: "list" };
 const viewerServerSnapshot: ViewerStoreSnapshot = { payload: null, loading: true };
 const authGuardToastServerSnapshot: AuthGuardToastSnapshot = { message: null };
 const routeStoreListeners = new Set<() => void>();
 const viewerStoreListeners = new Set<() => void>();
 const authGuardToastListeners = new Set<() => void>();
-let routeSnapshot: Route = typeof window !== 'undefined' ? parseRoute(window.location.pathname) : routeServerSnapshot;
+let routeSnapshot: Route = typeof window !== "undefined" ? parseRoute(window.location.pathname) : routeServerSnapshot;
 let viewerStoreSnapshot: ViewerStoreSnapshot = { payload: null, loading: true };
 let authGuardToastSnapshot: AuthGuardToastSnapshot = { message: null };
 let authGuardToastTimeoutId: number | null = null;
@@ -66,7 +66,7 @@ let viewerPollingIntervalId: number | null = null;
 let ownerSessionRestoreAttempted = false;
 let routeStoreListening = false;
 
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   applyTheme(getStoredTheme());
 }
 
@@ -78,11 +78,11 @@ function emitRouteChange() {
 }
 
 function ensureRouteStoreStarted() {
-  if (routeStoreListening || typeof window === 'undefined') {
+  if (routeStoreListening || typeof window === "undefined") {
     return;
   }
   routeStoreListening = true;
-  window.addEventListener('popstate', emitRouteChange);
+  window.addEventListener("popstate", emitRouteChange);
 }
 
 function subscribeRoute(listener: () => void) {
@@ -90,8 +90,8 @@ function subscribeRoute(listener: () => void) {
   routeStoreListeners.add(listener);
   return () => {
     routeStoreListeners.delete(listener);
-    if (routeStoreListeners.size === 0 && routeStoreListening && typeof window !== 'undefined') {
-      window.removeEventListener('popstate', emitRouteChange);
+    if (routeStoreListeners.size === 0 && routeStoreListening && typeof window !== "undefined") {
+      window.removeEventListener("popstate", emitRouteChange);
       routeStoreListening = false;
     }
   };
@@ -107,9 +107,9 @@ function useRoute() {
 
 function navigateTo(nextPath: string, replace = false) {
   if (replace) {
-    window.history.replaceState({}, '', nextPath);
+    window.history.replaceState({}, "", nextPath);
   } else {
-    window.history.pushState({}, '', nextPath);
+    window.history.pushState({}, "", nextPath);
   }
   emitRouteChange();
 }
@@ -146,14 +146,16 @@ function maybeShowAuthGuardToast(previousPayload: ViewerPayload | null, nextPayl
     return;
   }
   if (previousPayload.authGuard.loginEnabled && !nextPayload.authGuard.loginEnabled) {
-    setAuthGuardToastMessage(nextPayload.authGuard.globalLockActive
-      ? 'Owner login was locked due to suspicious activity.'
-      : 'Owner login was disabled.');
+    setAuthGuardToastMessage(
+      nextPayload.authGuard.globalLockActive
+        ? "Owner login was locked due to suspicious activity."
+        : "Owner login was disabled.",
+    );
   }
 }
 
 async function restoreOwnerSessionFromStorage() {
-  if (ownerSessionRestoreAttempted || typeof window === 'undefined') {
+  if (ownerSessionRestoreAttempted || typeof window === "undefined") {
     return;
   }
   ownerSessionRestoreAttempted = true;
@@ -162,7 +164,7 @@ async function restoreOwnerSessionFromStorage() {
     return;
   }
   try {
-    await apiRequest('/api/auth/token', { method: 'POST', body: { token } });
+    await apiRequest("/api/auth/token", { method: "POST", body: { token } });
   } catch {
     window.localStorage.removeItem(OWNER_TOKEN_KEY);
   }
@@ -176,12 +178,12 @@ async function refreshViewerStore(options?: { silent?: boolean }) {
 
   const previousPayload = viewerStoreSnapshot.payload;
   try {
-    const payload = await apiRequest<ViewerPayload>('/api/viewer');
+    const payload = await apiRequest<ViewerPayload>("/api/viewer");
     viewerStoreSnapshot = { payload, loading: false };
     maybeShowAuthGuardToast(previousPayload, payload);
     emitViewerStoreChange();
-    if (payload.ownerAuthenticated && window.location.pathname === '/login') {
-      navigateTo('/', true);
+    if (payload.ownerAuthenticated && window.location.pathname === "/login") {
+      navigateTo("/", true);
     }
     return payload;
   } catch (error) {
@@ -192,7 +194,7 @@ async function refreshViewerStore(options?: { silent?: boolean }) {
 }
 
 function ensureViewerStoreStarted() {
-  if (viewerStoreStarted || typeof window === 'undefined') {
+  if (viewerStoreStarted || typeof window === "undefined") {
     return;
   }
   viewerStoreStarted = true;
@@ -219,7 +221,11 @@ function subscribeViewerStore(listener: () => void) {
 }
 
 function useViewerStore() {
-  return useSyncExternalStore(subscribeViewerStore, () => viewerStoreSnapshot, () => viewerServerSnapshot);
+  return useSyncExternalStore(
+    subscribeViewerStore,
+    () => viewerStoreSnapshot,
+    () => viewerServerSnapshot,
+  );
 }
 
 function subscribeAuthGuardToast(listener: () => void) {
@@ -230,7 +236,11 @@ function subscribeAuthGuardToast(listener: () => void) {
 }
 
 function useAuthGuardToastStore() {
-  return useSyncExternalStore(subscribeAuthGuardToast, () => authGuardToastSnapshot, () => authGuardToastServerSnapshot);
+  return useSyncExternalStore(
+    subscribeAuthGuardToast,
+    () => authGuardToastSnapshot,
+    () => authGuardToastServerSnapshot,
+  );
 }
 
 function App() {
@@ -241,7 +251,7 @@ function App() {
 
   const toggleTheme = useCallback(() => {
     setTheme((current) => {
-      const next = current === 'dark' ? 'light' : 'dark';
+      const next = current === "dark" ? "light" : "dark";
       applyTheme(next);
       return next;
     });
@@ -250,22 +260,22 @@ function App() {
   const ownerTokenKey = viewerPayload?.ownerLocalStorageTokenKey ?? OWNER_TOKEN_KEY;
 
   const handleLogout = useCallback(async () => {
-    await apiRequest('/api/auth/logout', { method: 'POST' });
+    await apiRequest("/api/auth/logout", { method: "POST" });
     window.localStorage.removeItem(ownerTokenKey);
     await refreshViewerStore();
-    navigateTo('/login', true);
+    navigateTo("/login", true);
   }, [ownerTokenKey]);
 
   const handleAuthenticated = useCallback(async () => {
     await refreshViewerStore();
-    if (route.kind === 'note') {
+    if (route.kind === "note") {
       navigateTo(`/notes/${route.noteId}`, true);
       return;
     }
-    navigateTo('/', true);
+    navigateTo("/", true);
   }, [route]);
 
-  if (route.kind === 'share') {
+  if (route.kind === "share") {
     return <SharedNotePage shareId={route.shareId} onToggleTheme={toggleTheme} />;
   }
 
@@ -273,7 +283,7 @@ function App() {
     return <LoadingPage message="Loading" />;
   }
 
-  if (route.kind === 'login' || !viewerPayload.ownerAuthenticated) {
+  if (route.kind === "login" || !viewerPayload.ownerAuthenticated) {
     return (
       <LoginPage
         ownerTokenKey={ownerTokenKey}
@@ -285,18 +295,18 @@ function App() {
   }
 
   async function handleCreateNoteFromEditor() {
-    const payload = await apiRequest<{ ok: true; note: NoteSummary }>('/api/notes', { method: 'POST' });
+    const payload = await apiRequest<{ ok: true; note: NoteSummary }>("/api/notes", { method: "POST" });
     broadcastNotesListRefresh();
     navigateTo(`/notes/${payload.note.id}`);
   }
 
-  if (route.kind === 'note') {
+  if (route.kind === "note") {
     return (
       <>
         <OwnerAuthGuardToast message={authGuardToastMessage} onDismiss={() => setAuthGuardToastMessage(null)} />
         <OwnerNotePage
           noteId={route.noteId}
-          onBack={() => navigateTo('/')}
+          onBack={() => navigateTo("/")}
           onOpenNote={(noteId) => navigateTo(`/notes/${noteId}`)}
           onCreateNote={handleCreateNoteFromEditor}
           onLogout={handleLogout}
@@ -309,7 +319,11 @@ function App() {
   return (
     <>
       <OwnerAuthGuardToast message={authGuardToastMessage} onDismiss={() => setAuthGuardToastMessage(null)} />
-      <NotesListPage onOpenNote={(noteId) => navigateTo(`/notes/${noteId}`)} onLogout={handleLogout} onToggleTheme={toggleTheme} />
+      <NotesListPage
+        onOpenNote={(noteId) => navigateTo(`/notes/${noteId}`)}
+        onLogout={handleLogout}
+        onToggleTheme={toggleTheme}
+      />
     </>
   );
 }

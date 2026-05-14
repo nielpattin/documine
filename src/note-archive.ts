@@ -1,5 +1,5 @@
-import path from 'node:path';
-import AdmZip from 'adm-zip';
+import path from "node:path";
+import AdmZip from "adm-zip";
 
 export type ArchiveCommentAnchor = {
   quote: string;
@@ -65,7 +65,7 @@ export type ImportedArchiveNote = {
   id: string;
   title: string;
   shareId: string;
-  shareAccess: 'none';
+  shareAccess: "none";
   createdAt: string;
   updatedAt: string;
   importedAt: string;
@@ -82,20 +82,20 @@ export type ImportNotesResult = {
 };
 
 type ExportedManifest = {
-  format: 'documine-notes-export';
+  format: "documine-notes-export";
   version: 1;
   exportedAt: string;
   notes: Array<{ folder: string; title: string }>;
 };
 
-const allowedAssetExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif']);
+const allowedAssetExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif"]);
 const assetContentTypes: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.avif': 'image/avif',
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
 };
 const maxNotesPerImport = 200;
 const maxUncompressedImportBytes = 250 * 1024 * 1024;
@@ -103,21 +103,31 @@ const maxUncompressedImportBytes = 250 * 1024 * 1024;
 export function createNotesExportZip({ notes, exportedAt }: { notes: ArchiveNoteInput[]; exportedAt: string }): Buffer {
   const zip = new AdmZip();
   const usedFolders = new Set<string>();
-  const manifest: ExportedManifest = { format: 'documine-notes-export', version: 1, exportedAt, notes: [] };
+  const manifest: ExportedManifest = { format: "documine-notes-export", version: 1, exportedAt, notes: [] };
 
   for (const note of notes) {
     const folder = uniqueSlug(note.title, usedFolders);
     manifest.notes.push({ folder, title: note.title });
     const basePath = `notes/${folder}`;
     const portable = rewriteMarkdownForExport(note.markdown, note.id, note.assets);
-    zip.addFile(`${basePath}/note.md`, Buffer.from(portable.markdown, 'utf8'));
-    zip.addFile(`${basePath}/note.json`, Buffer.from(JSON.stringify({
-      format: 'documine-note',
-      version: 1,
-      title: note.title,
-      exportedAt,
-      threads: note.threads.map(stripThreadForExport),
-    }, null, 2), 'utf8'));
+    zip.addFile(`${basePath}/note.md`, Buffer.from(portable.markdown, "utf8"));
+    zip.addFile(
+      `${basePath}/note.json`,
+      Buffer.from(
+        JSON.stringify(
+          {
+            format: "documine-note",
+            version: 1,
+            title: note.title,
+            exportedAt,
+            threads: note.threads.map(stripThreadForExport),
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      ),
+    );
     for (const asset of note.assets) {
       if (portable.referencedAssetNames.has(asset.fileName) && isAllowedAssetName(asset.fileName)) {
         zip.addFile(`${basePath}/assets/${asset.fileName}`, asset.bytes);
@@ -125,11 +135,16 @@ export function createNotesExportZip({ notes, exportedAt }: { notes: ArchiveNote
     }
   }
 
-  zip.addFile('manifest.json', Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'));
+  zip.addFile("manifest.json", Buffer.from(JSON.stringify(manifest, null, 2), "utf8"));
   return zip.toBuffer();
 }
 
-export function importNotesExportZip({ zipBuffer, existingTitles, now, createId }: {
+export function importNotesExportZip({
+  zipBuffer,
+  existingTitles,
+  now,
+  createId,
+}: {
   zipBuffer: Buffer;
   existingTitles: Set<string>;
   now: string;
@@ -137,47 +152,56 @@ export function importNotesExportZip({ zipBuffer, existingTitles, now, createId 
 }): ImportNotesResult {
   const zip = new AdmZip(zipBuffer);
   validateZipEntries(zip);
-  const manifest = readJsonEntry<ExportedManifest>(zip, 'manifest.json');
-  if (!manifest || manifest.format !== 'documine-notes-export' || manifest.version !== 1 || !Array.isArray(manifest.notes)) {
-    throw new Error('This file is not a valid Documine notes export.');
+  const manifest = readJsonEntry<ExportedManifest>(zip, "manifest.json");
+  if (
+    !manifest ||
+    manifest.format !== "documine-notes-export" ||
+    manifest.version !== 1 ||
+    !Array.isArray(manifest.notes)
+  ) {
+    throw new Error("This file is not a valid Documine notes export.");
   }
   if (manifest.notes.length > maxNotesPerImport) {
-    throw new Error('This export is too large to import.');
+    throw new Error("This export is too large to import.");
   }
   for (const item of manifest.notes) {
-    if (!item || typeof item.folder !== 'string' || !isSafeRelativePath(item.folder) || item.folder.includes('/')) {
-      throw new Error('Unsafe note folder.');
+    if (!item || typeof item.folder !== "string" || !isSafeRelativePath(item.folder) || item.folder.includes("/")) {
+      throw new Error("Unsafe note folder.");
     }
   }
 
   const imported: ImportedArchiveNote[] = [];
-  const skipped: ImportNotesResult['skipped'] = [];
-  const warnings: ImportNotesResult['warnings'] = [];
+  const skipped: ImportNotesResult["skipped"] = [];
+  const warnings: ImportNotesResult["warnings"] = [];
   const usedTitles = new Set(existingTitles);
 
   for (const item of manifest.notes) {
-    const folder = typeof item.folder === 'string' ? item.folder : '';
-    const title = typeof item.title === 'string' ? item.title : 'untitled';
+    const folder = typeof item.folder === "string" ? item.folder : "";
+    const title = typeof item.title === "string" ? item.title : "untitled";
     try {
-      if (!isSafeRelativePath(folder) || folder.includes('/')) {
-        throw new Error('Unsafe note folder.');
+      if (!isSafeRelativePath(folder) || folder.includes("/")) {
+        throw new Error("Unsafe note folder.");
       }
       const basePath = `notes/${folder}`;
       const noteJson = readJsonEntry<any>(zip, `${basePath}/note.json`);
       const markdownEntry = zip.getEntry(`${basePath}/note.md`);
       if (!noteJson || !markdownEntry) {
-        throw new Error('Missing note files.');
+        throw new Error("Missing note files.");
       }
       const noteId = createId();
       const shareId = createId();
-      const finalTitle = uniqueImportedTitle(String(noteJson.title || title || 'untitled'), usedTitles);
+      const finalTitle = uniqueImportedTitle(String(noteJson.title || title || "untitled"), usedTitles);
       const assets = collectImportedAssets(zip, basePath, finalTitle, warnings);
-      const markdown = rewriteMarkdownForImport(markdownEntry.getData().toString('utf8'), noteId, assets.map((asset) => asset.fileName));
+      const markdown = rewriteMarkdownForImport(
+        markdownEntry.getData().toString("utf8"),
+        noteId,
+        assets.map((asset) => asset.fileName),
+      );
       imported.push({
         id: noteId,
         title: finalTitle,
         shareId,
-        shareAccess: 'none',
+        shareAccess: "none",
         createdAt: now,
         updatedAt: now,
         importedAt: now,
@@ -187,7 +211,7 @@ export function importNotesExportZip({ zipBuffer, existingTitles, now, createId 
         assets,
       });
     } catch (error) {
-      skipped.push({ title, error: error instanceof Error ? error.message : 'Import failed.' });
+      skipped.push({ title, error: error instanceof Error ? error.message : "Import failed." });
     }
   }
 
@@ -203,8 +227,8 @@ function rewriteMarkdownForExport(markdown: string, noteId: string, assets: Arch
   for (const asset of assets) {
     const escaped = escapeRegExp(asset.fileName);
     const patterns = [
-      new RegExp(`/assets/${escapeRegExp(noteId)}/${escaped}`, 'g'),
-      new RegExp(`https?://[^\\s)"']+/assets/${escapeRegExp(noteId)}/${escaped}`, 'g'),
+      new RegExp(`/assets/${escapeRegExp(noteId)}/${escaped}`, "g"),
+      new RegExp(`https?://[^\\s)"']+/assets/${escapeRegExp(noteId)}/${escaped}`, "g"),
     ];
     let replaced = false;
     for (const pattern of patterns) {
@@ -223,7 +247,10 @@ function rewriteMarkdownForExport(markdown: string, noteId: string, assets: Arch
 function rewriteMarkdownForImport(markdown: string, noteId: string, assetNames: string[]) {
   let nextMarkdown = markdown;
   for (const fileName of assetNames) {
-    nextMarkdown = nextMarkdown.replace(new RegExp(`assets/${escapeRegExp(fileName)}`, 'g'), `/assets/${noteId}/${fileName}`);
+    nextMarkdown = nextMarkdown.replace(
+      new RegExp(`assets/${escapeRegExp(fileName)}`, "g"),
+      `/assets/${noteId}/${fileName}`,
+    );
   }
   return nextMarkdown;
 }
@@ -257,17 +284,17 @@ function importThreads(threads: any[], createId: () => string): ImportedArchiveT
     return {
       id: threadId,
       resolved: Boolean(thread.resolved),
-      createdAt: typeof thread.createdAt === 'string' ? thread.createdAt : new Date(0).toISOString(),
-      updatedAt: typeof thread.updatedAt === 'string' ? thread.updatedAt : new Date(0).toISOString(),
+      createdAt: typeof thread.createdAt === "string" ? thread.createdAt : new Date(0).toISOString(),
+      updatedAt: typeof thread.updatedAt === "string" ? thread.updatedAt : new Date(0).toISOString(),
       anchor: normalizeAnchor(thread.anchor),
       messages: messages.map((message: any) => ({
         id: messageIds.get(String(message.id)) || createId(),
         parentId: message.parentId ? messageIds.get(String(message.parentId)) || null : null,
         authorId: `imported-${createId()}`,
-        authorName: String(message.authorName || 'Imported commenter'),
-        body: String(message.body || ''),
-        createdAt: typeof message.createdAt === 'string' ? message.createdAt : new Date(0).toISOString(),
-        updatedAt: typeof message.updatedAt === 'string' ? message.updatedAt : new Date(0).toISOString(),
+        authorName: String(message.authorName || "Imported commenter"),
+        body: String(message.body || ""),
+        createdAt: typeof message.createdAt === "string" ? message.createdAt : new Date(0).toISOString(),
+        updatedAt: typeof message.updatedAt === "string" ? message.updatedAt : new Date(0).toISOString(),
       })),
     };
   });
@@ -275,15 +302,20 @@ function importThreads(threads: any[], createId: () => string): ImportedArchiveT
 
 function normalizeAnchor(anchor: any): ArchiveCommentAnchor {
   return {
-    quote: String(anchor?.quote || ''),
-    prefix: String(anchor?.prefix || ''),
-    suffix: String(anchor?.suffix || ''),
+    quote: String(anchor?.quote || ""),
+    prefix: String(anchor?.prefix || ""),
+    suffix: String(anchor?.suffix || ""),
     start: Number.isFinite(anchor?.start) ? anchor.start : 0,
     end: Number.isFinite(anchor?.end) ? anchor.end : 0,
   };
 }
 
-function collectImportedAssets(zip: AdmZip, basePath: string, title: string, warnings: ImportNotesResult['warnings']): ArchiveAssetInput[] {
+function collectImportedAssets(
+  zip: AdmZip,
+  basePath: string,
+  title: string,
+  warnings: ImportNotesResult["warnings"],
+): ArchiveAssetInput[] {
   const assets: ArchiveAssetInput[] = [];
   const usedNames = new Set<string>();
   for (const entry of zip.getEntries()) {
@@ -291,7 +323,7 @@ function collectImportedAssets(zip: AdmZip, basePath: string, title: string, war
       continue;
     }
     const rawName = entry.entryName.slice(`${basePath}/assets/`.length);
-    if (!rawName || rawName.includes('/')) {
+    if (!rawName || rawName.includes("/")) {
       warnings.push({ title, warning: `Skipped unsafe asset ${rawName}.` });
       continue;
     }
@@ -300,7 +332,11 @@ function collectImportedAssets(zip: AdmZip, basePath: string, title: string, war
       continue;
     }
     const fileName = uniqueAssetName(rawName, usedNames);
-    assets.push({ fileName, bytes: entry.getData(), contentType: assetContentTypes[path.extname(fileName).toLowerCase()] || 'application/octet-stream' });
+    assets.push({
+      fileName,
+      bytes: entry.getData(),
+      contentType: assetContentTypes[path.extname(fileName).toLowerCase()] || "application/octet-stream",
+    });
   }
   return assets;
 }
@@ -309,11 +345,11 @@ function validateZipEntries(zip: AdmZip) {
   let total = 0;
   for (const entry of zip.getEntries()) {
     if (!isSafeRelativePath(entry.entryName)) {
-      throw new Error('Unsafe zip entry.');
+      throw new Error("Unsafe zip entry.");
     }
     total += entry.header.size;
     if (total > maxUncompressedImportBytes) {
-      throw new Error('This export is too large to import.');
+      throw new Error("This export is too large to import.");
     }
   }
 }
@@ -321,11 +357,11 @@ function validateZipEntries(zip: AdmZip) {
 function readJsonEntry<T>(zip: AdmZip, entryName: string): T | null {
   const entry = zip.getEntry(entryName);
   if (!entry) return null;
-  return JSON.parse(entry.getData().toString('utf8')) as T;
+  return JSON.parse(entry.getData().toString("utf8")) as T;
 }
 
 function uniqueSlug(title: string, used: Set<string>) {
-  const base = slugify(title) || 'untitled';
+  const base = slugify(title) || "untitled";
   let candidate = base;
   let index = 2;
   while (used.has(candidate)) {
@@ -337,7 +373,12 @@ function uniqueSlug(title: string, used: Set<string>) {
 }
 
 function slugify(value: string) {
-  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
 }
 
 function uniqueImportedTitle(title: string, used: Set<string>) {
@@ -372,9 +413,9 @@ function isAllowedAssetName(fileName: string) {
 }
 
 function isSafeRelativePath(value: string) {
-  return Boolean(value) && !value.includes('\\') && !value.startsWith('/') && !value.split('/').includes('..');
+  return Boolean(value) && !value.includes("\\") && !value.startsWith("/") && !value.split("/").includes("..");
 }
 
 function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

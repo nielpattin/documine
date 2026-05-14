@@ -1,6 +1,6 @@
-import { renderHistoryBadge, type EditorHistoryState } from './page-utils';
-import { type ShareParticipant } from '../lib/collab-editor';
-import type { ShareAccess } from '../lib/api';
+import { renderHistoryBadge, type EditorHistoryState } from "./page-utils";
+import { type ShareParticipant } from "../lib/collab-editor";
+import type { ShareAccess } from "../lib/api";
 
 export function OwnerNoteTopbar({
   title,
@@ -74,9 +74,13 @@ export function OwnerNoteTopbar({
           Back
         </button>
         <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onToggleExplorer}>
-          {explorerOpen ? 'Hide notes' : 'Notes'}
+          {explorerOpen ? "Hide notes" : "Notes"}
         </button>
-        <button type="button" className="documine-btn documine-btn--sm documine-btn--primary" onClick={() => void onCreateNote()}>
+        <button
+          type="button"
+          className="documine-btn documine-btn--sm documine-btn--primary"
+          onClick={() => void onCreateNote()}
+        >
           New note
         </button>
         <input
@@ -86,12 +90,16 @@ export function OwnerNoteTopbar({
           onBlur={onTitleBlur}
           placeholder="Untitled"
         />
-        <span className="status-text">{metaSaving ? 'Saving...' : saveStatus}</span>
+        <span className="status-text">{metaSaving ? "Saving..." : saveStatus}</span>
         {renderHistoryBadge(editorHistory)}
       </div>
       <div className="topbar-right">
         <div className="share-popover-wrap">
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={onToggleShowShare}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost"
+            onClick={onToggleShowShare}
+          >
             Share
           </button>
           {showShare ? (
@@ -106,7 +114,11 @@ export function OwnerNoteTopbar({
                   <option value="comment">View and comment</option>
                   <option value="edit">Edit and comment</option>
                 </select>
-                <button type="button" onClick={() => void navigator.clipboard.writeText(shareUrl)} disabled={shareAccess === 'none'}>
+                <button
+                  type="button"
+                  onClick={() => void navigator.clipboard.writeText(shareUrl)}
+                  disabled={shareAccess === "none"}
+                >
                   Copy link
                 </button>
               </div>
@@ -121,42 +133,76 @@ export function OwnerNoteTopbar({
           Images
         </button>
         <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={onToggleComments}>
-          {showComments ? 'Hide comments' : 'Show comments'}
+          {showComments ? "Hide comments" : "Show comments"}
         </button>
-        <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={onToggleResolved} disabled={!showComments}>
-          {showResolved ? 'Hide resolved' : 'Show resolved'}
+        <button
+          type="button"
+          className="documine-btn documine-btn--md documine-btn--ghost"
+          onClick={onToggleResolved}
+          disabled={!showComments}
+        >
+          {showResolved ? "Hide resolved" : "Show resolved"}
         </button>
         <div className="documine-segmented-control" role="group" aria-label="Edit history">
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => void 0} disabled={!editorHistory.canUndo} title="Undo (Ctrl+Z)">
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost"
+            onClick={() => void 0}
+            disabled={!editorHistory.canUndo}
+            title="Undo (Ctrl+Z)"
+          >
             Undo
           </button>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => void 0} disabled={!editorHistory.canRedo} title="Redo (Ctrl+Y or Ctrl+Shift+Z)">
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost"
+            onClick={() => void 0}
+            disabled={!editorHistory.canRedo}
+            title="Redo (Ctrl+Y or Ctrl+Shift+Z)"
+          >
             Redo
           </button>
         </div>
         <div className="documine-segmented-control" role="group" aria-label="Editor line wrapping">
-          <button type="button" className={`documine-btn documine-btn--md ${editorWrapEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={onWrap}>
+          <button
+            type="button"
+            className={`documine-btn documine-btn--md ${editorWrapEnabled ? "documine-btn--primary" : "documine-btn--ghost"}`}
+            onClick={onWrap}
+          >
             Wrap
           </button>
-          <button type="button" className={`documine-btn documine-btn--md ${!editorWrapEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`} onClick={onNoWrap}>
+          <button
+            type="button"
+            className={`documine-btn documine-btn--md ${!editorWrapEnabled ? "documine-btn--primary" : "documine-btn--ghost"}`}
+            onClick={onNoWrap}
+          >
             No wrap
           </button>
         </div>
         <button
           type="button"
-          className={`documine-btn documine-btn--md ${scrollWithMarkdownEnabled ? 'documine-btn--primary' : 'documine-btn--ghost'}`}
+          className={`documine-btn documine-btn--md ${scrollWithMarkdownEnabled ? "documine-btn--primary" : "documine-btn--ghost"}`}
           aria-pressed={scrollWithMarkdownEnabled}
           onClick={onToggleScrollWithMarkdown}
         >
-          {scrollWithMarkdownEnabled ? 'Following markdown' : 'Follow markdown'}
+          {scrollWithMarkdownEnabled ? "Following markdown" : "Follow markdown"}
         </button>
         <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={onOpenAgentModal}>
           Agent
         </button>
-        <button type="button" id="previewFab" className="documine-btn documine-btn--md documine-btn--ghost" onClick={onShowPreview}>
+        <button
+          type="button"
+          id="previewFab"
+          className="documine-btn documine-btn--md documine-btn--ghost"
+          onClick={onShowPreview}
+        >
           Preview
         </button>
-        <button type="button" className="documine-btn documine-btn--md documine-btn--ghost theme-toggle" onClick={onToggleTheme}>
+        <button
+          type="button"
+          className="documine-btn documine-btn--md documine-btn--ghost theme-toggle"
+          onClick={onToggleTheme}
+        >
           Theme
         </button>
         <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={onLogout}>
@@ -171,7 +217,7 @@ export function OwnerNoteTopbar({
                 title={`${participant.name} · ${participant.permissionLabel}`}
                 aria-label={`${participant.name}. ${participant.permissionLabel}`}
               >
-                {participant.name.trim().charAt(0).toUpperCase() || '?'}
+                {participant.name.trim().charAt(0).toUpperCase() || "?"}
               </div>
             ))}
           </div>

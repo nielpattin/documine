@@ -16,8 +16,8 @@ type SimpleIdListEntry = {
 };
 
 export type IdListUpdate =
-  | { type: 'insertAfter'; before: ElementId | null; id: ElementId; count: number }
-  | { type: 'deleteRange'; startIndex: number; endIndex: number };
+  | { type: "insertAfter"; before: ElementId | null; id: ElementId; count: number }
+  | { type: "deleteRange"; startIndex: number; endIndex: number };
 
 export type TextState = {
   text: string;
@@ -25,7 +25,7 @@ export type TextState = {
 };
 
 export type ClientInsertMutation = {
-  name: 'insert';
+  name: "insert";
   clientCounter: number;
   args: {
     before: ElementId | null;
@@ -36,7 +36,7 @@ export type ClientInsertMutation = {
 };
 
 export type ClientDeleteMutation = {
-  name: 'delete';
+  name: "delete";
   clientCounter: number;
   args: {
     startId: ElementId;
@@ -48,17 +48,17 @@ export type ClientDeleteMutation = {
 export type ClientMutation = ClientInsertMutation | ClientDeleteMutation;
 
 export type SelectionIds =
-  | { type: 'cursor'; cursor: ElementId | null }
-  | { type: 'range'; start: ElementId | null; end: ElementId | null; direction: 'forward' | 'backward' };
+  | { type: "cursor"; cursor: ElementId | null }
+  | { type: "range"; start: ElementId | null; end: ElementId | null; direction: "forward" | "backward" };
 
 export type TextSelection = {
   start: number;
   end: number;
-  direction: 'forward' | 'backward' | 'none';
+  direction: "forward" | "backward" | "none";
 };
 
-type IndexBias = 'left' | 'right' | 'none';
-type CursorBind = 'left' | 'right';
+type IndexBias = "left" | "right" | "none";
+type CursorBind = "left" | "right";
 
 function cloneId(id: ElementId | null): ElementId | null {
   return id ? { bunchId: id.bunchId, counter: id.counter } : null;
@@ -135,10 +135,10 @@ export class SimpleIdList {
     throw new Error(`Index out of bounds: ${index}`);
   }
 
-  indexOf(id: ElementId, bias: IndexBias = 'none'): number {
+  indexOf(id: ElementId, bias: IndexBias = "none"): number {
     const knownIndex = this.findKnownIndex(id);
     if (knownIndex === -1) {
-      throw new Error('id is not known');
+      throw new Error("id is not known");
     }
 
     let visibleBefore = 0;
@@ -152,30 +152,30 @@ export class SimpleIdList {
       return visibleBefore;
     }
 
-    if (bias === 'left') {
+    if (bias === "left") {
       return visibleBefore - 1;
     }
-    if (bias === 'right') {
+    if (bias === "right") {
       return visibleBefore;
     }
     return -1;
   }
 
-  cursorAt(index: number, bind: CursorBind = 'left'): ElementId | null {
+  cursorAt(index: number, bind: CursorBind = "left"): ElementId | null {
     if (!Number.isInteger(index) || index < 0 || index > this.length) {
       throw new Error(`Cursor index out of bounds: ${index}`);
     }
-    if (bind === 'left') {
+    if (bind === "left") {
       return index === 0 ? null : this.at(index - 1);
     }
     return index === this.length ? null : this.at(index);
   }
 
-  cursorIndex(cursor: ElementId | null, bind: CursorBind = 'left'): number {
-    if (bind === 'left') {
-      return cursor === null ? 0 : this.indexOf(cursor, 'left') + 1;
+  cursorIndex(cursor: ElementId | null, bind: CursorBind = "left"): number {
+    if (bind === "left") {
+      return cursor === null ? 0 : this.indexOf(cursor, "left") + 1;
     }
-    return cursor === null ? this.length : this.indexOf(cursor, 'right');
+    return cursor === null ? this.length : this.indexOf(cursor, "right");
   }
 
   maxCounter(bunchId: string): number | undefined {
@@ -202,7 +202,7 @@ export class SimpleIdList {
     if (before !== null) {
       const knownIndex = this.findKnownIndex(before);
       if (knownIndex === -1) {
-        throw new Error('before is not known');
+        throw new Error("before is not known");
       }
       insertAt = knownIndex + 1;
     }
@@ -264,7 +264,7 @@ export class TrackedIdList {
 
   getAndResetUpdates(): IdListUpdate[] {
     if (!this.trackChanges) {
-      throw new Error('trackChanges not enabled');
+      throw new Error("trackChanges not enabled");
     }
     const updates = this.updates;
     this.updates = [];
@@ -274,23 +274,23 @@ export class TrackedIdList {
   insertAfter(before: ElementId | null, id: ElementId, count = 1): void {
     this._idList.insertAfter(before, id, count);
     if (this.trackChanges) {
-      this.updates.push({ type: 'insertAfter', before: cloneId(before), id: cloneId(id)!, count });
+      this.updates.push({ type: "insertAfter", before: cloneId(before), id: cloneId(id)!, count });
     }
   }
 
   deleteRange(startIndex: number, endIndex: number): void {
     this._idList.deleteRange(startIndex, endIndex);
     if (this.trackChanges) {
-      this.updates.push({ type: 'deleteRange', startIndex, endIndex });
+      this.updates.push({ type: "deleteRange", startIndex, endIndex });
     }
   }
 
   apply(update: IdListUpdate): void {
     switch (update.type) {
-      case 'insertAfter':
+      case "insertAfter":
         this._idList.insertAfter(update.before, update.id, update.count);
         return;
-      case 'deleteRange':
+      case "deleteRange":
         this._idList.deleteRange(update.startIndex, update.endIndex);
         return;
     }
@@ -329,7 +329,7 @@ export class ElementIdGenerator {
 export function applyClientMutation(state: TextState, mutation: ClientMutation): TextState {
   const trackedIds = new TrackedIdList(state.idList.clone(), false);
 
-  if (mutation.name === 'insert') {
+  if (mutation.name === "insert") {
     const { before, id, content, isInWord } = mutation.args;
     if (!content) {
       return state;
@@ -357,12 +357,13 @@ export function applyClientMutation(state: TextState, mutation: ClientMutation):
     return state;
   }
 
-  const startIndex = trackedIds.idList.indexOf(startId, 'right');
-  const endIndex = endId === undefined
-    ? startIndex
-    : trackedIds.idList.isKnown(endId)
-      ? trackedIds.idList.indexOf(endId, 'left')
-      : startIndex - 1;
+  const startIndex = trackedIds.idList.indexOf(startId, "right");
+  const endIndex =
+    endId === undefined
+      ? startIndex
+      : trackedIds.idList.isKnown(endId)
+        ? trackedIds.idList.indexOf(endId, "left")
+        : startIndex - 1;
 
   if (endIndex < startIndex) {
     return state;
@@ -392,37 +393,37 @@ export function selectionToIds(
   idList: SimpleIdList,
   start: number,
   end: number,
-  direction: 'forward' | 'backward' | 'none' = 'forward',
+  direction: "forward" | "backward" | "none" = "forward",
 ): SelectionIds {
   if (start === end) {
     return {
-      type: 'cursor',
-      cursor: idList.cursorAt(start, 'left'),
+      type: "cursor",
+      cursor: idList.cursorAt(start, "left"),
     };
   }
 
   return {
-    type: 'range',
-    start: idList.cursorAt(start, 'right'),
-    end: idList.cursorAt(end, 'left'),
-    direction: direction === 'backward' ? 'backward' : 'forward',
+    type: "range",
+    start: idList.cursorAt(start, "right"),
+    end: idList.cursorAt(end, "left"),
+    direction: direction === "backward" ? "backward" : "forward",
   };
 }
 
 export function selectionFromIds(selection: SelectionIds, idList: SimpleIdList): TextSelection {
   try {
-    if (selection.type === 'cursor') {
-      const index = idList.cursorIndex(selection.cursor, 'left');
-      return { start: index, end: index, direction: 'none' };
+    if (selection.type === "cursor") {
+      const index = idList.cursorIndex(selection.cursor, "left");
+      return { start: index, end: index, direction: "none" };
     }
 
-    const start = idList.cursorIndex(selection.start, 'right');
-    const end = idList.cursorIndex(selection.end, 'left');
-    if (selection.direction === 'backward') {
-      return { start, end, direction: 'backward' };
+    const start = idList.cursorIndex(selection.start, "right");
+    const end = idList.cursorIndex(selection.end, "left");
+    if (selection.direction === "backward") {
+      return { start, end, direction: "backward" };
     }
-    return { start, end, direction: 'forward' };
+    return { start, end, direction: "forward" };
   } catch {
-    return { start: 0, end: 0, direction: 'none' };
+    return { start: 0, end: 0, direction: "none" };
   }
 }

@@ -1,15 +1,37 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { deleteNotePdf, getApiHttpOrigin, listNotePdfExports, saveNotePdf, createExportShareToken, revokeExportShareToken, apiRequest, formatDate, type NotePdfExport, type PdfExportSettings, type PdfExportSettingsPayload, type PdfExportCodeWrapMode, type PdfExportHeaderMode, type PdfExportImageAlignment } from '../../lib/api';
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  deleteNotePdf,
+  getApiHttpOrigin,
+  listNotePdfExports,
+  saveNotePdf,
+  createExportShareToken,
+  revokeExportShareToken,
+  apiRequest,
+  formatDate,
+  type NotePdfExport,
+  type PdfExportSettings,
+  type PdfExportSettingsPayload,
+  type PdfExportCodeWrapMode,
+  type PdfExportHeaderMode,
+  type PdfExportImageAlignment,
+} from "../../lib/api";
 
-export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; markdown: string; onClose: () => void }) {
+export function PdfExportModal({
+  noteId,
+  markdown,
+  onClose,
+}: {
+  noteId: string;
+  markdown: string;
+  onClose: () => void;
+}) {
   const [payload, setPayload] = useState<PdfExportSettingsPayload | null>(null);
   const [settings, setSettings] = useState<PdfExportSettings | null>(null);
   const [exportsList, setExportsList] = useState<NotePdfExport[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [error, setError] = useState('');
-  const [confirmDeleteExport, setConfirmDeleteExport] = useState<string | null>(null);
+  const [error, setError] = useState("");
   const [deletingExport, setDeletingExport] = useState<string | null>(null);
   const [generatingShareToken, setGeneratingShareToken] = useState<string | null>(null);
   const [revokingShareToken, setRevokingShareToken] = useState<string | null>(null);
@@ -26,10 +48,10 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
     let cancelled = false;
     async function load() {
       setLoading(true);
-      setError('');
+      setError("");
       try {
         const [nextPayload, nextExports] = await Promise.all([
-          apiRequest<PdfExportSettingsPayload>('/api/export/settings'),
+          apiRequest<PdfExportSettingsPayload>("/api/export/settings"),
           listNotePdfExports(noteId),
         ]);
         if (cancelled) {
@@ -40,7 +62,7 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
         setExportsList(nextExports.exports);
       } catch (cause) {
         if (!cancelled) {
-          setError(cause instanceof Error ? cause.message : 'Failed to load PDF export settings.');
+          setError(cause instanceof Error ? cause.message : "Failed to load PDF export settings.");
         }
       } finally {
         if (!cancelled) {
@@ -55,14 +77,18 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
   }, [noteId]);
 
   function updateSettings(patch: Partial<PdfExportSettings>) {
-    setSettings((current) => current ? { ...current, ...patch } : current);
+    setSettings((current) => (current ? { ...current, ...patch } : current));
   }
 
-  function updateMargins(side: 'top' | 'right' | 'bottom' | 'left', value: number) {
-    setSettings((current) => current ? {
-      ...current,
-      marginsCm: { ...current.marginsCm, [side]: value },
-    } : current);
+  function updateMargins(side: "top" | "right" | "bottom" | "left", value: number) {
+    setSettings((current) =>
+      current
+        ? {
+            ...current,
+            marginsCm: { ...current.marginsCm, [side]: value },
+          }
+        : current,
+    );
   }
 
   async function handleSaveDefaults() {
@@ -70,16 +96,16 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
       return;
     }
     setSaving(true);
-    setError('');
+    setError("");
     try {
-      const nextPayload = await apiRequest<PdfExportSettingsPayload>('/api/export/settings', {
-        method: 'PUT',
+      const nextPayload = await apiRequest<PdfExportSettingsPayload>("/api/export/settings", {
+        method: "PUT",
         body: { settings },
       });
       setPayload(nextPayload);
       setSettings(nextPayload.settings);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Failed to save defaults.');
+      setError(cause instanceof Error ? cause.message : "Failed to save defaults.");
     } finally {
       setSaving(false);
     }
@@ -90,44 +116,46 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
       return;
     }
     setExporting(true);
-    setError('');
+    setError("");
     try {
       const response = await saveNotePdf(noteId, markdown, settings);
       setExportsList(response.exports);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Failed to export PDF.');
+      setError(cause instanceof Error ? cause.message : "Failed to export PDF.");
     } finally {
       setExporting(false);
     }
   }
 
   function openExport(item: NotePdfExport) {
-    window.open(`${apiOrigin}${item.url}`, '_blank', 'noopener,noreferrer');
+    window.open(`${apiOrigin}${item.url}`, "_blank", "noopener,noreferrer");
   }
 
   function downloadExport(item: NotePdfExport) {
-    const anchor = document.createElement('a');
+    const anchor = document.createElement("a");
     anchor.href = `${apiOrigin}${item.downloadUrl}`;
-    anchor.target = '_blank';
-    anchor.rel = 'noopener';
+    anchor.target = "_blank";
+    anchor.rel = "noopener";
     document.body.append(anchor);
     anchor.click();
     anchor.remove();
   }
 
   function openDebug(item: NotePdfExport) {
-    window.open(`${apiOrigin}${item.debugHtmlUrl}`, '_blank', 'noopener,noreferrer');
+    window.open(`${apiOrigin}${item.debugHtmlUrl}`, "_blank", "noopener,noreferrer");
   }
 
   async function handleDeleteExport(item: NotePdfExport) {
+    if (!window.confirm(`Delete ${item.fileName}?`)) {
+      return;
+    }
     setDeletingExport(item.fileName);
-    setError('');
+    setError("");
     try {
       const response = await deleteNotePdf(noteId, item.fileName);
       setExportsList(response.exports);
-      setConfirmDeleteExport((current) => (current === item.fileName ? null : current));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Failed to delete export PDF.');
+      setError(cause instanceof Error ? cause.message : "Failed to delete export PDF.");
     } finally {
       setDeletingExport((current) => (current === item.fileName ? null : current));
     }
@@ -135,13 +163,13 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
 
   async function handleGenerateShareToken(item: NotePdfExport) {
     setGeneratingShareToken(item.fileName);
-    setError('');
+    setError("");
     try {
       await createExportShareToken(noteId, item.fileName);
       const response = await listNotePdfExports(noteId);
       setExportsList(response.exports);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Failed to generate share link.');
+      setError(cause instanceof Error ? cause.message : "Failed to generate share link.");
     } finally {
       setGeneratingShareToken((current) => (current === item.fileName ? null : current));
     }
@@ -149,13 +177,13 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
 
   async function handleRevokeShareToken(item: NotePdfExport) {
     setRevokingShareToken(item.fileName);
-    setError('');
+    setError("");
     try {
       await revokeExportShareToken(noteId, item.fileName);
       const response = await listNotePdfExports(noteId);
       setExportsList(response.exports);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Failed to revoke share link.');
+      setError(cause instanceof Error ? cause.message : "Failed to revoke share link.");
     } finally {
       setRevokingShareToken((current) => (current === item.fileName ? null : current));
     }
@@ -192,7 +220,9 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
             <div className="pdf-export-header-left">
               <h2 className="pdf-export-title">Print to PDF</h2>
             </div>
-            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>Close</button>
+            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>
+              Close
+            </button>
           </div>
           <div className="pdf-export-content">
             <p className="pdf-export-loading">Loading export settings...</p>
@@ -210,10 +240,12 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
             <div className="pdf-export-header-left">
               <h2 className="pdf-export-title">Print to PDF</h2>
             </div>
-            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>Close</button>
+            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>
+              Close
+            </button>
           </div>
           <div className="pdf-export-content">
-            <div className="inline-error">{error || 'Export settings unavailable.'}</div>
+            <div className="inline-error">{error || "Export settings unavailable."}</div>
           </div>
         </div>
       </div>
@@ -230,29 +262,53 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
             <h2 className="pdf-export-title">Print to PDF</h2>
           </div>
           <div className="pdf-export-actions">
-            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => setSettings(payload.settings)} disabled={saving || exporting}>
+            <button
+              type="button"
+              className="documine-btn documine-btn--sm documine-btn--ghost"
+              onClick={() => setSettings(payload.settings)}
+              disabled={saving || exporting}
+            >
               Reset
             </button>
-            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => void handleSaveDefaults()} disabled={saving || exporting}>
-              {saving ? 'Saving...' : 'Save'}
+            <button
+              type="button"
+              className="documine-btn documine-btn--sm documine-btn--ghost"
+              onClick={() => void handleSaveDefaults()}
+              disabled={saving || exporting}
+            >
+              {saving ? "Saving..." : "Save"}
             </button>
-            <button type="button" className="documine-btn documine-btn--sm documine-btn--primary" onClick={() => void handleExport()} disabled={engineUnavailable || exporting || saving}>
-              {exporting ? 'Saving PDF...' : 'Save PDF'}
+            <button
+              type="button"
+              className="documine-btn documine-btn--sm documine-btn--primary"
+              onClick={() => void handleExport()}
+              disabled={engineUnavailable || exporting || saving}
+            >
+              {exporting ? "Saving PDF..." : "Save PDF"}
             </button>
-            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>Close</button>
+            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={onClose}>
+              Close
+            </button>
           </div>
         </div>
 
         <div className="pdf-export-content">
           {!payload.capabilities.pandoc ? (
-            <div className="inline-error">Pandoc is not available on this server. Install it locally or in Docker to enable PDF export.</div>
+            <div className="inline-error">
+              Pandoc is not available on this server. Install it locally or in Docker to enable PDF export.
+            </div>
           ) : null}
           {error ? <div className="inline-error">{error}</div> : null}
 
           <section className="pdf-export-section">
             <div className="pdf-export-section-header-row">
               <h3 className="pdf-export-section-title">Recent exports</h3>
-              <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => void loadExports()} disabled={exporting || saving}>
+              <button
+                type="button"
+                className="documine-btn documine-btn--sm documine-btn--ghost"
+                onClick={() => void loadExports()}
+                disabled={exporting || saving}
+              >
                 Refresh
               </button>
             </div>
@@ -264,54 +320,68 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
                   <div key={item.fileName} className="pdf-export-history-row">
                     <div className="pdf-export-history-info">
                       <div className="pdf-export-history-title">{item.fileName}</div>
-                      <div className="pdf-export-history-meta">{formatDate(item.createdAt)} · {formatFileSize(item.size)}</div>
+                      <div className="pdf-export-history-meta">
+                        {formatDate(item.createdAt)} · {formatFileSize(item.size)}
+                      </div>
                     </div>
                     <div className="pdf-export-history-actions">
-                      <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => openExport(item)}>Open</button>
-                      <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => downloadExport(item)}>Download</button>
-                      <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => openDebug(item)}>Debug</button>
+                      <button
+                        type="button"
+                        className="documine-btn documine-btn--sm documine-btn--ghost"
+                        onClick={() => openExport(item)}
+                      >
+                        Open
+                      </button>
+                      <button
+                        type="button"
+                        className="documine-btn documine-btn--sm documine-btn--ghost"
+                        onClick={() => downloadExport(item)}
+                      >
+                        Download
+                      </button>
+                      <button
+                        type="button"
+                        className="documine-btn documine-btn--sm documine-btn--ghost"
+                        onClick={() => openDebug(item)}
+                      >
+                        Debug
+                      </button>
                       {item.shareUrl ? (
                         <>
-                          <button type="button" className="documine-btn documine-btn--sm documine-btn--primary" onClick={() => void handleCopyShareUrl(item)}>
-                            {copiedShareToken === item.fileName ? 'Copied!' : 'Copy link'}
-                          </button>
-                          <button type="button" className="documine-btn documine-btn--sm documine-btn--danger" disabled={revokingShareToken === item.fileName} onClick={() => void handleRevokeShareToken(item)}>
-                            {revokingShareToken === item.fileName ? 'Revoking...' : 'Revoke'}
-                          </button>
-                        </>
-                      ) : (
-                        <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" disabled={generatingShareToken === item.fileName} onClick={() => void handleGenerateShareToken(item)}>
-                          {generatingShareToken === item.fileName ? 'Generating...' : 'Share'}
-                        </button>
-                      )}
-                      {confirmDeleteExport === item.fileName ? (
-                        <div className="image-asset-confirm-delete">
                           <button
                             type="button"
-                            className="documine-btn documine-btn--sm documine-btn--ghost"
-                            onClick={() => setConfirmDeleteExport(null)}
-                            disabled={deletingExport === item.fileName}
+                            className="documine-btn documine-btn--sm documine-btn--primary"
+                            onClick={() => void handleCopyShareUrl(item)}
                           >
-                            Cancel
+                            {copiedShareToken === item.fileName ? "Copied!" : "Copy link"}
                           </button>
                           <button
                             type="button"
                             className="documine-btn documine-btn--sm documine-btn--danger"
-                            onClick={() => void handleDeleteExport(item)}
-                            disabled={deletingExport === item.fileName}
+                            disabled={revokingShareToken === item.fileName}
+                            onClick={() => void handleRevokeShareToken(item)}
                           >
-                            {deletingExport === item.fileName ? 'Deleting...' : 'Delete'}
+                            {revokingShareToken === item.fileName ? "Revoking..." : "Revoke"}
                           </button>
-                        </div>
+                        </>
                       ) : (
                         <button
                           type="button"
-                          className="documine-btn documine-btn--sm documine-btn--danger"
-                          onClick={() => setConfirmDeleteExport(item.fileName)}
+                          className="documine-btn documine-btn--sm documine-btn--ghost"
+                          disabled={generatingShareToken === item.fileName}
+                          onClick={() => void handleGenerateShareToken(item)}
                         >
-                          Delete
+                          {generatingShareToken === item.fileName ? "Generating..." : "Share"}
                         </button>
                       )}
+                      <button
+                        type="button"
+                        className="documine-btn documine-btn--sm documine-btn--danger"
+                        onClick={() => void handleDeleteExport(item)}
+                        disabled={deletingExport === item.fileName}
+                      >
+                        {deletingExport === item.fileName ? "Deleting..." : "Delete"}
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -324,13 +394,27 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
             <div className="pdf-export-grid">
               <label className="pdf-export-field">
                 <span>Paper size</span>
-                <select value={settings.pageSize} onChange={(event) => updateSettings({ pageSize: event.target.value as PdfExportSettings['pageSize'] })}>
-                  {payload.capabilities.pageSizes.map((size) => <option key={size} value={size}>{size}</option>)}
+                <select
+                  value={settings.pageSize}
+                  onChange={(event) =>
+                    updateSettings({ pageSize: event.target.value as PdfExportSettings["pageSize"] })
+                  }
+                >
+                  {payload.capabilities.pageSizes.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="pdf-export-field">
                 <span>Orientation</span>
-                <select value={settings.orientation} onChange={(event) => updateSettings({ orientation: event.target.value as PdfExportSettings['orientation'] })}>
+                <select
+                  value={settings.orientation}
+                  onChange={(event) =>
+                    updateSettings({ orientation: event.target.value as PdfExportSettings["orientation"] })
+                  }
+                >
                   <option value="portrait">Portrait</option>
                   <option value="landscape">Landscape</option>
                 </select>
@@ -339,10 +423,52 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
             <div className="pdf-export-margins">
               <span className="pdf-export-field-label">Margins (cm)</span>
               <div className="pdf-export-margins-grid">
-                <label><span>Top</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.top} onChange={(event) => updateMargins('top', Number(event.target.value) || settings.marginsCm.top)} /></label>
-                <label><span>Right</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.right} onChange={(event) => updateMargins('right', Number(event.target.value) || settings.marginsCm.right)} /></label>
-                <label><span>Bottom</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.bottom} onChange={(event) => updateMargins('bottom', Number(event.target.value) || settings.marginsCm.bottom)} /></label>
-                <label><span>Left</span><input type="number" min={0.5} max={5} step={0.1} value={settings.marginsCm.left} onChange={(event) => updateMargins('left', Number(event.target.value) || settings.marginsCm.left)} /></label>
+                <label>
+                  <span>Top</span>
+                  <input
+                    type="number"
+                    min={0.5}
+                    max={5}
+                    step={0.1}
+                    value={settings.marginsCm.top}
+                    onChange={(event) => updateMargins("top", Number(event.target.value) || settings.marginsCm.top)}
+                  />
+                </label>
+                <label>
+                  <span>Right</span>
+                  <input
+                    type="number"
+                    min={0.5}
+                    max={5}
+                    step={0.1}
+                    value={settings.marginsCm.right}
+                    onChange={(event) => updateMargins("right", Number(event.target.value) || settings.marginsCm.right)}
+                  />
+                </label>
+                <label>
+                  <span>Bottom</span>
+                  <input
+                    type="number"
+                    min={0.5}
+                    max={5}
+                    step={0.1}
+                    value={settings.marginsCm.bottom}
+                    onChange={(event) =>
+                      updateMargins("bottom", Number(event.target.value) || settings.marginsCm.bottom)
+                    }
+                  />
+                </label>
+                <label>
+                  <span>Left</span>
+                  <input
+                    type="number"
+                    min={0.5}
+                    max={5}
+                    step={0.1}
+                    value={settings.marginsCm.left}
+                    onChange={(event) => updateMargins("left", Number(event.target.value) || settings.marginsCm.left)}
+                  />
+                </label>
               </div>
             </div>
           </section>
@@ -352,27 +478,70 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
             <div className="pdf-export-grid">
               <label className="pdf-export-field">
                 <span>Font family</span>
-                <select value={settings.fontFamily} onChange={(event) => updateSettings({ fontFamily: event.target.value as PdfExportSettings['fontFamily'] })}>
-                  {payload.capabilities.fontFamilies.map((family) => <option key={family} value={family}>{family}</option>)}
+                <select
+                  value={settings.fontFamily}
+                  onChange={(event) =>
+                    updateSettings({ fontFamily: event.target.value as PdfExportSettings["fontFamily"] })
+                  }
+                >
+                  {payload.capabilities.fontFamilies.map((family) => (
+                    <option key={family} value={family}>
+                      {family}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="pdf-export-field">
                 <span>Style preset</span>
-                <select value={settings.stylePreset} onChange={(event) => updateSettings({ stylePreset: event.target.value as PdfExportSettings['stylePreset'] })}>
-                  {payload.capabilities.styles.map((style) => <option key={style} value={style}>{style}</option>)}
+                <select
+                  value={settings.stylePreset}
+                  onChange={(event) =>
+                    updateSettings({ stylePreset: event.target.value as PdfExportSettings["stylePreset"] })
+                  }
+                >
+                  {payload.capabilities.styles.map((style) => (
+                    <option key={style} value={style}>
+                      {style}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="pdf-export-field">
                 <span>Font size (pt)</span>
-                <input type="number" min={9} max={18} step={0.5} value={settings.fontSizePt} onChange={(event) => updateSettings({ fontSizePt: Number(event.target.value) || settings.fontSizePt })} />
+                <input
+                  type="number"
+                  min={9}
+                  max={18}
+                  step={0.5}
+                  value={settings.fontSizePt}
+                  onChange={(event) =>
+                    updateSettings({ fontSizePt: Number(event.target.value) || settings.fontSizePt })
+                  }
+                />
               </label>
               <label className="pdf-export-field">
                 <span>Line height</span>
-                <input type="number" min={1.1} max={2} step={0.05} value={settings.lineHeight} onChange={(event) => updateSettings({ lineHeight: Number(event.target.value) || settings.lineHeight })} />
+                <input
+                  type="number"
+                  min={1.1}
+                  max={2}
+                  step={0.05}
+                  value={settings.lineHeight}
+                  onChange={(event) =>
+                    updateSettings({ lineHeight: Number(event.target.value) || settings.lineHeight })
+                  }
+                />
               </label>
             </div>
             <div className="pdf-export-toggles">
-              <label className="pdf-export-checkbox"><input type="checkbox" checked={settings.justifyText} onChange={(event) => updateSettings({ justifyText: event.target.checked })} /> Justify paragraphs</label>
+              <label className="pdf-export-checkbox">
+                <input
+                  type="checkbox"
+                  checked={settings.justifyText}
+                  onChange={(event) => updateSettings({ justifyText: event.target.checked })}
+                />{" "}
+                Justify paragraphs
+              </label>
             </div>
           </section>
 
@@ -381,15 +550,43 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
             <div className="pdf-export-grid">
               <label className="pdf-export-field">
                 <span>Header</span>
-                <select value={settings.headerMode} onChange={(event) => updateSettings({ headerMode: event.target.value as PdfExportHeaderMode })}>
-                  {payload.capabilities.headerModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+                <select
+                  value={settings.headerMode}
+                  onChange={(event) => updateSettings({ headerMode: event.target.value as PdfExportHeaderMode })}
+                >
+                  {payload.capabilities.headerModes.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {mode}
+                    </option>
+                  ))}
                 </select>
               </label>
             </div>
             <div className="pdf-export-toggles">
-              <label className="pdf-export-checkbox"><input type="checkbox" checked={settings.toc} onChange={(event) => updateSettings({ toc: event.target.checked })} /> Include table of contents</label>
-              <label className="pdf-export-checkbox"><input type="checkbox" checked={settings.includeTitle} onChange={(event) => updateSettings({ includeTitle: event.target.checked })} /> Include note title</label>
-              <label className="pdf-export-checkbox"><input type="checkbox" checked={settings.includeDate} onChange={(event) => updateSettings({ includeDate: event.target.checked })} /> Include export date</label>
+              <label className="pdf-export-checkbox">
+                <input
+                  type="checkbox"
+                  checked={settings.toc}
+                  onChange={(event) => updateSettings({ toc: event.target.checked })}
+                />{" "}
+                Include table of contents
+              </label>
+              <label className="pdf-export-checkbox">
+                <input
+                  type="checkbox"
+                  checked={settings.includeTitle}
+                  onChange={(event) => updateSettings({ includeTitle: event.target.checked })}
+                />{" "}
+                Include note title
+              </label>
+              <label className="pdf-export-checkbox">
+                <input
+                  type="checkbox"
+                  checked={settings.includeDate}
+                  onChange={(event) => updateSettings({ includeDate: event.target.checked })}
+                />{" "}
+                Include export date
+              </label>
             </div>
           </section>
 
@@ -398,12 +595,30 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
             <div className="pdf-export-grid">
               <label className="pdf-export-field">
                 <span>Max width %</span>
-                <input type="number" min={30} max={100} step={5} value={settings.imageMaxWidthPercent} onChange={(event) => updateSettings({ imageMaxWidthPercent: Number(event.target.value) || settings.imageMaxWidthPercent })} />
+                <input
+                  type="number"
+                  min={30}
+                  max={100}
+                  step={5}
+                  value={settings.imageMaxWidthPercent}
+                  onChange={(event) =>
+                    updateSettings({
+                      imageMaxWidthPercent: Number(event.target.value) || settings.imageMaxWidthPercent,
+                    })
+                  }
+                />
               </label>
               <label className="pdf-export-field">
                 <span>Alignment</span>
-                <select value={settings.imageAlign} onChange={(event) => updateSettings({ imageAlign: event.target.value as PdfExportImageAlignment })}>
-                  {payload.capabilities.imageAlignments.map((alignment) => <option key={alignment} value={alignment}>{alignment}</option>)}
+                <select
+                  value={settings.imageAlign}
+                  onChange={(event) => updateSettings({ imageAlign: event.target.value as PdfExportImageAlignment })}
+                >
+                  {payload.capabilities.imageAlignments.map((alignment) => (
+                    <option key={alignment} value={alignment}>
+                      {alignment}
+                    </option>
+                  ))}
                 </select>
               </label>
             </div>
@@ -416,18 +631,22 @@ export function PdfExportModal({ noteId, markdown, onClose }: { noteId: string; 
             <h3 className="pdf-export-section-title">Code blocks</h3>
             <label className="pdf-export-field">
               <span>Line wrapping</span>
-              <select value={settings.codeWrap} onChange={(event) => updateSettings({ codeWrap: event.target.value as PdfExportCodeWrapMode })}>
-                {payload.capabilities.codeWrapModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+              <select
+                value={settings.codeWrap}
+                onChange={(event) => updateSettings({ codeWrap: event.target.value as PdfExportCodeWrapMode })}
+              >
+                {payload.capabilities.codeWrapModes.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {mode}
+                  </option>
+                ))}
               </select>
             </label>
           </section>
 
-          <div className="pdf-export-footer">
-            Engine: Browser PDF · Defaults saved to instance data
-          </div>
+          <div className="pdf-export-footer">Engine: Browser PDF · Defaults saved to instance data</div>
         </div>
       </div>
     </div>
   );
 }
-

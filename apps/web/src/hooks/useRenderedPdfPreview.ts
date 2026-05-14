@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { RENDERED_PDF_ZOOM_DEFAULT, RENDERED_PDF_ZOOM_MAX, RENDERED_PDF_ZOOM_MIN, RENDERED_PDF_ZOOM_STEP } from '../pages/page-utils';
-import type { PreviewMode } from './usePreviewScrollSyncController';
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  RENDERED_PDF_ZOOM_DEFAULT,
+  RENDERED_PDF_ZOOM_MAX,
+  RENDERED_PDF_ZOOM_MIN,
+  RENDERED_PDF_ZOOM_STEP,
+} from "../pages/page-utils";
+import type { PreviewMode } from "./usePreviewScrollSyncController";
 
 type UseRenderedPdfPreviewArgs = {
   markdown: string;
@@ -10,11 +15,17 @@ type UseRenderedPdfPreviewArgs = {
   renderPreview: () => Promise<Blob>;
 };
 
-export function useRenderedPdfPreview({ markdown, noteKey, previewMode, showPreview, renderPreview }: UseRenderedPdfPreviewArgs) {
-  const [renderedPdfUrl, setRenderedPdfUrl] = useState('');
+export function useRenderedPdfPreview({
+  markdown,
+  noteKey,
+  previewMode,
+  showPreview,
+  renderPreview,
+}: UseRenderedPdfPreviewArgs) {
+  const [renderedPdfUrl, setRenderedPdfUrl] = useState("");
   const [renderedPdfZoom, setRenderedPdfZoom] = useState(RENDERED_PDF_ZOOM_DEFAULT);
   const [renderedPdfLoading, setRenderedPdfLoading] = useState(false);
-  const [renderedPdfError, setRenderedPdfError] = useState('');
+  const [renderedPdfError, setRenderedPdfError] = useState("");
   const [renderedPdfDirty, setRenderedPdfDirty] = useState(false);
   const [renderedPdfElapsedMs, setRenderedPdfElapsedMs] = useState(0);
   const [renderedPdfLastDurationMs, setRenderedPdfLastDurationMs] = useState<number | null>(null);
@@ -25,15 +36,15 @@ export function useRenderedPdfPreview({ markdown, noteKey, previewMode, showPrev
   }, [markdown, noteKey]);
 
   useEffect(() => {
-    if (!showPreview || previewMode !== 'rendered-pdf') {
+    if (!showPreview || previewMode !== "rendered-pdf") {
       setRenderedPdfLoading(false);
-      setRenderedPdfError('');
+      setRenderedPdfError("");
       return;
     }
 
     const shouldRefresh = !renderedPdfUrl || renderedPdfDirty;
     if (!shouldRefresh) {
-      setRenderedPdfError('');
+      setRenderedPdfError("");
       return;
     }
 
@@ -47,7 +58,7 @@ export function useRenderedPdfPreview({ markdown, noteKey, previewMode, showPrev
       const startedAt = performance.now();
       setRenderedPdfLoading(true);
       setRenderedPdfElapsedMs(0);
-      setRenderedPdfError('');
+      setRenderedPdfError("");
       try {
         const blob = await renderPreview();
         if (cancelled || requestIdRef.current !== requestId) {
@@ -64,7 +75,7 @@ export function useRenderedPdfPreview({ markdown, noteKey, previewMode, showPrev
         setRenderedPdfLastDurationMs(Math.round(performance.now() - startedAt));
       } catch (cause) {
         if (!cancelled && requestIdRef.current === requestId) {
-          setRenderedPdfError(cause instanceof Error ? cause.message : 'Failed to render preview.');
+          setRenderedPdfError(cause instanceof Error ? cause.message : "Failed to render preview.");
           setRenderedPdfLastDurationMs(Math.round(performance.now() - startedAt));
         }
       } finally {

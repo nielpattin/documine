@@ -1,19 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
-import { apiRequest, exportNotes, formatDate, importNotes, type ApiKey, type NoteSummary } from '../lib/api';
+import { useCallback, useEffect, useState } from "react";
+import { apiRequest, exportNotes, formatDate, importNotes, type ApiKey, type NoteSummary } from "../lib/api";
 
 function broadcastNotesListRefresh() {
-  localStorage.setItem('documine_notes_list_refresh', String(Date.now()));
+  localStorage.setItem("documine_notes_list_refresh", String(Date.now()));
 }
 
 function useNotesListRefreshSignal(onRefresh: () => void) {
   useEffect(() => {
     function handleStorage(event: StorageEvent) {
-      if (event.key === 'documine_notes_list_refresh') {
+      if (event.key === "documine_notes_list_refresh") {
         onRefresh();
       }
     }
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
   }, [onRefresh]);
 }
 
@@ -26,27 +26,27 @@ export function NotesListPage({
   onLogout: () => Promise<void>;
   onToggleTheme: () => void;
 }) {
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState("");
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [keysLoading, setKeysLoading] = useState(false);
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(() => new Set());
-  const [transferStatus, setTransferStatus] = useState('');
+  const [transferStatus, setTransferStatus] = useState("");
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const selectedCount = selectedNoteIds.size;
 
   const loadNotes = useCallback(async (query: string) => {
     setLoading(true);
-    setError('');
+    setError("");
     try {
       const payload = await apiRequest<{ ok: true; notes: NoteSummary[] }>(`/api/notes?q=${encodeURIComponent(query)}`);
       setNotes(payload.notes);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Failed to load notes.');
+      setError(cause instanceof Error ? cause.message : "Failed to load notes.");
     } finally {
       setLoading(false);
     }
@@ -59,7 +59,7 @@ export function NotesListPage({
   const loadKeys = useCallback(async () => {
     setKeysLoading(true);
     try {
-      const payload = await apiRequest<{ ok: true; keys: ApiKey[] }>('/api/keys');
+      const payload = await apiRequest<{ ok: true; keys: ApiKey[] }>("/api/keys");
       setApiKeys(payload.keys);
     } finally {
       setKeysLoading(false);
@@ -80,16 +80,16 @@ export function NotesListPage({
   }, [loadKeys, showSettings]);
 
   async function handleCreateNote() {
-    const payload = await apiRequest<{ ok: true; note: NoteSummary }>('/api/notes', { method: 'POST' });
+    const payload = await apiRequest<{ ok: true; note: NoteSummary }>("/api/notes", { method: "POST" });
     onOpenNote(payload.note.id);
   }
 
   async function handleDeleteNote(noteId: string) {
-    if (!window.confirm('Delete this note?')) {
+    if (!window.confirm("Delete this note?")) {
       return;
     }
 
-    await apiRequest(`/api/notes/${noteId}`, { method: 'DELETE' });
+    await apiRequest(`/api/notes/${noteId}`, { method: "DELETE" });
     setSelectedNoteIds((current) => {
       const next = new Set(current);
       next.delete(noteId);
@@ -112,7 +112,7 @@ export function NotesListPage({
 
   function downloadBlob(blob: Blob, fileName: string) {
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
     link.download = fileName;
     document.body.appendChild(link);
@@ -121,19 +121,19 @@ export function NotesListPage({
     URL.revokeObjectURL(url);
   }
 
-  async function handleExport(scope: 'all' | 'selected') {
-    if (scope === 'selected' && selectedNoteIds.size === 0) {
-      setTransferStatus('Select at least one note to export.');
+  async function handleExport(scope: "all" | "selected") {
+    if (scope === "selected" && selectedNoteIds.size === 0) {
+      setTransferStatus("Select at least one note to export.");
       return;
     }
     setExporting(true);
-    setTransferStatus('Exporting...');
+    setTransferStatus("Exporting...");
     try {
       const result = await exportNotes(scope, Array.from(selectedNoteIds));
       downloadBlob(result.blob, result.fileName);
-      setTransferStatus('');
+      setTransferStatus("");
     } catch (cause) {
-      setTransferStatus(cause instanceof Error ? cause.message : 'Could not export notes. Try again.');
+      setTransferStatus(cause instanceof Error ? cause.message : "Could not export notes. Try again.");
     } finally {
       setExporting(false);
     }
@@ -144,30 +144,31 @@ export function NotesListPage({
       return;
     }
     setImporting(true);
-    setTransferStatus('Importing...');
+    setTransferStatus("Importing...");
     try {
       const result = await importNotes(file);
-      const issueText = result.skipped.length || result.warnings.length
-        ? `, skipped ${result.skipped.length}, with ${result.warnings.length} warnings`
-        : '';
+      const issueText =
+        result.skipped.length || result.warnings.length
+          ? `, skipped ${result.skipped.length}, with ${result.warnings.length} warnings`
+          : "";
       setTransferStatus(`Imported ${result.imported.length} notes${issueText}.`);
       broadcastNotesListRefresh();
       await loadNotes(search);
     } catch (cause) {
-      setTransferStatus(cause instanceof Error ? cause.message : 'This file is not a valid Documine notes export.');
+      setTransferStatus(cause instanceof Error ? cause.message : "This file is not a valid Documine notes export.");
     } finally {
       setImporting(false);
     }
   }
 
   async function handleCreateKey() {
-    const label = window.prompt('Label for this API key:')?.trim();
+    const label = window.prompt("Label for this API key:")?.trim();
     if (!label) {
       return;
     }
 
-    const payload = await apiRequest<{ ok: true; id: string; key: string }>('/api/keys', {
-      method: 'POST',
+    const payload = await apiRequest<{ ok: true; id: string; key: string }>("/api/keys", {
+      method: "POST",
       body: { label },
     });
     await loadKeys();
@@ -176,11 +177,11 @@ export function NotesListPage({
   }
 
   async function handleDeleteKey(keyId: string) {
-    if (!window.confirm('Delete this API key?')) {
+    if (!window.confirm("Delete this API key?")) {
       return;
     }
 
-    await apiRequest(`/api/keys/${keyId}`, { method: 'DELETE' });
+    await apiRequest(`/api/keys/${keyId}`, { method: "DELETE" });
     await loadKeys();
   }
 
@@ -192,7 +193,7 @@ export function NotesListPage({
         </div>
         <div className="topbar-right">
           <label className="documine-btn documine-btn--md documine-btn--ghost import-button">
-            {importing ? 'Importing...' : 'Import'}
+            {importing ? "Importing..." : "Import"}
             <input
               type="file"
               accept=".zip,application/zip"
@@ -200,24 +201,45 @@ export function NotesListPage({
               disabled={importing}
               onChange={(event) => {
                 const file = event.currentTarget.files?.[0] || null;
-                event.currentTarget.value = '';
+                event.currentTarget.value = "";
                 void handleImport(file);
               }}
             />
           </label>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" disabled={exporting} onClick={() => void handleExport('all')}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost"
+            disabled={exporting}
+            onClick={() => void handleExport("all")}
+          >
             Export all
           </button>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--primary" onClick={() => void handleCreateNote()}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--primary"
+            onClick={() => void handleCreateNote()}
+          >
             New note
           </button>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => setShowSettings(true)}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost"
+            onClick={() => setShowSettings(true)}
+          >
             Settings
           </button>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost theme-toggle" onClick={onToggleTheme}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost theme-toggle"
+            onClick={onToggleTheme}
+          >
             Theme
           </button>
-          <button type="button" className="documine-btn documine-btn--md documine-btn--ghost" onClick={() => void onLogout()}>
+          <button
+            type="button"
+            className="documine-btn documine-btn--md documine-btn--ghost"
+            onClick={() => void onLogout()}
+          >
             Logout
           </button>
         </div>
@@ -239,10 +261,19 @@ export function NotesListPage({
         {selectedCount > 0 ? (
           <div className="selection-toolbar">
             <span>{selectedCount} selected</span>
-            <button type="button" className="documine-btn documine-btn--sm documine-btn--primary" disabled={exporting} onClick={() => void handleExport('selected')}>
-              {exporting ? 'Exporting...' : 'Export selected'}
+            <button
+              type="button"
+              className="documine-btn documine-btn--sm documine-btn--primary"
+              disabled={exporting}
+              onClick={() => void handleExport("selected")}
+            >
+              {exporting ? "Exporting..." : "Export selected"}
             </button>
-            <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => setSelectedNoteIds(new Set())}>
+            <button
+              type="button"
+              className="documine-btn documine-btn--sm documine-btn--ghost"
+              onClick={() => setSelectedNoteIds(new Set())}
+            >
               Clear selection
             </button>
           </div>
@@ -277,7 +308,7 @@ export function NotesListPage({
                   {note.title}
                   {note.isImportedUnread ? <span className="imported-badge">Imported</span> : null}
                 </div>
-                <div className="note-row-snippet">{note.snippet || 'Empty note'}</div>
+                <div className="note-row-snippet">{note.snippet || "Empty note"}</div>
                 <div className="note-row-meta">{formatDate(note.updatedAt)}</div>
               </div>
               <div>
@@ -302,13 +333,21 @@ export function NotesListPage({
           <div className="modal settings-modal" onClick={(event) => event.stopPropagation()}>
             <div className="settings-header">
               <h2 className="settings-title">Settings</h2>
-              <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => setShowSettings(false)}>
+              <button
+                type="button"
+                className="documine-btn documine-btn--sm documine-btn--ghost"
+                onClick={() => setShowSettings(false)}
+              >
                 Close
               </button>
             </div>
             <div className="settings-section-header">
               <h3 className="settings-section-title">API Keys</h3>
-              <button type="button" className="documine-btn documine-btn--sm documine-btn--ghost" onClick={() => void handleCreateKey()}>
+              <button
+                type="button"
+                className="documine-btn documine-btn--sm documine-btn--ghost"
+                onClick={() => void handleCreateKey()}
+              >
                 New key
               </button>
             </div>
@@ -320,7 +359,11 @@ export function NotesListPage({
                   <span className="api-key-label">{key.label}</span>
                   <span className="api-key-meta">{formatDate(key.createdAt)}</span>
                 </div>
-                <button type="button" className="documine-btn documine-btn--sm documine-btn--danger" onClick={() => void handleDeleteKey(key.id)}>
+                <button
+                  type="button"
+                  className="documine-btn documine-btn--sm documine-btn--danger"
+                  onClick={() => void handleDeleteKey(key.id)}
+                >
                   Delete
                 </button>
               </div>
@@ -333,19 +376,19 @@ export function NotesListPage({
 }
 
 function useNoteExplorerNotes() {
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState("");
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
 
   const loadNotes = useCallback(async (query: string) => {
     setLoading(true);
-    setError('');
+    setError("");
     try {
       const payload = await apiRequest<{ ok: true; notes: NoteSummary[] }>(`/api/notes?q=${encodeURIComponent(query)}`);
       setNotes(payload.notes);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Failed to load notes.');
+      setError(cause instanceof Error ? cause.message : "Failed to load notes.");
     } finally {
       setLoading(false);
     }
@@ -380,7 +423,11 @@ export function NoteExplorer({
     <aside className="note-explorer" aria-label="Notes explorer">
       <div className="note-explorer-header">
         <div className="note-explorer-title">Notes</div>
-        <button type="button" className="documine-btn documine-btn--sm documine-btn--primary" onClick={() => void onCreateNote()}>
+        <button
+          type="button"
+          className="documine-btn documine-btn--sm documine-btn--primary"
+          onClick={() => void onCreateNote()}
+        >
           New note
         </button>
       </div>
@@ -399,12 +446,12 @@ export function NoteExplorer({
           <button
             key={note.id}
             type="button"
-            className={`note-explorer-row ${note.id === activeNoteId ? 'active' : ''}`}
-            aria-current={note.id === activeNoteId ? 'page' : undefined}
+            className={`note-explorer-row ${note.id === activeNoteId ? "active" : ""}`}
+            aria-current={note.id === activeNoteId ? "page" : undefined}
             onClick={() => onOpenNote(note.id)}
           >
             <span className="note-explorer-row-title">{note.title}</span>
-            <span className="note-explorer-row-snippet">{note.snippet || 'Empty note'}</span>
+            <span className="note-explorer-row-snippet">{note.snippet || "Empty note"}</span>
             <span className="note-explorer-row-meta">{formatDate(note.updatedAt)}</span>
           </button>
         ))}
@@ -412,5 +459,3 @@ export function NoteExplorer({
     </aside>
   );
 }
-
-

@@ -50,17 +50,17 @@ documine serve --port=3120 --data=./data
 
 ## Features
 
-| | |
-|---|---|
-| ✏️ **Real-time collab** | Multiple cursors, live sync, undo/redo — works across tabs and users |
-| 🔍 **Live PDF preview** | Rendered preview pane synced to the editor, with scroll sync |
-| 🖨️ **PDF export** | Configurable Pandoc PDF export with shareable, revocable links |
-| 💬 **Anchored comments** | Select text, add a thread. Reply, resolve, reopen. Threads survive edits |
-| 🔗 **Share with control** | Per-note links with configurable access: view, comment, or edit |
-| 🤖 **Agent-ready CLI** | Register with an API key or share link. Read, edit, comment — from a terminal or AI agent |
-| 🌓 **Dark + light** | Theme toggle with persisted preference |
-| 📱 **Mobile** | Responsive layout for editing on smaller screens |
-| 🐳 **Docker** | One-command deployment with `docker-compose` |
+|                           |                                                                                           |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| ✏️ **Real-time collab**   | Multiple cursors, live sync, undo/redo — works across tabs and users                      |
+| 🔍 **Live PDF preview**   | Rendered preview pane synced to the editor, with scroll sync                              |
+| 🖨️ **PDF export**         | Configurable Pandoc PDF export with shareable, revocable links                            |
+| 💬 **Anchored comments**  | Select text, add a thread. Reply, resolve, reopen. Threads survive edits                  |
+| 🔗 **Share with control** | Per-note links with configurable access: view, comment, or edit                           |
+| 🤖 **Agent-ready CLI**    | Register with an API key or share link. Read, edit, comment — from a terminal or AI agent |
+| 🌓 **Dark + light**       | Theme toggle with persisted preference                                                    |
+| 📱 **Mobile**             | Responsive layout for editing on smaller screens                                          |
+| 🐳 **Docker**             | One-command deployment with `docker-compose`                                              |
 
 ---
 
@@ -99,35 +99,35 @@ documine shared comment "quoted text" "comment body" --name="My Agent"
 
 All owner endpoints use `Authorization: Bearer <api-key>`.
 
-| Method | Endpoint | Description |
-| ------ | -------- | ----------- |
-| GET | `/api/notes?q=<query>` | List / search notes |
-| POST | `/api/notes` | Create note |
-| GET | `/api/notes/:id` | Read note |
-| PUT | `/api/notes/:id` | Update title, markdown, or share access |
-| DELETE | `/api/notes/:id` | Delete note |
-| POST | `/api/notes/:id/edit` | Apply text edits |
-| POST | `/api/notes/:id/threads` | Create comment thread |
-| POST | `/api/notes/:id/threads/:tid/replies` | Reply to thread |
-| PATCH | `/api/notes/:id/threads/:tid` | Resolve / reopen thread |
-| DELETE | `/api/notes/:id/threads/:tid` | Delete thread |
-| PATCH | `/api/notes/:id/messages/:mid` | Edit comment |
-| DELETE | `/api/notes/:id/messages/:mid` | Delete comment |
-| GET | `/api/keys` | List API keys |
-| POST | `/api/keys` | Create API key |
-| DELETE | `/api/keys/:id` | Delete API key |
+| Method | Endpoint                              | Description                             |
+| ------ | ------------------------------------- | --------------------------------------- |
+| GET    | `/api/notes?q=<query>`                | List / search notes                     |
+| POST   | `/api/notes`                          | Create note                             |
+| GET    | `/api/notes/:id`                      | Read note                               |
+| PUT    | `/api/notes/:id`                      | Update title, markdown, or share access |
+| DELETE | `/api/notes/:id`                      | Delete note                             |
+| POST   | `/api/notes/:id/edit`                 | Apply text edits                        |
+| POST   | `/api/notes/:id/threads`              | Create comment thread                   |
+| POST   | `/api/notes/:id/threads/:tid/replies` | Reply to thread                         |
+| PATCH  | `/api/notes/:id/threads/:tid`         | Resolve / reopen thread                 |
+| DELETE | `/api/notes/:id/threads/:tid`         | Delete thread                           |
+| PATCH  | `/api/notes/:id/messages/:mid`        | Edit comment                            |
+| DELETE | `/api/notes/:id/messages/:mid`        | Delete comment                          |
+| GET    | `/api/keys`                           | List API keys                           |
+| POST   | `/api/keys`                           | Create API key                          |
+| DELETE | `/api/keys/:id`                       | Delete API key                          |
 
 <details>
 <summary><strong>Shared note endpoints</strong> (no auth, access controlled per-note)</summary>
 
-| Method | Endpoint | Description |
-| ------ | -------- | ----------- |
-| GET | `/api/share/:sid` | Read shared note |
-| GET | `/api/share/:sid/note` | Read shared note (lightweight) |
-| POST | `/api/share/:sid/edit` | Edit (requires edit access) |
-| POST | `/api/share/:sid/threads` | Create comment |
-| POST | `/api/share/:sid/threads/:tid/replies` | Reply |
-| POST | `/api/share/:sid/render` | Render markdown to HTML |
+| Method | Endpoint                               | Description                    |
+| ------ | -------------------------------------- | ------------------------------ |
+| GET    | `/api/share/:sid`                      | Read shared note               |
+| GET    | `/api/share/:sid/note`                 | Read shared note (lightweight) |
+| POST   | `/api/share/:sid/edit`                 | Edit (requires edit access)    |
+| POST   | `/api/share/:sid/threads`              | Create comment                 |
+| POST   | `/api/share/:sid/threads/:tid/replies` | Reply                          |
+| POST   | `/api/share/:sid/render`               | Render markdown to HTML        |
 
 </details>
 

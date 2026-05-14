@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from "react";
 
-export type PreviewMode = 'markdown' | 'rendered-pdf';
+export type PreviewMode = "markdown" | "rendered-pdf";
 
 export type ScrollMetrics = {
   scrollTop: number;
@@ -21,12 +21,12 @@ export type ScrollSyncContext = {
 };
 
 function getStoredPreviewScrollSyncEnabled() {
-  const value = window.localStorage.getItem('documine_preview_scroll_sync');
-  return value == null ? true : value !== 'off';
+  const value = window.localStorage.getItem("documine_preview_scroll_sync");
+  return value == null ? true : value !== "off";
 }
 
 function setStoredPreviewScrollSyncEnabled(enabled: boolean) {
-  window.localStorage.setItem('documine_preview_scroll_sync', enabled ? 'on' : 'off');
+  window.localStorage.setItem("documine_preview_scroll_sync", enabled ? "on" : "off");
 }
 
 function getSyncedScrollTop(metrics: ScrollMetrics, targetScrollHeight: number, targetClientHeight: number) {
@@ -65,7 +65,8 @@ export function usePreviewScrollSyncController(previewMode: PreviewMode) {
   const attachPdfFrameScrollTracking = useCallback((frame: HTMLIFrameElement) => {
     const contentWindow = frame.contentWindow;
     const contentDocument = frame.contentDocument;
-    const scroller = contentDocument?.scrollingElement || contentDocument?.documentElement || contentDocument?.body || null;
+    const scroller =
+      contentDocument?.scrollingElement || contentDocument?.documentElement || contentDocument?.body || null;
     if (!contentWindow || !contentDocument || !scroller) {
       return;
     }
@@ -78,13 +79,13 @@ export function usePreviewScrollSyncController(previewMode: PreviewMode) {
       manualPdfScrollTopRef.current = scroller.scrollTop;
     };
 
-    contentWindow.addEventListener('scroll', handleScroll, { passive: true });
-    contentDocument.addEventListener('scroll', handleScroll, { passive: true });
-    scroller.addEventListener('scroll', handleScroll, { passive: true });
+    contentWindow.addEventListener("scroll", handleScroll, { passive: true });
+    contentDocument.addEventListener("scroll", handleScroll, { passive: true });
+    scroller.addEventListener("scroll", handleScroll, { passive: true });
     pdfFrameScrollCleanupRef.current = () => {
-      contentWindow.removeEventListener('scroll', handleScroll);
-      contentDocument.removeEventListener('scroll', handleScroll);
-      scroller.removeEventListener('scroll', handleScroll);
+      contentWindow.removeEventListener("scroll", handleScroll);
+      contentDocument.removeEventListener("scroll", handleScroll);
+      scroller.removeEventListener("scroll", handleScroll);
     };
   }, []);
 
@@ -141,7 +142,8 @@ export function usePreviewScrollSyncController(previewMode: PreviewMode) {
 
     const contentDocument = frame.contentDocument;
     const contentWindow = frame.contentWindow;
-    const scroller = contentDocument?.scrollingElement || contentDocument?.documentElement || contentDocument?.body || null;
+    const scroller =
+      contentDocument?.scrollingElement || contentDocument?.documentElement || contentDocument?.body || null;
     if (!contentDocument || !contentWindow || !scroller) {
       return;
     }
@@ -177,61 +179,73 @@ export function usePreviewScrollSyncController(previewMode: PreviewMode) {
     });
   }, []);
 
-  const syncPreviewScroll = useCallback((context?: ScrollSyncContext | null, targetMode: PreviewMode = previewModeRef.current) => {
-    if (targetMode === 'rendered-pdf') {
-      syncPdfPreviewScroll(context);
-      return;
-    }
-    syncMarkdownPreviewScroll(context);
-  }, [syncMarkdownPreviewScroll, syncPdfPreviewScroll]);
-
-  const previewScrollRef = useCallback((node: HTMLDivElement | null) => {
-    const current = markdownPreviewNodeRef.current;
-    if (current) {
-      current.removeEventListener('scroll', handleMarkdownPreviewScroll);
-    }
-    markdownPreviewNodeRef.current = node;
-    if (node) {
-      manualMarkdownScrollTopRef.current = node.scrollTop;
-      node.addEventListener('scroll', handleMarkdownPreviewScroll, { passive: true });
-      syncMarkdownPreviewScroll();
-    }
-  }, [handleMarkdownPreviewScroll, syncMarkdownPreviewScroll]);
-
-  const pdfPreviewFrameRef = useCallback((node: HTMLIFrameElement | null) => {
-    pdfFrameLoadCleanupRef.current?.();
-    pdfFrameLoadCleanupRef.current = null;
-    detachPdfFrameScrollTracking();
-    pdfFrameNodeRef.current = node;
-    if (!node) {
-      return;
-    }
-
-    const handleLoad = () => {
-      detachPdfFrameScrollTracking();
-      attachPdfFrameScrollTracking(node);
-      syncPdfPreviewScroll(currentScrollContextRef.current);
-    };
-
-    node.addEventListener('load', handleLoad);
-    pdfFrameLoadCleanupRef.current = () => node.removeEventListener('load', handleLoad);
-
-    if (node.contentDocument?.readyState === 'complete') {
-      handleLoad();
-    }
-  }, [attachPdfFrameScrollTracking, detachPdfFrameScrollTracking, syncPdfPreviewScroll]);
-
-  const handleEditorScrollChange = useCallback((context: ScrollSyncContext) => {
-    currentScrollContextRef.current = context;
-    if (scrollWithMarkdownEnabledRef.current) {
-      if (previewModeRef.current === 'rendered-pdf') {
-        pdfPreviewLockedRef.current = false;
-      } else {
-        markdownPreviewLockedRef.current = false;
+  const syncPreviewScroll = useCallback(
+    (context?: ScrollSyncContext | null, targetMode: PreviewMode = previewModeRef.current) => {
+      if (targetMode === "rendered-pdf") {
+        syncPdfPreviewScroll(context);
+        return;
       }
-      syncPreviewScroll(context);
-    }
-  }, [syncPreviewScroll]);
+      syncMarkdownPreviewScroll(context);
+    },
+    [syncMarkdownPreviewScroll, syncPdfPreviewScroll],
+  );
+
+  const previewScrollRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      const current = markdownPreviewNodeRef.current;
+      if (current) {
+        current.removeEventListener("scroll", handleMarkdownPreviewScroll);
+      }
+      markdownPreviewNodeRef.current = node;
+      if (node) {
+        manualMarkdownScrollTopRef.current = node.scrollTop;
+        node.addEventListener("scroll", handleMarkdownPreviewScroll, { passive: true });
+        syncMarkdownPreviewScroll();
+      }
+    },
+    [handleMarkdownPreviewScroll, syncMarkdownPreviewScroll],
+  );
+
+  const pdfPreviewFrameRef = useCallback(
+    (node: HTMLIFrameElement | null) => {
+      pdfFrameLoadCleanupRef.current?.();
+      pdfFrameLoadCleanupRef.current = null;
+      detachPdfFrameScrollTracking();
+      pdfFrameNodeRef.current = node;
+      if (!node) {
+        return;
+      }
+
+      const handleLoad = () => {
+        detachPdfFrameScrollTracking();
+        attachPdfFrameScrollTracking(node);
+        syncPdfPreviewScroll(currentScrollContextRef.current);
+      };
+
+      node.addEventListener("load", handleLoad);
+      pdfFrameLoadCleanupRef.current = () => node.removeEventListener("load", handleLoad);
+
+      if (node.contentDocument?.readyState === "complete") {
+        handleLoad();
+      }
+    },
+    [attachPdfFrameScrollTracking, detachPdfFrameScrollTracking, syncPdfPreviewScroll],
+  );
+
+  const handleEditorScrollChange = useCallback(
+    (context: ScrollSyncContext) => {
+      currentScrollContextRef.current = context;
+      if (scrollWithMarkdownEnabledRef.current) {
+        if (previewModeRef.current === "rendered-pdf") {
+          pdfPreviewLockedRef.current = false;
+        } else {
+          markdownPreviewLockedRef.current = false;
+        }
+        syncPreviewScroll(context);
+      }
+    },
+    [syncPreviewScroll],
+  );
 
   const toggleScrollWithMarkdown = useCallback(() => {
     const nextEnabled = !scrollWithMarkdownEnabledRef.current;
@@ -239,7 +253,7 @@ export function usePreviewScrollSyncController(previewMode: PreviewMode) {
     setScrollWithMarkdownEnabled(nextEnabled);
     setStoredPreviewScrollSyncEnabled(nextEnabled);
     if (nextEnabled) {
-      if (previewModeRef.current === 'rendered-pdf') {
+      if (previewModeRef.current === "rendered-pdf") {
         pdfPreviewLockedRef.current = false;
       } else {
         markdownPreviewLockedRef.current = false;
@@ -262,4 +276,3 @@ export function usePreviewScrollSyncController(previewMode: PreviewMode) {
     syncPreviewScroll,
   };
 }
-
