@@ -7,17 +7,8 @@ export type AgentModalConfig = {
   buildInstructions: (apiKey: string | null) => string;
 };
 
-function isLocalApiOrigin(apiBaseUrl: string) {
-  try {
-    const { hostname } = new URL(apiBaseUrl);
-    return hostname === "localhost" || hostname === "127.0.0.1";
-  } catch {
-    return false;
-  }
-}
-
 function getCliCommandProfile(apiBaseUrl: string) {
-  if (import.meta.env.DEV || isLocalApiOrigin(apiBaseUrl)) {
+  if (import.meta.env.DEV) {
     return {
       command: "documine",
       setupLines: [
