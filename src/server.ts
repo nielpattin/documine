@@ -50,6 +50,7 @@ const noteStore = new FsNoteStore(dataDir);
 const app = new Hono();
 
 const frontendDist = path.resolve(__dirname, "../apps/web/dist");
+const cliScriptPath = path.resolve(__dirname, "../cli/documine.mjs").replace(/\\/g, "/");
 const frontendDistExists = fs.existsSync(frontendDist) && fs.statSync(frontendDist).isDirectory();
 
 app.use("/api/*", async (c, next) => {
@@ -82,6 +83,8 @@ app.get("/", (c) => {
 });
 
 app.get("/health", (c) => c.text("ok"));
+
+app.get("/api/runtime/cli-path", (c) => c.text(cliScriptPath));
 
 app.get("/assets/:noteId/:fileName", (c) => {
   const note = noteStore.getNote(c.req.param("noteId"));

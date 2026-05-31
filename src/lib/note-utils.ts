@@ -1,18 +1,10 @@
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { Context } from "hono";
 
 import type { CommentAnchor, NoteRecord, ShareAccess } from "../types/notes.js";
 
-import {
-  applyClientMutations,
-  idAtIndex,
-  idBeforeIndex,
-  type ClientMutation,
-  type ServerMutationMessage,
-} from "../collab.js";
-import { escapeMarkdownImageAlt, countOccurrences } from "../shared.js";
+import { escapeMarkdownImageAlt } from "../shared.js";
 
 import {
   shareAccessLevels,
@@ -213,86 +205,6 @@ export function sanitizeAnchor(input: unknown) {
   }
 
   return { quote, prefix, suffix, start, end } satisfies CommentAnchor;
-}
-
-// ---------------------------------------------------------------------------
-// Text edits
-// ---------------------------------------------------------------------------
-
-export function applyTextEditsToNote(note: NoteRecord, edits: unknown[]) {
-  let workingCollab = note.collab;
-  let markdown = note.markdown;
-  let senderCounter = 0;
-  const errors: string[] = [];
-  const idListUpdates: ServerMutationMessage["idListUpdates"] = [];
-
-  for (let index = 0; index < edits.length; index++) {
-    const edit = edits[index] as Record<string, unknown>;
-    const oldText = String(edit?.oldText || "");
-    const newText = String(edit?.newText || "");
-
-    if (!oldText) {
-      errors.push(`Edit ${index}: oldText is empty.`);
-      continue;
-    }
-
-    const firstIndex = markdown.indexOf(oldText);
-    if (firstIndex === -1) {
-      errors.push(`Edit ${index}: oldText not found.`);
-      continue;
-    }
-
-    const secondIndex = markdown.indexOf(oldText, firstIndex + 1);
-    if (secondIndex !== -1) {
-      errors.push(`Edit ${index}: oldText is ambiguous (found ${countOccurrences(markdown, oldText)} times).`);
-      continue;
-    }
-
-    let nextClientCounter = senderCounter + 1;
-    const mutations: ClientMutation[] = [];
-
-    mutations.push({
-      name: "delete",
-      clientCounter: nextClientCounter++,
-      args: {
-        startId: idAtIndex(workingCollab, firstIndex),
-        endId: idAtIndex(workingCollab, firstIndex + oldText.length - 1),
-        contentLength: oldText.length,
-      },
-    });
-
-    if (newText.length > 0) {
-      mutations.push({
-        name: "insert",
-        clientCounter: nextClientCounter++,
-        args: {
-          before: firstIndex > 0 ? idBeforeIndex(workingCollab, firstIndex) : null,
-          id: { bunchId: crypto.randomUUID(), counter: 0 },
-          content: newText,
-          isInWord: false,
-        },
-      });
-    }
-
-    const result = applyClientMutations(workingCollab, mutations);
-    workingCollab = result.state;
-    markdown = result.markdown;
-    idListUpdates.push(...result.idListUpdates);
-    senderCounter = mutations.at(-1)?.clientCounter || senderCounter;
-  }
-
-  if (errors.length > 0) {
-    return {
-      ok: false as const,
-      errors,
-      senderCounter: 0,
-      idListUpdates: [] as ServerMutationMessage["idListUpdates"],
-    };
-  }
-
-  note.collab = workingCollab;
-  note.markdown = markdown;
-  return { ok: true as const, errors: [] as string[], senderCounter, idListUpdates };
 }
 
 // ---------------------------------------------------------------------------

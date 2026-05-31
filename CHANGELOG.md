@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added agent-safe CLI note inspection with bounded `read --range`, contextual `read --around`, and `grep --max-matches` commands for owner and shared instances.
+- Added unified diff patch support through `documine <instance> apply <id> --patch <file> [--check]` and the owner `POST /api/notes/:id/apply` endpoint.
+- Added bounded note range and grep endpoints for owner and shared notes.
+- Added persistent shared CLI commenter identity so agents can comment and reply on shared notes without browser cookies.
+- Added dynamic agent setup instructions that use the globally installed `documine` command in production and a server-provided absolute CLI path in local development.
+
+### Changed
+
+- Updated README and generated agent instructions to guide agents toward bounded reads, grep, and unified diff patches instead of full-note dumps or JSON text edits.
+- Updated formatter scripts to respect `.git/info/exclude` in addition to `.gitignore`.
+- Updated dependency and toolchain patch versions.
+
+### Removed
+
+- Removed the legacy CLI `edit` command and legacy JSON `oldText` / `newText` note editing flow.
+- Removed shared REST markdown editing through `POST /api/share/:shareId/edit`; shared CLI instances now support safe bounded inspection and comments, while markdown edits require owner patch access.
+
 ## [1.1.3] - 2026-05-12
 
 ### Fixed

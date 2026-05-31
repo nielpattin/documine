@@ -22,7 +22,6 @@ import {
   serializeNoteForClient,
   serializeThreads,
   makeShareUrl,
-  applyTextEditsToNote,
   handleImageUpload,
   sanitizeAnchor,
   locateMessage,
@@ -30,8 +29,9 @@ import {
   requireSharedIdentity,
 } from "../lib/note-utils.js";
 import { renderMarkdown, renderPrintPreviewHtml, injectPreviewBaseHref } from "../lib/markdown.js";
+import { formatMarkdownAround, formatMarkdownRange, grepMarkdown } from "../lib/note-ranges.js";
 
-import { broadcastEditorMutation, broadcastNoteUpdate, broadcastThreadsUpdated } from "../lib/collab-ws.js";
+import { broadcastThreadsUpdated } from "../lib/collab-ws.js";
 
 export function registerSharedRoutes(app: Hono, store: NoteStore) {
   app.get("/api/share/:shareId/meta", (c) => {
@@ -83,6 +83,44 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
     });
   });
 
+  app.get("/api/share/:shareId/range", (c) => {
+    const note = requireShareAccess(c, "view", store);
+    if (!note) {
+      return c.json({ ok: false, error: "Shared note not found." }, 404);
+    }
+    if (!requireSharedIdentity(c)) {
+      return c.json({ ok: false, error: "Set your name first.", requiresIdentity: true }, 401);
+    }
+
+    const aroundLine = c.req.query("around");
+    const context = Number(c.req.query("context") || "20");
+    const range = aroundLine
+      ? formatMarkdownAround(note.markdown, Number(aroundLine), context)
+      : formatMarkdownRange(note.markdown, Number(c.req.query("start") || "1"), Number(c.req.query("end") || "1"));
+    return c.json({ ok: true, note: { id: note.id, title: note.title, shareAccess: note.shareAccess, ...range } });
+  });
+
+  app.get("/api/share/:shareId/grep", (c) => {
+    const note = requireShareAccess(c, "view", store);
+    if (!note) {
+      return c.json({ ok: false, error: "Shared note not found." }, 404);
+    }
+    if (!requireSharedIdentity(c)) {
+      return c.json({ ok: false, error: "Set your name first.", requiresIdentity: true }, 401);
+    }
+
+    const query = c.req.query("q") || "";
+    const context = Number(c.req.query("context") || "2");
+    const maxMatches = Number(c.req.query("maxMatches") || "20");
+    const result = grepMarkdown(note.markdown, query, context, maxMatches);
+    return c.json({
+      ok: true,
+      note: { id: note.id, title: note.title, shareAccess: note.shareAccess, totalLines: result.totalLines },
+      matches: result.matches,
+      truncated: result.truncated,
+    });
+  });
+
   app.get("/api/share/:shareId/collab", (c) => {
     const note = requireShareAccess(c, "edit", store);
     if (!note) {
@@ -101,42 +139,6 @@ export function registerSharedRoutes(app: Hono, store: NoteStore) {
       serverCounter: note.collab.serverCounter,
       collabState: saveCollabState(note.collab),
     });
-  });
-
-  app.post("/api/share/:shareId/edit", async (c) => {
-    const note = requireShareAccess(c, "edit", store);
-    if (!note) {
-      return c.json({ ok: false, error: "Shared note not found." }, 404);
-    }
-    if (!requireSharedIdentity(c)) {
-      return c.json({ ok: false, error: "Set your name first.", requiresIdentity: true }, 401);
-    }
-
-    const body = await readJsonBody(c);
-    const edits = body.edits;
-    if (!Array.isArray(edits) || edits.length === 0) {
-      return c.json({ ok: false, error: "edits must be a non-empty array of {oldText, newText}." }, 400);
-    }
-
-    const result = applyTextEditsToNote(note, edits);
-    if (!result.ok) {
-      return c.json({ ok: false, errors: result.errors }, 400);
-    }
-
-    note.updatedAt = nowIso();
-    store.saveNote(note);
-    if (result.idListUpdates.length > 0) {
-      broadcastEditorMutation(note, {
-        type: "mutation",
-        senderId: "__api__",
-        senderCounter: result.senderCounter,
-        serverCounter: note.collab.serverCounter,
-        markdown: note.markdown,
-        idListUpdates: result.idListUpdates,
-      });
-    }
-    broadcastNoteUpdate(note);
-    return c.json({ ok: true, savedAt: note.updatedAt });
   });
 
   app.post("/api/share/:shareId/render", async (c) => {

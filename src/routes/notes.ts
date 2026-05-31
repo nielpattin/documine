@@ -28,7 +28,6 @@ import { isOwnerAuthenticated, getBearerToken, getApiKeyLabel } from "../lib/aut
 
 import {
   broadcastEditorHello,
-  broadcastEditorMutation,
   broadcastNoteUpdate,
   broadcastThreadsUpdated,
   enforceShareAccessForConnections,
@@ -43,11 +42,12 @@ import {
   serializeThreads,
   handleImageUpload,
   sanitizeAnchor,
-  applyTextEditsToNote,
   locateMessage,
   makeShareUrl,
 } from "../lib/note-utils.js";
 import { renderMarkdown, renderPrintPreviewHtml, injectPreviewBaseHref } from "../lib/markdown.js";
+import { formatMarkdownAround, formatMarkdownRange, grepMarkdown } from "../lib/note-ranges.js";
+import { applyUnifiedDiffToMarkdown } from "../lib/note-patch.js";
 
 const activePdfPreviewControllers = new Map<string, AbortController>();
 
@@ -206,6 +206,45 @@ export function registerNotesRoutes(app: Hono, store: NoteStore) {
     },
   );
 
+  app.get("/api/notes/:id/range", (c) => {
+    if (!isOwnerAuthenticated(c)) {
+      return c.json({ ok: false, error: "Unauthorized." }, 401);
+    }
+
+    const note = store.getNote(c.req.param("id"));
+    if (!note) {
+      return c.json({ ok: false, error: "Note not found." }, 404);
+    }
+
+    const aroundLine = c.req.query("around");
+    const context = Number(c.req.query("context") || "20");
+    const range = aroundLine
+      ? formatMarkdownAround(note.markdown, Number(aroundLine), context)
+      : formatMarkdownRange(note.markdown, Number(c.req.query("start") || "1"), Number(c.req.query("end") || "1"));
+    return c.json({ ok: true, note: { id: note.id, title: note.title, ...range } });
+  });
+
+  app.get("/api/notes/:id/grep", (c) => {
+    if (!isOwnerAuthenticated(c)) {
+      return c.json({ ok: false, error: "Unauthorized." }, 401);
+    }
+
+    const note = store.getNote(c.req.param("id"));
+    if (!note) {
+      return c.json({ ok: false, error: "Note not found." }, 404);
+    }
+
+    const query = c.req.query("q") || "";
+    const context = Number(c.req.query("context") || "2");
+    const maxMatches = Number(c.req.query("maxMatches") || "20");
+    const result = grepMarkdown(note.markdown, query, context, maxMatches);
+    return c.json({
+      ok: true,
+      note: { id: note.id, title: note.title, totalLines: result.totalLines },
+      matches: result.matches,
+      truncated: result.truncated,
+    });
+  });
   app.get("/api/notes/:id", (c) => {
     if (!isOwnerAuthenticated(c)) {
       return c.json({ ok: false, error: "Unauthorized." }, 401);
@@ -606,7 +645,7 @@ export function registerNotesRoutes(app: Hono, store: NoteStore) {
     return c.json({ ok: true });
   });
 
-  app.post("/api/notes/:id/edit", async (c) => {
+  app.post("/api/notes/:id/apply", async (c) => {
     if (!isOwnerAuthenticated(c)) {
       return c.json({ ok: false, error: "Unauthorized." }, 401);
     }
@@ -617,38 +656,27 @@ export function registerNotesRoutes(app: Hono, store: NoteStore) {
     }
 
     const body = await readJsonBody(c);
-    const edits = body.edits;
-    if (!Array.isArray(edits) || edits.length === 0) {
-      return c.json({ ok: false, error: "edits must be a non-empty array of {oldText, newText}." }, 400);
-    }
-
-    const result = applyTextEditsToNote(note, edits);
+    const patch = String(body.patch || "");
+    const check = Boolean(body.check);
+    const result = applyUnifiedDiffToMarkdown(note.markdown, patch);
     if (!result.ok) {
-      return c.json({ ok: false, errors: result.errors }, 400);
+      return c.json(
+        { ok: false, error: result.error.message, reason: result.error.reason, context: result.error.context },
+        400,
+      );
     }
 
-    const titleProvided = Object.prototype.hasOwnProperty.call(body, "title");
-    const titleChanged = titleProvided && normalizeTitle(String(body.title || note.title)) !== note.title;
-    if (titleProvided) {
-      note.title = normalizeTitle(String(body.title || note.title));
+    if (check) {
+      return c.json({ ok: true, check: true, changedLines: result.changedLines, preview: result.preview });
     }
+
+    note.collab = collabFromMarkdown(result.markdown, note.collab.serverCounter + 1);
+    note.markdown = result.markdown;
     note.updatedAt = nowIso();
     store.saveNote(note);
-
-    if (titleChanged) {
-      broadcastEditorHello(note);
-    } else if (result.idListUpdates.length > 0) {
-      broadcastEditorMutation(note, {
-        type: "mutation",
-        senderId: "__api__",
-        senderCounter: result.senderCounter,
-        serverCounter: note.collab.serverCounter,
-        markdown: note.markdown,
-        idListUpdates: result.idListUpdates,
-      });
-    }
+    broadcastEditorHello(note);
     broadcastNoteUpdate(note);
-    return c.json({ ok: true, savedAt: note.updatedAt });
+    return c.json({ ok: true, savedAt: note.updatedAt, changedLines: result.changedLines, preview: result.preview });
   });
 
   app.get("/api/notes/:id/assets", (c) => {

@@ -107,52 +107,49 @@ export function CollabTextarea({
   });
 
   // Horizontal scroll sync: DOM side effect via callback ref (React 19+ cleanup)
-  const horizontalScrollCallbackRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      horizontalScrollRef.current = node;
-      if (!node) return;
+  const horizontalScrollCallbackRef = useCallback((node: HTMLDivElement | null) => {
+    horizontalScrollRef.current = node;
+    if (!node) return;
 
-      const textarea = textareaRef.current;
-      const spacer = horizontalScrollSpacerRef.current;
-      if (!textarea || !spacer) return;
+    const textarea = textareaRef.current;
+    const spacer = horizontalScrollSpacerRef.current;
+    if (!textarea || !spacer) return;
 
-      const emitScrollMetrics = () => {
-        callbacksRef.current.onScrollMetricsChange?.({
-          scrollTop: textarea.scrollTop,
-          scrollHeight: textarea.scrollHeight,
-          clientHeight: textarea.clientHeight,
-        });
-      };
-      const syncMetrics = () => {
-        spacer.style.width = `${Math.max(textarea.scrollWidth, textarea.clientWidth)}px`;
-        node.scrollLeft = textarea.scrollLeft;
-        emitScrollMetrics();
-      };
-      const syncFromTextarea = () => {
-        node.scrollLeft = textarea.scrollLeft;
-        syncMetrics();
-      };
-      const syncFromScrollbar = () => {
-        textarea.scrollLeft = node.scrollLeft;
-      };
-
+    const emitScrollMetrics = () => {
+      callbacksRef.current.onScrollMetricsChange?.({
+        scrollTop: textarea.scrollTop,
+        scrollHeight: textarea.scrollHeight,
+        clientHeight: textarea.clientHeight,
+      });
+    };
+    const syncMetrics = () => {
+      spacer.style.width = `${Math.max(textarea.scrollWidth, textarea.clientWidth)}px`;
+      node.scrollLeft = textarea.scrollLeft;
+      emitScrollMetrics();
+    };
+    const syncFromTextarea = () => {
+      node.scrollLeft = textarea.scrollLeft;
       syncMetrics();
-      textarea.addEventListener("scroll", syncFromTextarea);
-      textarea.addEventListener("input", syncMetrics);
-      node.addEventListener("scroll", syncFromScrollbar);
+    };
+    const syncFromScrollbar = () => {
+      textarea.scrollLeft = node.scrollLeft;
+    };
 
-      const resizeObserver = new ResizeObserver(syncMetrics);
-      resizeObserver.observe(textarea);
+    syncMetrics();
+    textarea.addEventListener("scroll", syncFromTextarea);
+    textarea.addEventListener("input", syncMetrics);
+    node.addEventListener("scroll", syncFromScrollbar);
 
-      return () => {
-        textarea.removeEventListener("scroll", syncFromTextarea);
-        textarea.removeEventListener("input", syncMetrics);
-        node.removeEventListener("scroll", syncFromScrollbar);
-        resizeObserver.disconnect();
-      };
-    },
-    [],
-  );
+    const resizeObserver = new ResizeObserver(syncMetrics);
+    resizeObserver.observe(textarea);
+
+    return () => {
+      textarea.removeEventListener("scroll", syncFromTextarea);
+      textarea.removeEventListener("input", syncMetrics);
+      node.removeEventListener("scroll", syncFromScrollbar);
+      resizeObserver.disconnect();
+    };
+  }, []);
 
   const horizontalScrollSpacerCallbackRef = useCallback((node: HTMLDivElement | null) => {
     horizontalScrollSpacerRef.current = node;

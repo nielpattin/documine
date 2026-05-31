@@ -50,17 +50,17 @@ documine serve --port=3120 --data=./data
 
 ## Features
 
-|                           |                                                                                           |
-| ------------------------- | ----------------------------------------------------------------------------------------- |
-| ✏️ **Real-time collab**   | Multiple cursors, live sync, undo/redo — works across tabs and users                      |
-| 🔍 **Live PDF preview**   | Rendered preview pane synced to the editor, with scroll sync                              |
-| 🖨️ **PDF export**         | Configurable Pandoc PDF export with shareable, revocable links                            |
-| 💬 **Anchored comments**  | Select text, add a thread. Reply, resolve, reopen. Threads survive edits                  |
-| 🔗 **Share with control** | Per-note links with configurable access: view, comment, or edit                           |
-| 🤖 **Agent-ready CLI**    | Register with an API key or share link. Read, edit, comment — from a terminal or AI agent |
-| 🌓 **Dark + light**       | Theme toggle with persisted preference                                                    |
-| 📱 **Mobile**             | Responsive layout for editing on smaller screens                                          |
-| 🐳 **Docker**             | One-command deployment with `docker-compose`                                              |
+|                           |                                                                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| ✏️ **Real-time collab**   | Multiple cursors, live sync, undo/redo — works across tabs and users                                                |
+| 🔍 **Live PDF preview**   | Rendered preview pane synced to the editor, with scroll sync                                                        |
+| 🖨️ **PDF export**         | Configurable Pandoc PDF export with shareable, revocable links                                                      |
+| 💬 **Anchored comments**  | Select text, add a thread. Reply, resolve, reopen. Threads survive edits                                            |
+| 🔗 **Share with control** | Per-note links with configurable access: view, comment, or edit                                                     |
+| 🤖 **Agent-ready CLI**    | Register with an API key or share link. Search, read bounded ranges, patch, and comment from a terminal or AI agent |
+| 🌓 **Dark + light**       | Theme toggle with persisted preference                                                                              |
+| 📱 **Mobile**             | Responsive layout for editing on smaller screens                                                                    |
+| 🐳 **Docker**             | One-command deployment with `docker-compose`                                                                        |
 
 ---
 
@@ -77,8 +77,11 @@ documine register myserver https://documine.example.com <api-key>
 documine myserver list
 documine myserver search "query"
 documine myserver read <note-id>
+documine myserver read <note-id> --range=1:120
+documine myserver grep <note-id> "text" --context=20 --max-matches=5
+documine myserver apply <note-id> --patch change.diff --check
+documine myserver apply <note-id> --patch change.diff
 documine myserver create "My note"
-documine myserver edit <note-id> '[{"oldText":"foo","newText":"bar"}]'
 documine myserver delete <note-id>
 ```
 
@@ -89,7 +92,8 @@ Share links are the credential. No API key needed. Access level set by the owner
 ```bash
 documine register shared https://documine.example.com/s/abc123
 documine shared read
-documine shared edit '[{"oldText":"foo","newText":"bar"}]'
+documine shared read --range=1:120
+documine shared grep "text" --context=20 --max-matches=5
 documine shared comment "quoted text" "comment body" --name="My Agent"
 ```
 
@@ -103,10 +107,12 @@ All owner endpoints use `Authorization: Bearer <api-key>`.
 | ------ | ------------------------------------- | --------------------------------------- |
 | GET    | `/api/notes?q=<query>`                | List / search notes                     |
 | POST   | `/api/notes`                          | Create note                             |
-| GET    | `/api/notes/:id`                      | Read note                               |
+| GET    | `/api/notes/:id`                      | Read note for web clients               |
+| GET    | `/api/notes/:id/range`                | Read bounded note lines                 |
+| GET    | `/api/notes/:id/grep`                 | Search note with bounded context        |
 | PUT    | `/api/notes/:id`                      | Update title, markdown, or share access |
 | DELETE | `/api/notes/:id`                      | Delete note                             |
-| POST   | `/api/notes/:id/edit`                 | Apply text edits                        |
+| POST   | `/api/notes/:id/apply`                | Apply unified diff patch                |
 | POST   | `/api/notes/:id/threads`              | Create comment thread                   |
 | POST   | `/api/notes/:id/threads/:tid/replies` | Reply to thread                         |
 | PATCH  | `/api/notes/:id/threads/:tid`         | Resolve / reopen thread                 |
@@ -120,14 +126,15 @@ All owner endpoints use `Authorization: Bearer <api-key>`.
 <details>
 <summary><strong>Shared note endpoints</strong> (no auth, access controlled per-note)</summary>
 
-| Method | Endpoint                               | Description                    |
-| ------ | -------------------------------------- | ------------------------------ |
-| GET    | `/api/share/:sid`                      | Read shared note               |
-| GET    | `/api/share/:sid/note`                 | Read shared note (lightweight) |
-| POST   | `/api/share/:sid/edit`                 | Edit (requires edit access)    |
-| POST   | `/api/share/:sid/threads`              | Create comment                 |
-| POST   | `/api/share/:sid/threads/:tid/replies` | Reply                          |
-| POST   | `/api/share/:sid/render`               | Render markdown to HTML        |
+| Method | Endpoint                               | Description                      |
+| ------ | -------------------------------------- | -------------------------------- |
+| GET    | `/api/share/:sid`                      | Read shared note for web clients |
+| GET    | `/api/share/:sid/note`                 | Read shared note for web clients |
+| GET    | `/api/share/:sid/range`                | Read bounded shared note lines   |
+| GET    | `/api/share/:sid/grep`                 | Search shared note context       |
+| POST   | `/api/share/:sid/threads`              | Create comment                   |
+| POST   | `/api/share/:sid/threads/:tid/replies` | Reply                            |
+| POST   | `/api/share/:sid/render`               | Render markdown to HTML          |
 
 </details>
 

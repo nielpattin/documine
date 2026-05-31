@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -44,6 +45,9 @@ async function request(instance, method, endpoint, body) {
   if (instance.token) {
     options.headers.Authorization = `Bearer ${instance.token}`;
   }
+  if (isShareInstance(instance) && instance.commenterId && instance.commenterName) {
+    options.headers.Cookie = `documine_commenter_id=${encodeURIComponent(instance.commenterId)}; documine_commenter_name=${encodeURIComponent(instance.commenterName)}`;
+  }
 
   if (body !== undefined) {
     options.headers["Content-Type"] = "application/json";
@@ -55,6 +59,11 @@ async function request(instance, method, endpoint, body) {
 
   if (!response.ok) {
     console.error(`Error ${response.status}: ${payload.error || payload.errors?.join(", ") || "Request failed"}`);
+    if (payload.reason) console.error(`reason: ${payload.reason}`);
+    if (payload.context) {
+      console.error();
+      console.error(payload.context);
+    }
     process.exit(1);
   }
 
@@ -93,6 +102,27 @@ function printAuthGuardStatus(payload) {
 
 function isShareInstance(instance) {
   return Boolean(instance.shareId && !instance.token);
+}
+
+function updateInstance(name, updater) {
+  const config = loadConfig();
+  const index = config.instances.findIndex((item) => item.name === name);
+  if (index === -1) return null;
+  config.instances[index] = updater(config.instances[index]);
+  saveConfig(config);
+  return config.instances[index];
+}
+
+function ensureSharedCliIdentity(instance, commenterName) {
+  if (!isShareInstance(instance)) return instance;
+  if (instance.commenterId && instance.commenterName === commenterName) return instance;
+  return (
+    updateInstance(instance.name, (current) => ({
+      ...current,
+      commenterId: current.commenterId || crypto.randomUUID(),
+      commenterName,
+    })) || instance
+  );
 }
 
 function imageContentType(filePath) {
@@ -243,60 +273,121 @@ const subCommand = args[1];
 if (!subCommand) {
   console.error(`Usage: documine <instance> <command> [args...]`);
   console.error(
-    `Commands: list, search, read, create, edit, delete, update, upload-image, auth-status, login-enable, login-disable, login-bans, login-unban`,
+    `Commands: list, search, read, grep, apply, create, share, comment, reply, resolve, reopen, edit-comment, delete-comment, delete-thread, delete, update, upload-image, auth-status, login-enable, login-disable, login-bans, login-unban`,
   );
   process.exit(1);
 }
 
-const instance = getInstance(instanceName);
+let instance = getInstance(instanceName);
 
 if (isShareInstance(instance)) {
   const sid = instance.shareId;
   const plainArgs = args.filter((a) => !a.startsWith("--"));
   const nameArg = args.find((a) => a.startsWith("--name="));
   const agentName = nameArg ? nameArg.split("=").slice(1).join("=") : "Agent";
+  instance = ensureSharedCliIdentity(instance, agentName);
 
   switch (subCommand) {
     case "read": {
-      const payload = await request(instance, "GET", `/api/share/${sid}/note`);
+      const rangeArg = args.find((a) => a.startsWith("--range="));
+      const aroundArg = args.find((a) => a.startsWith("--around="));
+      const contextArg = args.find((a) => a.startsWith("--context="));
+      const full = args.includes("--full");
+      const force = args.includes("--force");
+
+      if (full || force) {
+        console.error("Full note stdout is unavailable for agent safety. Use --range, --around, or grep.");
+        process.exit(1);
+      }
+
+      if (aroundArg) {
+        const around = aroundArg.split("=")[1];
+        const context = contextArg ? contextArg.split("=")[1] : "20";
+        const payload = await request(
+          instance,
+          "GET",
+          `/api/share/${sid}/range?around=${encodeURIComponent(around)}&context=${encodeURIComponent(context)}`,
+        );
+        const note = payload.note;
+        console.log(`# ${note.title}`);
+        console.log(`# id: ${note.id}`);
+        console.log(`# access: ${note.shareAccess}`);
+        console.log(
+          `# lines: ${note.offset}-${note.offset + note.limit - 1} of ${note.totalLines}${note.remaining > 0 ? ` (${note.remaining} more)` : ""}`,
+        );
+        console.log();
+        console.log(note.content);
+        break;
+      }
+
+      if (rangeArg) {
+        const [start, end] = rangeArg.split("=")[1].split(":");
+        const payload = await request(
+          instance,
+          "GET",
+          `/api/share/${sid}/range?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end || start)}`,
+        );
+        const note = payload.note;
+        console.log(`# ${note.title}`);
+        console.log(`# id: ${note.id}`);
+        console.log(`# access: ${note.shareAccess}`);
+        console.log(
+          `# lines: ${note.offset}-${note.offset + note.limit - 1} of ${note.totalLines}${note.remaining > 0 ? ` (${note.remaining} more)` : ""}`,
+        );
+        console.log();
+        console.log(note.content);
+        break;
+      }
+
+      const payload = await request(instance, "GET", `/api/share/${sid}/range?start=1&end=1`);
       const note = payload.note;
       console.log(`# ${note.title}`);
       console.log(`# id: ${note.id}`);
-      console.log(`# updated: ${note.updatedAt}`);
       console.log(`# access: ${note.shareAccess}`);
+      console.log(`# size: ${note.totalLines} lines`);
       console.log();
-      console.log(note.markdown);
-
-      if (payload.threads && payload.threads.length > 0) {
-        console.log();
-        console.log("--- Comments ---");
-        for (const thread of payload.threads) {
-          const anchor = thread.anchor?.quote ? `"${thread.anchor.quote.slice(0, 60)}"` : "(no anchor)";
-          console.log();
-          console.log(`Thread ${thread.id} on ${anchor}${thread.resolved ? " [resolved]" : ""}`);
-          for (const msg of thread.messages) {
-            console.log(`  [${msg.id}] ${msg.authorName} (${msg.updatedAt}): ${msg.body}`);
-          }
-        }
-      }
+      console.log("Full note stdout is unavailable for agent safety.");
+      console.log(`Read a range: documine ${instance.name} read --range=1:120`);
+      console.log(`Read around a line: documine ${instance.name} read --around=120 --context=30`);
+      console.log(`Search note: documine ${instance.name} grep "text" --context=20 --max-matches=5`);
       break;
     }
 
-    case "edit": {
-      const editsJson = plainArgs[2];
-      if (!editsJson) {
-        console.error("Usage: documine <instance> edit '<json edits>'");
+    case "grep": {
+      const contextArg = args.find((a) => a.startsWith("--context="));
+      const maxMatchesArg = args.find((a) => a.startsWith("--max-matches="));
+      const query = args
+        .slice(2)
+        .filter((a) => !a.startsWith("--context=") && !a.startsWith("--max-matches="))
+        .join(" ");
+      if (!query) {
+        console.error("Usage: documine <shared-instance> grep <query> [--context=N] [--max-matches=N]");
         process.exit(1);
       }
-      let edits;
-      try {
-        edits = JSON.parse(editsJson);
-      } catch {
-        console.error("Invalid JSON.");
-        process.exit(1);
+      const context = contextArg ? contextArg.split("=")[1] : "2";
+      const maxMatches = maxMatchesArg ? maxMatchesArg.split("=")[1] : "20";
+      const payload = await request(
+        instance,
+        "GET",
+        `/api/share/${sid}/grep?q=${encodeURIComponent(query)}&context=${encodeURIComponent(context)}&maxMatches=${encodeURIComponent(maxMatches)}`,
+      );
+      const note = payload.note;
+      console.log(`# ${note.title}`);
+      console.log(`# id: ${note.id}`);
+      console.log(`# access: ${note.shareAccess}`);
+      console.log(`# matches: ${payload.matches.length}`);
+      console.log(`# lines: ${note.totalLines}`);
+      if (payload.truncated) console.log("# truncated: yes");
+      if (payload.matches.length === 0) {
+        console.log();
+        console.log("No matches found.");
+        break;
       }
-      const payload = await request(instance, "POST", `/api/share/${sid}/edit`, { edits });
-      console.log(`Saved at ${payload.savedAt}`);
+      for (const match of payload.matches) {
+        console.log();
+        console.log(`@@ ${match.startLine}-${match.endLine} @@`);
+        console.log(match.content);
+      }
       break;
     }
 
@@ -335,7 +426,7 @@ if (isShareInstance(instance)) {
 
     default:
       console.error(`Unknown command for shared instance: ${subCommand}`);
-      console.error("Available: read, edit, comment, reply");
+      console.error("Available: read, grep, comment, reply");
       process.exit(1);
   }
 } else {
@@ -405,25 +496,30 @@ if (isShareInstance(instance)) {
     case "read": {
       const noteId = args[2];
       if (!noteId) {
-        console.error("Usage: documine <instance> read <id> [--offset=N] [--limit=M]");
+        console.error("Usage: documine <instance> read <id> [--range=A:B] [--around=L --context=N]");
         process.exit(1);
       }
 
-      const offsetArg = args.find((a) => a.startsWith("--offset="));
-      const limitArg = args.find((a) => a.startsWith("--limit="));
-      const offset = offsetArg ? offsetArg.split("=")[1] : null;
-      const limit = limitArg ? limitArg.split("=")[1] : null;
+      const rangeArg = args.find((a) => a.startsWith("--range="));
+      const aroundArg = args.find((a) => a.startsWith("--around="));
+      const contextArg = args.find((a) => a.startsWith("--context="));
+      const full = args.includes("--full");
+      const force = args.includes("--force");
 
-      let endpoint = `/api/notes/${noteId}`;
-      const params = [];
-      if (offset) params.push(`offset=${offset}`);
-      if (limit) params.push(`limit=${limit}`);
-      if (params.length) endpoint += `?${params.join("&")}`;
+      if (full || force) {
+        console.error("Full note stdout is unavailable for agent safety. Use --range, --around, or grep.");
+        process.exit(1);
+      }
 
-      const payload = await request(instance, "GET", endpoint);
-      const note = payload.note;
-
-      if (note.content !== undefined) {
+      if (aroundArg) {
+        const around = aroundArg.split("=")[1];
+        const context = contextArg ? contextArg.split("=")[1] : "20";
+        const payload = await request(
+          instance,
+          "GET",
+          `/api/notes/${noteId}/range?around=${encodeURIComponent(around)}&context=${encodeURIComponent(context)}`,
+        );
+        const note = payload.note;
         console.log(`# ${note.title}`);
         console.log(`# id: ${note.id}`);
         console.log(
@@ -431,26 +527,73 @@ if (isShareInstance(instance)) {
         );
         console.log();
         console.log(note.content);
-      } else {
+        break;
+      }
+      if (rangeArg) {
+        const [start, end] = rangeArg.split("=")[1].split(":");
+        const payload = await request(
+          instance,
+          "GET",
+          `/api/notes/${noteId}/range?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end || start)}`,
+        );
+        const note = payload.note;
         console.log(`# ${note.title}`);
         console.log(`# id: ${note.id}`);
-        console.log(`# updated: ${note.updatedAt}`);
-        console.log(`# share: ${note.shareUrl}`);
+        console.log(
+          `# lines: ${note.offset}-${note.offset + note.limit - 1} of ${note.totalLines}${note.remaining > 0 ? ` (${note.remaining} more)` : ""}`,
+        );
         console.log();
-        console.log(note.markdown);
+        console.log(note.content);
+        break;
+      }
 
-        if (payload.threads && payload.threads.length > 0) {
-          console.log();
-          console.log("--- Comments ---");
-          for (const thread of payload.threads) {
-            const anchor = thread.anchor?.quote ? `"${thread.anchor.quote.slice(0, 60)}"` : "(no anchor)";
-            console.log();
-            console.log(`Thread ${thread.id} on ${anchor}${thread.resolved ? " [resolved]" : ""}`);
-            for (const msg of thread.messages) {
-              console.log(`  [${msg.id}] ${msg.authorName} (${msg.updatedAt}): ${msg.body}`);
-            }
-          }
-        }
+      const previewPayload = await request(instance, "GET", `/api/notes/${noteId}?offset=1&limit=1`);
+      const note = previewPayload.note;
+      console.log(`# ${note.title}`);
+      console.log(`# id: ${note.id}`);
+      console.log(`# size: ${note.totalLines} lines`);
+      console.log();
+      console.log("Full note stdout is unavailable for agent safety.");
+      console.log(`Read a range: documine ${instance.name} read ${note.id} --range=1:120`);
+      console.log(`Read around a line: documine ${instance.name} read ${note.id} --around=120 --context=30`);
+      console.log(`Search note: documine ${instance.name} grep ${note.id} "text" --context=20 --max-matches=5`);
+      break;
+    }
+
+    case "grep": {
+      const noteId = args[2];
+      const contextArg = args.find((a) => a.startsWith("--context="));
+      const maxMatchesArg = args.find((a) => a.startsWith("--max-matches="));
+      const query = args
+        .slice(3)
+        .filter((a) => !a.startsWith("--context=") && !a.startsWith("--max-matches="))
+        .join(" ");
+      if (!noteId || !query) {
+        console.error("Usage: documine <instance> grep <id> <query> [--context=N] [--max-matches=N]");
+        process.exit(1);
+      }
+      const context = contextArg ? contextArg.split("=")[1] : "2";
+      const maxMatches = maxMatchesArg ? maxMatchesArg.split("=")[1] : "20";
+      const payload = await request(
+        instance,
+        "GET",
+        `/api/notes/${noteId}/grep?q=${encodeURIComponent(query)}&context=${encodeURIComponent(context)}&maxMatches=${encodeURIComponent(maxMatches)}`,
+      );
+      const note = payload.note;
+      console.log(`# ${note.title}`);
+      console.log(`# id: ${note.id}`);
+      console.log(`# matches: ${payload.matches.length}`);
+      console.log(`# lines: ${note.totalLines}`);
+      if (payload.truncated) console.log("# truncated: yes");
+      if (payload.matches.length === 0) {
+        console.log();
+        console.log("No matches found.");
+        break;
+      }
+      for (const match of payload.matches) {
+        console.log();
+        console.log(`@@ ${match.startLine}-${match.endLine} @@`);
+        console.log(match.content);
       }
       break;
     }
@@ -569,25 +712,29 @@ if (isShareInstance(instance)) {
       break;
     }
 
-    case "edit": {
+    case "apply": {
       const noteId = args[2];
-      const editsJson = args[3];
-      if (!noteId || !editsJson) {
-        console.error("Usage: documine <instance> edit <id> '<json edits>'");
-        console.error('Example: documine myserver edit abc123 \'[{"oldText":"hello","newText":"world"}]\'');
+      const patchArgIndex = args.findIndex((a) => a === "--patch");
+      const check = args.includes("--check");
+      const patchPath = patchArgIndex >= 0 ? args[patchArgIndex + 1] : null;
+      if (!noteId || !patchPath) {
+        console.error("Usage: documine <instance> apply <id> --patch <file> [--check]");
         process.exit(1);
       }
-
-      let edits;
-      try {
-        edits = JSON.parse(editsJson);
-      } catch {
-        console.error("Invalid JSON for edits.");
+      if (!fs.existsSync(patchPath) || !fs.statSync(patchPath).isFile()) {
+        console.error(`Patch file not found: ${patchPath}`);
         process.exit(1);
       }
-
-      const payload = await request(instance, "POST", `/api/notes/${noteId}/edit`, { edits });
-      console.log(`Saved at ${payload.savedAt}`);
+      const patch = fs.readFileSync(patchPath, "utf8");
+      const payload = await request(instance, "POST", `/api/notes/${noteId}/apply`, { patch, check });
+      console.log(check ? "Patch can apply" : `Saved at ${payload.savedAt}`);
+      for (const range of payload.changedLines || []) {
+        console.log(`changed ${range.start}-${range.end}`);
+      }
+      if (payload.preview) {
+        console.log();
+        console.log(payload.preview);
+      }
       break;
     }
 
@@ -682,7 +829,12 @@ Owner commands:
   documine <instance> login-unban <ip>         Remove an IP from the temporary ban list
   documine <instance> list                     List all notes
   documine <instance> search <query>           Search notes
-  documine <instance> read <id>                Read a note with comments
+  documine <instance> read <id>                Show bounded-read guidance only
+  documine <instance> read <id> --range=A:B    Read bounded line range
+  documine <instance> read <id> --around=L     Read bounded context around a line
+  documine <instance> grep <id> <query>        Search one note with bounded context
+  documine <instance> apply <id> --patch file  Apply unified diff patch
+  documine <instance> apply <id> --patch file --check  Dry-run patch
   documine <instance> create [title]           Create a new note
   documine <instance> share <id> [access]      Get/set share access (none|view|comment|edit)
   documine <instance> upload-image <id> <path> Upload image and print markdown
@@ -693,15 +845,16 @@ Owner commands:
   documine <instance> edit-comment <id> <mid> b Edit a comment
   documine <instance> delete-comment <id> <mid> Delete a comment
   documine <instance> delete-thread <id> <tid>  Delete a thread
-  documine <instance> edit <id> '<edits>'       Apply edits (JSON array of {oldText, newText})
   documine <instance> update <id> title <val>   Update note title
   documine <instance> update <id> markdown <v>  Replace full markdown
   documine <instance> delete <id>               Delete a note
 
 Shared note commands:
-  documine <instance> read                     Read the shared note
-  documine <instance> edit '<edits>'           Edit (if edit access)
-  documine <instance> comment <quote> <body>   Comment on text
+  documine <instance> read                    Show bounded-read guidance only
+  documine <instance> read --range=A:B        Read bounded line range
+  documine <instance> read --around=L         Read bounded context around a line
+  documine <instance> grep <query>            Search shared note with bounded context
+  documine <instance> comment <quote> <body>  Comment on text
   documine <instance> reply <tid> <mid> <body> Reply to a specific message
   Use --name="Name" to set display name for comments`);
 }
